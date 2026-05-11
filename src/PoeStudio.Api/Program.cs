@@ -306,21 +306,52 @@ app.MapPost("/api/resources/signature", async (
             : Results.BadRequest(ApiResponse<ResourceSignatureResponse>.Failure(read.ErrorCode, read.Message));
     }
 
-    var hash = SHA256.HashData(read.Data);
-    var header = string.Join(" ", read.Data.Take(32).Select(item => item.ToString("X2")));
-    var response = new ResourceSignatureResponse(
-        request.ProfileId,
-        resource.VirtualPath,
-        resource.Kind,
-        resource.Extension,
-        read.Data.LongLength,
-        Convert.ToHexString(hash).ToLowerInvariant(),
-        header,
-        GuessContentType(resource.Extension),
-        resource.SourceLayer.ToString(),
-        BuildMatchHints(resource, read.Data.LongLength, hash),
-        []);
+    var response = BuildSignatureResponse(request.ProfileId, resource, read.Data, []);
     return Results.Ok(ApiResponse<ResourceSignatureResponse>.Success(response));
+});
+
+app.MapPost("/api/resources/bulk-signature", async (
+    ResourceBulkSignatureRequest request,
+    ProfileStore profiles,
+    ResourceIndexStore resourceIndex,
+    NativeBundleResourceContentResolver nativeContentResolver,
+    CancellationToken cancellationToken) =>
+{
+    var search = await resourceIndex.SearchAsync(new ResourceSearchRequest(
+        request.ProfileId,
+        Query: request.Query,
+        Kind: request.Kind,
+        Extension: request.Extension,
+        Skip: 0,
+        Take: Math.Clamp(request.Take, 1, 500)), cancellationToken);
+    var items = new List<ResourceSignatureResponse>();
+    var warnings = new List<string>();
+
+    foreach (var resource in search.Items)
+    {
+        var read = await ReadResourceBytesAsync(
+            request.ProfileId,
+            request.OodlePath,
+            resource,
+            profiles,
+            nativeContentResolver,
+            cancellationToken);
+        if (!read.Ok)
+        {
+            warnings.Add($"{resource.VirtualPath}: {read.Message}");
+            continue;
+        }
+
+        items.Add(BuildSignatureResponse(request.ProfileId, resource, read.Data, []));
+    }
+
+    var response = new ResourceBulkSignatureResponse(
+        request.ProfileId,
+        search.Total,
+        items.Count,
+        items,
+        warnings);
+    return Results.Ok(ApiResponse<ResourceBulkSignatureResponse>.Success(response));
 });
 
 app.MapPost("/api/resources/bulk-export", async (
@@ -1522,6 +1553,28 @@ static IReadOnlyList<string> BuildMatchHints(ResourceSummaryDto resource, long s
         $"size:{size}",
         $"sha256:{hashText}"
     ];
+}
+
+static ResourceSignatureResponse BuildSignatureResponse(
+    string profileId,
+    ResourceSummaryDto resource,
+    byte[] data,
+    IReadOnlyList<string> warnings)
+{
+    var hash = SHA256.HashData(data);
+    var header = string.Join(" ", data.Take(32).Select(item => item.ToString("X2")));
+    return new ResourceSignatureResponse(
+        profileId,
+        resource.VirtualPath,
+        resource.Kind,
+        resource.Extension,
+        data.LongLength,
+        Convert.ToHexString(hash).ToLowerInvariant(),
+        header,
+        GuessContentType(resource.Extension),
+        resource.SourceLayer.ToString(),
+        BuildMatchHints(resource, data.LongLength, hash),
+        warnings);
 }
 
 static string SafeExportPath(string root, string virtualPath)

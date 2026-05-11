@@ -32,6 +32,21 @@ public sealed record ResourceSignatureResponse(
     IReadOnlyList<string> MatchHints,
     IReadOnlyList<string> Warnings);
 
+public sealed record ResourceBulkSignatureRequest(
+    string ProfileId,
+    string Query,
+    ResourceKind? Kind = null,
+    string? Extension = null,
+    int Take = 200,
+    string? OodlePath = null);
+
+public sealed record ResourceBulkSignatureResponse(
+    string ProfileId,
+    int Matched,
+    int Signed,
+    IReadOnlyList<ResourceSignatureResponse> Items,
+    IReadOnlyList<string> Warnings);
+
 public sealed record ResourceBulkExportRequest(
     string ProfileId,
     string Query,

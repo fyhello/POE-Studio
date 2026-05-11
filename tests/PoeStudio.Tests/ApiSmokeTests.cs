@@ -211,6 +211,41 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Bulk_resource_signature_returns_signature_manifest_for_search_results()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "config"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "config", "one.json"), "{\"one\":true}");
+        await File.WriteAllTextAsync(Path.Combine(bundles, "config", "two.json"), "{\"two\":true}");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var signature = await client.PostAsJsonAsync("/api/resources/bulk-signature", new ResourceBulkSignatureRequest(
+            created.Data.Id,
+            "config",
+            Kind: ResourceKind.Text,
+            Extension: ".json"));
+        var payload = await signature.Content.ReadFromJsonAsync<ApiResponse<ResourceBulkSignatureResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, signature.StatusCode);
+        Assert.Equal(2, payload?.Data?.Matched);
+        Assert.Equal(2, payload?.Data?.Signed);
+        Assert.All(payload?.Data?.Items ?? [], item => Assert.Equal(64, item.Sha256.Length));
+    }
+
+    [Fact]
     public async Task Overlay_save_list_diff_and_revert_work()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

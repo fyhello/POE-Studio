@@ -76,6 +76,7 @@ async function refreshProfiles() {
   $("previewScriptBtn").disabled = !state.selectedProfile;
   $("applyScriptBtn").disabled = !state.selectedProfile;
   $("bulkExportBtn").disabled = !state.selectedProfile;
+  $("bulkSignatureBtn").disabled = !state.selectedProfile;
   $("bulkImportBtn").disabled = !state.selectedProfile;
   setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
   if (state.selectedProfile) refreshBuildHistory();
@@ -220,6 +221,25 @@ async function bulkExportResources() {
     warnings: result.warnings
   });
   setStatus(`批量导出完成：${result.exported}/${result.matched}`);
+}
+
+async function bulkSignatureResources() {
+  const profileId = selectedProfileId();
+  const query = $("searchInput").value.trim();
+  if (!profileId || !query) {
+    setStatus("批量特征需要先输入搜索条件");
+    return;
+  }
+
+  setStatus("正在批量提取特征...");
+  const result = await api("/api/resources/bulk-signature", {
+    profileId,
+    query,
+    take: 200,
+    oodlePath: $("oodlePathInput").value.trim() || null
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(`批量特征完成：${result.signed}/${result.matched}`);
 }
 
 async function bulkImportOverlay() {
@@ -725,6 +745,7 @@ function bind() {
   $("buildNativeIndexBtn").addEventListener("click", startNativeIndexJob);
   $("searchBtn").addEventListener("click", searchResources);
   $("bulkExportBtn").addEventListener("click", bulkExportResources);
+  $("bulkSignatureBtn").addEventListener("click", bulkSignatureResources);
   $("bulkImportBtn").addEventListener("click", bulkImportOverlay);
   $("searchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") searchResources();
