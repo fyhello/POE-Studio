@@ -1,5 +1,4 @@
 using System.IO.Compression;
-using System.Text;
 using System.Text.Json;
 using PoeStudio.Contracts;
 using PoeStudio.Core.Resources;
@@ -21,11 +20,18 @@ public sealed class PatchBuildService
 
     private readonly string workspaceRoot;
     private readonly IPatchOverlayReader overlayStore;
+    private readonly IPatchPackageWriter packageWriter;
 
     public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore)
+        : this(workspaceRoot, overlayStore, new MvpPatchPackageWriter())
+    {
+    }
+
+    public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IPatchPackageWriter packageWriter)
     {
         this.workspaceRoot = Path.GetFullPath(workspaceRoot);
         this.overlayStore = overlayStore;
+        this.packageWriter = packageWriter;
     }
 
     public async Task<PatchDryRunResponse> DryRunAsync(
@@ -49,6 +55,7 @@ public sealed class PatchBuildService
         ClientProfileDto profile,
         CancellationToken cancellationToken)
     {
+        var overlayEntries = await overlayStore.GetEntriesAsync(request.ProfileId, cancellationToken);
         var dryRun = await DryRunAsync(new PatchDryRunRequest(request.ProfileId), profile, cancellationToken);
         var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
         layout.EnsureDirectories();
@@ -59,31 +66,22 @@ public sealed class PatchBuildService
         var bundlesDirectory = string.IsNullOrEmpty(rootPrefix)
             ? Path.Combine(outputDirectory, "Bundles2")
             : Path.Combine(outputDirectory, rootPrefix, "Bundles2");
-        Directory.CreateDirectory(bundlesDirectory);
 
-        var indexPath = Path.Combine(bundlesDirectory, "_.index.bin");
-        if (!string.IsNullOrWhiteSpace(profile.IndexPath) && File.Exists(profile.IndexPath))
-        {
-            File.Copy(profile.IndexPath, indexPath, overwrite: true);
-        }
-        else
-        {
-            await File.WriteAllBytesAsync(indexPath, Array.Empty<byte>(), cancellationToken);
-        }
-
-        var bundlePath = Path.Combine(bundlesDirectory, request.BundleName);
-        await WriteMvpBundleAsync(bundlePath, await overlayStore.GetEntriesAsync(request.ProfileId, cancellationToken), cancellationToken);
+        var writeResult = await packageWriter.WriteAsync(
+            new PatchPackageWriterContext(profile, request, bundlesDirectory, overlayEntries, dryRun.Changes),
+            cancellationToken);
 
         var builtAt = DateTimeOffset.UtcNow;
         var manifestPath = Path.Combine(outputDirectory, "patch_manifest.json");
+        var warnings = dryRun.Warnings.Concat(writeResult.Warnings).Distinct(StringComparer.Ordinal).ToArray();
         var manifest = new PatchManifestDto(
             request.ProfileId,
-            PatchBuildMode.OverlayBundleMvp,
+            writeResult.BuildMode,
             request.Template,
             request.BundleName,
             builtAt,
             dryRun.Changes,
-            dryRun.Warnings);
+            warnings);
         await WriteJsonAsync(manifestPath, manifest, cancellationToken);
 
         var rollbackManifestPath = Path.Combine(outputDirectory, "rollback_manifest.json");
@@ -103,16 +101,16 @@ public sealed class PatchBuildService
 
         return new PatchBuildResponse(
             request.ProfileId,
-            PatchBuildMode.OverlayBundleMvp,
+            writeResult.BuildMode,
             request.Template,
             outputDirectory,
-            indexPath,
-            bundlePath,
+            writeResult.IndexPath,
+            writeResult.BundlePath,
             manifestPath,
             rollbackManifestPath,
             zipPath,
             dryRun.TotalChanges,
-            dryRun.Warnings);
+            warnings);
     }
 
     private async Task<IReadOnlyList<PatchChangeDto>> BuildChangesAsync(string profileId, CancellationToken cancellationToken)
@@ -136,7 +134,7 @@ public sealed class PatchBuildService
     {
         var warnings = new List<string>
         {
-            "当前构建模式为 OverlayBundleMvp，用于工作流验证和审计；真实 Bundles2 index 重写将在 Native Kernel/LibGGPK3 Adapter 阶段接入。"
+            "构建前会执行 dry-run 汇总，真实写包能力由当前 PatchPackageWriter 决定。"
         };
 
         if (profile.OodleStatus != OodleStatus.Found)
@@ -150,28 +148,6 @@ public sealed class PatchBuildService
         }
 
         return warnings;
-    }
-
-    private static async Task WriteMvpBundleAsync(
-        string bundlePath,
-        IReadOnlyList<OverlayEntryDto> entries,
-        CancellationToken cancellationToken)
-    {
-        await using var stream = File.Create(bundlePath);
-        await using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: false);
-        writer.Write(Encoding.ASCII.GetBytes("POESTUDIO-MVP-BUNDLE\0"));
-        writer.Write(entries.Count);
-
-        foreach (var entry in entries.OrderBy(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var pathBytes = Encoding.UTF8.GetBytes(entry.NormalizedPath);
-            var content = await File.ReadAllBytesAsync(entry.OverlayPath, cancellationToken);
-            writer.Write(pathBytes.Length);
-            writer.Write(pathBytes);
-            writer.Write(content.Length);
-            writer.Write(content);
-        }
     }
 
     private static async Task WriteJsonAsync<T>(string path, T value, CancellationToken cancellationToken)

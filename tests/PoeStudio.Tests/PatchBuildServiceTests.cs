@@ -69,6 +69,26 @@ public sealed class PatchBuildServiceTests
         Assert.Contains(zip.Entries, entry => entry.FullName == "PathOfExile2/Bundles2/Tiny.V0.1.bundle.bin");
     }
 
+    [Fact]
+    public async Task BuildAsync_uses_injected_package_writer()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root);
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var writer = new CapturingPatchPackageWriter();
+        var service = new PatchBuildService(root, overlay, writer);
+
+        var result = await service.BuildAsync(new PatchBuildRequest(profile.Id), profile, CancellationToken.None);
+
+        Assert.Equal(PatchBuildMode.OverlayBundleMvp, result.BuildMode);
+        Assert.Equal(profile.Id, writer.Context!.Profile.Id);
+        Assert.Single(writer.Context.OverlayEntries);
+        Assert.Single(writer.Context.Changes);
+        Assert.True(File.Exists(result.IndexPath));
+        Assert.True(File.Exists(result.BundlePath));
+    }
+
     private static ClientProfileDto Profile(string root)
     {
         var id = Guid.NewGuid().ToString("N");
@@ -85,5 +105,21 @@ public sealed class PatchBuildServiceTests
             ClientFingerprint: "fingerprint",
             CreatedAt: DateTimeOffset.UtcNow,
             UpdatedAt: DateTimeOffset.UtcNow);
+    }
+
+    private sealed class CapturingPatchPackageWriter : IPatchPackageWriter
+    {
+        public PatchPackageWriterContext? Context { get; private set; }
+
+        public async Task<PatchPackageWriteResult> WriteAsync(PatchPackageWriterContext context, CancellationToken cancellationToken)
+        {
+            Context = context;
+            Directory.CreateDirectory(context.BundlesDirectory);
+            var indexPath = Path.Combine(context.BundlesDirectory, "_.index.bin");
+            var bundlePath = Path.Combine(context.BundlesDirectory, context.Request.BundleName);
+            await File.WriteAllBytesAsync(indexPath, [1], cancellationToken);
+            await File.WriteAllBytesAsync(bundlePath, [2], cancellationToken);
+            return new PatchPackageWriteResult(indexPath, bundlePath, PatchBuildMode.OverlayBundleMvp, ["captured"]);
+        }
     }
 }
