@@ -45,7 +45,9 @@ async function refreshProfiles() {
   $("buildNativeIndexBtn").disabled = !state.selectedProfile;
   $("patchDryRunBtn").disabled = !state.selectedProfile;
   $("patchBuildBtn").disabled = !state.selectedProfile;
+  $("refreshBuildsBtn").disabled = !state.selectedProfile;
   setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
+  if (state.selectedProfile) refreshBuildHistory();
 }
 
 async function detectClient() {
@@ -115,6 +117,7 @@ function handleJobResult(job) {
   if (job.kind === "patch-build") {
     writeLog($("actionOutput"), result);
     setStatus(result.zipPath ? `补丁已生成：${result.zipPath}` : job.message);
+    refreshBuildHistory();
     return;
   }
 
@@ -207,6 +210,26 @@ async function patchBuild() {
   trackJob(job.id);
 }
 
+async function refreshBuildHistory() {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  const result = await api("/api/patch/build-history", { profileId });
+  const list = $("buildList");
+  list.innerHTML = "";
+  for (const item of result.items) {
+    const row = document.createElement("div");
+    row.className = "build-item";
+    row.innerHTML = `
+      <div class="build-path">${item.zipPath || item.outputDirectory}</div>
+      <div class="build-meta">${item.buildId} · ${Math.max(1, Math.round(item.zipSize / 1024))} KB</div>
+    `;
+    list.appendChild(row);
+  }
+  if (result.items.length === 0) {
+    list.innerHTML = '<div class="build-item"><div class="build-meta">暂无补丁输出</div></div>';
+  }
+}
+
 function bind() {
   $("refreshProfilesBtn").addEventListener("click", refreshProfiles);
   $("detectBtn").addEventListener("click", detectClient);
@@ -219,10 +242,12 @@ function bind() {
   $("profileSelect").addEventListener("change", () => {
     state.selectedProfile = state.profiles.find((item) => item.id === $("profileSelect").value) || null;
     searchResources();
+    refreshBuildHistory();
   });
   $("saveOverlayBtn").addEventListener("click", saveOverlay);
   $("patchDryRunBtn").addEventListener("click", patchDryRun);
   $("patchBuildBtn").addEventListener("click", patchBuild);
+  $("refreshBuildsBtn").addEventListener("click", refreshBuildHistory);
 }
 
 bind();

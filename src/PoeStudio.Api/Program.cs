@@ -5,6 +5,7 @@ using PoeStudio.Core.Native;
 using PoeStudio.Core.Patching;
 using PoeStudio.Core.Preview;
 using PoeStudio.Core.Resources;
+using PoeStudio.Core.Workspace;
 using PoeStudio.Storage.Overlay;
 using PoeStudio.Storage.Profiles;
 using PoeStudio.Storage.Resources;
@@ -271,6 +272,50 @@ app.MapPost("/api/patch/build", async (
     {
         return Results.BadRequest(ApiResponse<PatchBuildResponse>.Failure(ex.ErrorCode, ex.Message));
     }
+});
+
+app.MapPost("/api/patch/build-history", async (
+    PatchBuildHistoryRequest request,
+    ProfileStore profiles,
+    IConfiguration config,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<PatchBuildHistoryResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
+    var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+    if (!Directory.Exists(layout.BuildsRoot))
+    {
+        return Results.Ok(ApiResponse<PatchBuildHistoryResponse>.Success(new PatchBuildHistoryResponse(request.ProfileId, [])));
+    }
+
+    var items = Directory.EnumerateFiles(layout.BuildsRoot, "*-patch.zip", SearchOption.TopDirectoryOnly)
+        .Select(zipPath =>
+        {
+            var zip = new FileInfo(zipPath);
+            var buildId = zip.Name.Split('-', 2)[0];
+            var outputDirectory = Path.Combine(layout.BuildsRoot, buildId);
+            var manifestPath = Path.Combine(outputDirectory, "patch_manifest.json");
+            var rollbackPath = Path.Combine(outputDirectory, "rollback_manifest.json");
+            return new PatchBuildHistoryItemDto(
+                buildId,
+                outputDirectory,
+                zip.FullName,
+                File.Exists(manifestPath) ? manifestPath : null,
+                File.Exists(rollbackPath) ? rollbackPath : null,
+                zip.CreationTimeUtc <= DateTime.MinValue ? DateTimeOffset.UtcNow : new DateTimeOffset(zip.CreationTimeUtc, TimeSpan.Zero),
+                zip.Length);
+        })
+        .OrderByDescending(item => item.CreatedAt)
+        .Take(20)
+        .ToArray();
+
+    return Results.Ok(ApiResponse<PatchBuildHistoryResponse>.Success(new PatchBuildHistoryResponse(request.ProfileId, items)));
 });
 
 app.MapPost("/api/native/bundles2/probe-index", async (

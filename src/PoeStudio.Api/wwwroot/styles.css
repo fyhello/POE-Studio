@@ -109,6 +109,16 @@ h1 {
   font-size: 13px;
 }
 
+.compact-title {
+  margin-top: 2px;
+}
+
+.compact-title button {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
 label {
   display: grid;
   gap: 6px;
@@ -191,6 +201,35 @@ textarea:focus {
   border: 1px solid #252d36;
   border-radius: 6px;
   background: #0f1318;
+}
+
+.build-list {
+  max-height: 148px;
+  overflow: auto;
+  border: 1px solid #252d36;
+  border-radius: 6px;
+  background: #0f1318;
+}
+
+.build-item {
+  display: grid;
+  gap: 4px;
+  min-height: 52px;
+  border-bottom: 1px solid #202830;
+  padding: 8px 10px;
+}
+
+.build-path {
+  overflow: hidden;
+  color: #edf3f8;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-meta {
+  color: #8fa2b5;
+  font-size: 12px;
 }
 
 .resource-item {

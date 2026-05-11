@@ -84,3 +84,18 @@ public sealed record PatchRollbackItemDto(
     string VirtualPath,
     string? BaseHash,
     string OverlayHash);
+
+public sealed record PatchBuildHistoryRequest(string ProfileId);
+
+public sealed record PatchBuildHistoryResponse(
+    string ProfileId,
+    IReadOnlyList<PatchBuildHistoryItemDto> Items);
+
+public sealed record PatchBuildHistoryItemDto(
+    string BuildId,
+    string OutputDirectory,
+    string? ZipPath,
+    string? ManifestPath,
+    string? RollbackManifestPath,
+    DateTimeOffset CreatedAt,
+    long ZipSize);
