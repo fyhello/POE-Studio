@@ -1,5 +1,7 @@
 namespace PoeStudio.Core.Workspace;
 
+using System.Text.RegularExpressions;
+
 public sealed record WorkspaceLayout(
     string WorkspaceRoot,
     string ProfileId,
@@ -13,8 +15,20 @@ public sealed record WorkspaceLayout(
     string BuildsRoot,
     string AuditRoot)
 {
+    private static readonly Regex ProfileIdPattern = new("^[A-Za-z0-9_-]+$", RegexOptions.CultureInvariant);
+
     public static WorkspaceLayout ForProfile(string workspaceRoot, string profileId)
     {
+        if (string.IsNullOrWhiteSpace(profileId)
+            || profileId is "." or ".."
+            || Path.IsPathRooted(profileId)
+            || profileId.Contains(Path.DirectorySeparatorChar)
+            || profileId.Contains(Path.AltDirectorySeparatorChar)
+            || !ProfileIdPattern.IsMatch(profileId))
+        {
+            throw new ArgumentException("Profile id must be a safe path segment.", nameof(profileId));
+        }
+
         var root = Path.GetFullPath(workspaceRoot);
         var profileRoot = Path.Combine(root, "profiles", profileId);
         return new WorkspaceLayout(
