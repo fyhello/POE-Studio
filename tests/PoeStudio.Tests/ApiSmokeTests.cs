@@ -293,6 +293,25 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Contains(payload?.Data?.Warnings ?? [], warning => warning.Contains("oo2core", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task Native_index_parse_returns_record_counts()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var indexCache = Path.Combine(root, "index.decompressed.bin");
+        await WriteDecompressedIndexAsync(indexCache);
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/native/bundles2/parse-index-cache", new NativeIndexParseRequest(indexCache));
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<NativeIndexParseResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(payload?.Data?.Ok);
+        Assert.Equal(1, payload?.Data?.BundleCount);
+        Assert.Equal(1, payload?.Data?.FileCount);
+        Assert.Equal(1, payload?.Data?.DirectoryCount);
+    }
+
     private static async Task WriteIndexHeaderAsync(string path)
     {
         await using var stream = File.Create(path);
@@ -312,5 +331,26 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         writer.Write(0);
         writer.Write(512);
         writer.Write(new byte[512]);
+    }
+
+    private static async Task WriteDecompressedIndexAsync(string path)
+    {
+        await using var stream = File.Create(path);
+        await using var writer = new BinaryWriter(stream);
+        writer.Write(1);
+        var bundlePath = System.Text.Encoding.UTF8.GetBytes("Tiny/V0.1");
+        writer.Write(bundlePath.Length);
+        writer.Write(bundlePath);
+        writer.Write(100);
+        writer.Write(1);
+        writer.Write(123UL);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(10);
+        writer.Write(1);
+        writer.Write(456UL);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
     }
 }

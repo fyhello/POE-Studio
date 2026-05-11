@@ -27,6 +27,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<FileSystemResourceIndexer>();
 builder.Services.AddSingleton<ResourcePreviewService>();
 builder.Services.AddSingleton<NativeBundles2IndexReader>();
+builder.Services.AddSingleton<NativeIndexRecordParser>();
 builder.Services.AddSingleton<IOodleCodec, MissingOodleCodec>();
 builder.Services.AddSingleton(sp =>
 {
@@ -282,6 +283,24 @@ app.MapPost("/api/native/bundles2/decompress-index", async (
     {
         return Results.BadRequest(ApiResponse<NativeIndexDecompressResponse>.Failure("invalid_profile_id", ex.Message));
     }
+});
+
+app.MapPost("/api/native/bundles2/parse-index-cache", async (
+    NativeIndexParseRequest request,
+    NativeIndexRecordParser parser,
+    CancellationToken cancellationToken) =>
+{
+    var result = await parser.ParseAsync(request.DecompressedIndexPath, cancellationToken);
+    var response = new NativeIndexParseResponse(
+        result.Ok,
+        request.DecompressedIndexPath,
+        result.BundleCount,
+        result.FileCount,
+        result.DirectoryCount,
+        result.DirectoryBundleDataOffset,
+        result.DirectoryBundleDataSize,
+        result.Warnings);
+    return Results.Ok(ApiResponse<NativeIndexParseResponse>.Success(response));
 });
 
 app.Run();

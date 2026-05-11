@@ -50,3 +50,15 @@ public sealed record NativeIndexDecompressResponse(
     long? UncompressedSize,
     int? ChunkCount,
     IReadOnlyList<string> Warnings);
+
+public sealed record NativeIndexParseRequest(string DecompressedIndexPath);
+
+public sealed record NativeIndexParseResponse(
+    bool Ok,
+    string DecompressedIndexPath,
+    int BundleCount,
+    int FileCount,
+    int DirectoryCount,
+    long DirectoryBundleDataOffset,
+    long DirectoryBundleDataSize,
+    IReadOnlyList<string> Warnings);

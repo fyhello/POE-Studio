@@ -109,3 +109,23 @@ C:\WeGameApps\rail_apps\流放之路：降临(2002052)\Bundles2\_.index.bin
 - 输出缓存大小：153,151,305 bytes。
 - 输出大小与 header 中的 uncompressed size 一致。
 - 解压过程只读打开客户端 index，不修改客户端目录。
+
+## 真实解压后 index 记录解析验证
+
+新增 `NativeIndexRecordParser` 解析解压后的 index 本体，当前只读三类记录：
+
+- bundle records；
+- file records；
+- directory records。
+
+真实国服验证结果：
+
+- Bundle count：60,751。
+- File count：3,414,615。
+- Directory count：85,492。
+- Directory data offset：75,183,313。
+- Directory data size：77,967,992。
+- First bundle：`Folders/audio/haptics`。
+- Last bundle：`Streaming/Folders/art/2ditems/pets.6`。
+
+这些数值与前期 LibGGPK3 调研结果一致。下一步可以在不依赖 LibGGPK3 的前提下实现路径还原和资源索引落库。
