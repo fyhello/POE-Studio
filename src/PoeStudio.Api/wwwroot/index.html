@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>POE Studio</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>POE Studio</h1>
+      <p id="statusText">准备就绪</p>
+    </div>
+    <button id="refreshProfilesBtn" type="button">刷新配置</button>
+  </header>
+
+  <main class="shell">
+    <section class="panel setup-panel" aria-label="客户端连接">
+      <div class="panel-title">
+        <h2>客户端</h2>
+        <span id="profileCount">0</span>
+      </div>
+
+      <label>
+        客户端目录
+        <input id="rootPathInput" type="text" value="C:\WeGameApps\rail_apps\流放之路：降临(2002052)" spellcheck="false">
+      </label>
+
+      <label>
+        oo2core.dll
+        <input id="oodlePathInput" type="text" value="E:\VisualGGPK3_ascii\oo2core.dll" spellcheck="false">
+      </label>
+
+      <div class="button-row">
+        <button id="detectBtn" type="button">检测</button>
+        <button id="saveProfileBtn" type="button" disabled>保存</button>
+      </div>
+
+      <label>
+        当前配置
+        <select id="profileSelect"></select>
+      </label>
+
+      <button id="buildNativeIndexBtn" class="primary" type="button" disabled>建立真实索引</button>
+
+      <div class="progress-wrap">
+        <div class="progress-bar"><span id="jobProgress"></span></div>
+        <p id="jobMessage">没有正在运行的任务</p>
+      </div>
+
+      <pre id="detectOutput" class="log"></pre>
+    </section>
+
+    <section class="panel resources-panel" aria-label="资源列表">
+      <div class="panel-title">
+        <h2>资源</h2>
+        <span id="resourceTotal">0</span>
+      </div>
+
+      <div class="search-row">
+        <input id="searchInput" type="search" placeholder="搜索路径、文件名或扩展名" spellcheck="false">
+        <button id="searchBtn" type="button">搜索</button>
+      </div>
+
+      <div id="resourceList" class="resource-list"></div>
+    </section>
+
+    <section class="panel preview-panel" aria-label="预览与编辑">
+      <div class="panel-title">
+        <h2>预览</h2>
+        <span id="previewKind">未选择</span>
+      </div>
+
+      <div id="selectedPath" class="selected-path">选择一个资源</div>
+      <textarea id="previewText" spellcheck="false" placeholder="资源内容会显示在这里"></textarea>
+
+      <div class="button-row">
+        <button id="saveOverlayBtn" type="button" disabled>保存覆盖</button>
+        <button id="patchDryRunBtn" type="button" disabled>补丁预检</button>
+      </div>
+
+      <pre id="actionOutput" class="log"></pre>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

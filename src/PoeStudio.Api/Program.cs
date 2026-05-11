@@ -60,6 +60,9 @@ builder.Services.AddSingleton(sp =>
 
 var app = builder.Build();
 
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.MapGet("/api/health", () => ApiResponse<object>.Success(new
 {
     status = "ok",

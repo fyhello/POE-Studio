@@ -1,0 +1,206 @@
+const state = {
+  profiles: [],
+  detected: null,
+  selectedProfile: null,
+  selectedResource: null,
+  jobTimer: null
+};
+
+const $ = (id) => document.getElementById(id);
+
+const api = async (url, body) => {
+  const response = await fetch(url, {
+    method: body === undefined ? "GET" : "POST",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.message || payload.errorCode || `HTTP ${response.status}`);
+  }
+  return payload.data;
+};
+
+const setStatus = (message) => {
+  $("statusText").textContent = message;
+};
+
+const writeLog = (target, value) => {
+  target.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+};
+
+const selectedProfileId = () => $("profileSelect").value || state.selectedProfile?.id;
+
+async function refreshProfiles() {
+  state.profiles = await api("/api/profiles");
+  $("profileCount").textContent = String(state.profiles.length);
+  $("profileSelect").innerHTML = "";
+  for (const profile of state.profiles) {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = `${profile.displayName} (${profile.platform})`;
+    $("profileSelect").appendChild(option);
+  }
+  state.selectedProfile = state.profiles[0] || null;
+  $("buildNativeIndexBtn").disabled = !state.selectedProfile;
+  $("patchDryRunBtn").disabled = !state.selectedProfile;
+  setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
+}
+
+async function detectClient() {
+  setStatus("正在检测客户端...");
+  state.detected = await api("/api/profiles/detect", {
+    rootPath: $("rootPathInput").value.trim(),
+    oodleSearchPath: $("oodlePathInput").value.trim() || null
+  });
+  writeLog($("detectOutput"), state.detected);
+  $("saveProfileBtn").disabled = !state.detected.detected;
+  setStatus(state.detected.detected ? "检测完成，可以保存配置" : "未检测到支持的客户端");
+}
+
+async function saveProfile() {
+  if (!state.detected) return;
+  setStatus("正在保存配置...");
+  const profile = await api("/api/profiles", {
+    displayName: `${state.detected.platform} POE2`,
+    rootPath: state.detected.rootPath,
+    platform: state.detected.platform,
+    entryKind: state.detected.entryKind,
+    contentGgpkPath: state.detected.contentGgpkPath,
+    bundles2Path: state.detected.bundles2Path,
+    indexPath: state.detected.indexPath,
+    oodleStatus: state.detected.oodleStatus,
+    clientFingerprint: state.detected.clientFingerprint
+  });
+  await refreshProfiles();
+  $("profileSelect").value = profile.id;
+  state.selectedProfile = profile;
+  setStatus("配置已保存");
+}
+
+async function startNativeIndexJob() {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  setStatus("正在启动索引任务...");
+  const job = await api("/api/jobs/native/bundles2/build-resource-index", {
+    profileId,
+    indexPath: state.selectedProfile?.indexPath || null,
+    oodlePath: $("oodlePathInput").value.trim() || null
+  });
+  trackJob(job.id);
+}
+
+function trackJob(jobId) {
+  clearInterval(state.jobTimer);
+  state.jobTimer = setInterval(async () => {
+    try {
+      const job = await api(`/api/jobs/${jobId}`);
+      $("jobProgress").style.width = `${job.progressPercent}%`;
+      $("jobMessage").textContent = job.message;
+      setStatus(`${job.kind}: ${job.message}`);
+      if (job.status === 2 || job.status === 3) {
+        clearInterval(state.jobTimer);
+        if (job.resultJson) {
+          writeLog($("detectOutput"), JSON.parse(job.resultJson));
+        }
+        await searchResources();
+      }
+    } catch (error) {
+      clearInterval(state.jobTimer);
+      setStatus(error.message);
+    }
+  }, 500);
+}
+
+async function searchResources() {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  setStatus("正在搜索资源...");
+  const result = await api("/api/resources/search", {
+    profileId,
+    query: $("searchInput").value.trim() || null,
+    skip: 0,
+    take: 120
+  });
+  $("resourceTotal").textContent = String(result.total);
+  renderResources(result.items);
+  setStatus(`找到 ${result.total} 个资源`);
+}
+
+function renderResources(items) {
+  const list = $("resourceList");
+  list.innerHTML = "";
+  for (const item of items) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "resource-item";
+    button.innerHTML = `
+      <span class="resource-path">${item.virtualPath}</span>
+      <span class="resource-meta">${item.extension || "file"} · ${item.size}</span>
+    `;
+    button.addEventListener("click", () => previewResource(item, button));
+    list.appendChild(button);
+  }
+}
+
+async function previewResource(resource, button) {
+  state.selectedResource = resource;
+  for (const item of document.querySelectorAll(".resource-item")) {
+    item.classList.remove("selected");
+  }
+  button.classList.add("selected");
+  $("selectedPath").textContent = resource.virtualPath;
+  $("previewKind").textContent = "加载中";
+  setStatus("正在读取预览...");
+  const preview = await api("/api/preview", {
+    profileId: resource.profileId,
+    virtualPath: resource.virtualPath,
+    limit: 65536,
+    oodlePath: $("oodlePathInput").value.trim() || null
+  });
+  $("previewKind").textContent = preview.kind === 1 ? "文本" : preview.kind === 2 ? "十六进制" : "不可预览";
+  $("previewText").value = preview.text || preview.hex || preview.message || "";
+  $("saveOverlayBtn").disabled = preview.kind !== 1;
+  setStatus("预览已加载");
+}
+
+async function saveOverlay() {
+  if (!state.selectedResource) return;
+  setStatus("正在保存覆盖...");
+  const result = await api("/api/overlay/save-text", {
+    profileId: state.selectedResource.profileId,
+    virtualPath: state.selectedResource.virtualPath,
+    text: $("previewText").value
+  });
+  writeLog($("actionOutput"), result);
+  setStatus("覆盖已保存");
+}
+
+async function patchDryRun() {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  setStatus("正在执行补丁预检...");
+  const result = await api("/api/patch/dry-run", { profileId });
+  writeLog($("actionOutput"), result);
+  setStatus(`补丁预检完成：${result.totalChanges} 个改动`);
+}
+
+function bind() {
+  $("refreshProfilesBtn").addEventListener("click", refreshProfiles);
+  $("detectBtn").addEventListener("click", detectClient);
+  $("saveProfileBtn").addEventListener("click", saveProfile);
+  $("buildNativeIndexBtn").addEventListener("click", startNativeIndexJob);
+  $("searchBtn").addEventListener("click", searchResources);
+  $("searchInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") searchResources();
+  });
+  $("profileSelect").addEventListener("change", () => {
+    state.selectedProfile = state.profiles.find((item) => item.id === $("profileSelect").value) || null;
+    searchResources();
+  });
+  $("saveOverlayBtn").addEventListener("click", saveOverlay);
+  $("patchDryRunBtn").addEventListener("click", patchDryRun);
+}
+
+bind();
+refreshProfiles().catch((error) => setStatus(error.message));
