@@ -20,6 +20,7 @@ public sealed class WorkspaceLayoutTests
 
     [Theory]
     [InlineData("")]
+    [InlineData(".")]
     [InlineData("..")]
     [InlineData("../escape")]
     [InlineData("..\\escape")]
