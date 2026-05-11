@@ -130,6 +130,11 @@ function trackJob(jobId) {
       setStatus(`${job.kind}: ${job.message}`);
       if (job.status === 2 || job.status === 3) {
         clearInterval(state.jobTimer);
+        if (job.status === 3) {
+          writeLog($("actionOutput"), job);
+          setStatus(job.errorMessage || "任务失败");
+          return;
+        }
         if (job.resultJson) handleJobResult(job);
       }
     } catch (error) {
