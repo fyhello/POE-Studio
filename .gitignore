@@ -1,1 +1,6 @@
 .worktrees/
+**/bin/
+**/obj/
+.vs/
+TestResults/
+*.user
