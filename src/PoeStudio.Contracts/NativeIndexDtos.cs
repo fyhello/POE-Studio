@@ -62,3 +62,19 @@ public sealed record NativeIndexParseResponse(
     long DirectoryBundleDataOffset,
     long DirectoryBundleDataSize,
     IReadOnlyList<string> Warnings);
+
+public sealed record NativeIndexResolvePathsRequest(
+    string ProfileId,
+    string IndexPath,
+    string OodlePath);
+
+public sealed record NativeIndexResolvePathsResponse(
+    bool Ok,
+    string ProfileId,
+    int FileCount,
+    int ResolvedCount,
+    int FailedCount,
+    int BundleCount,
+    int DirectoryCount,
+    IReadOnlyList<string> SamplePaths,
+    IReadOnlyList<string> Warnings);

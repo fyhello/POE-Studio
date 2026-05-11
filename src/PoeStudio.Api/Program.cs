@@ -36,6 +36,8 @@ builder.Services.AddSingleton(sp =>
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
     return new NativeIndexCacheService(workspaceRoot, sp.GetRequiredService<IOodleCodec>());
 });
+builder.Services.AddSingleton<OodleCodecFactory>(_ => path => new NativeOodleCodec(path));
+builder.Services.AddSingleton<NativeIndexPathService>();
 builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
@@ -301,6 +303,31 @@ app.MapPost("/api/native/bundles2/parse-index-cache", async (
         result.DirectoryBundleDataSize,
         result.Warnings);
     return Results.Ok(ApiResponse<NativeIndexParseResponse>.Success(response));
+});
+
+app.MapPost("/api/native/bundles2/resolve-paths", async (
+    NativeIndexResolvePathsRequest request,
+    NativeIndexPathService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var response = await service.ResolveAsync(request, cancellationToken);
+        return Results.Ok(ApiResponse<NativeIndexResolvePathsResponse>.Success(response));
+    }
+    catch (Exception ex) when (ex is FileNotFoundException or EntryPointNotFoundException or BadImageFormatException or DllNotFoundException)
+    {
+        return Results.Ok(ApiResponse<NativeIndexResolvePathsResponse>.Success(new NativeIndexResolvePathsResponse(
+            Ok: false,
+            request.ProfileId,
+            FileCount: 0,
+            ResolvedCount: 0,
+            FailedCount: 0,
+            BundleCount: 0,
+            DirectoryCount: 0,
+            SamplePaths: [],
+            Warnings: [$"无法加载 oo2core.dll：{ex.Message}"])));
+    }
 });
 
 app.Run();

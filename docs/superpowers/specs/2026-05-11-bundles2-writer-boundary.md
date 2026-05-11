@@ -129,3 +129,21 @@ C:\WeGameApps\rail_apps\流放之路：降临(2002052)\Bundles2\_.index.bin
 - Last bundle：`Streaming/Folders/art/2ditems/pets.6`。
 
 这些数值与前期 LibGGPK3 调研结果一致。下一步可以在不依赖 LibGGPK3 的前提下实现路径还原和资源索引落库。
+
+## 真实路径还原验证
+
+路径还原需要再解压 `directoryBundleData`，因为它本身仍是 Bundles2 bundle 数据。新增：
+
+- `NativeBundleDecompressor`：通用 bundle byte-array 解压器。
+- `NativeIndexPathResolver`：复刻 LibBundle3 `ParsePaths()` 的路径展开和 MurmurHash64A 匹配。
+- `NativeIndexPathService`：串联 index 解压、record 解析、directory data 解压、路径还原。
+
+真实国服验证结果：
+
+- File count：3,414,615。
+- Resolved paths：3,414,610。
+- Failed paths：5。
+- Directory data decompressed size：165,208,178 bytes。
+- 示例路径包含 `audio/languages/simplified chinese/dialogue/npc/...` 等真实虚拟路径。
+
+结论：Native 只读链路已能还原绝大多数 Bundles2 虚拟路径，失败数量与前期 LibGGPK3 调研一致。
