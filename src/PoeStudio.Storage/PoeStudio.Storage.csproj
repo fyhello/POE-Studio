@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PoeStudio.Contracts\PoeStudio.Contracts.csproj" />
+    <ProjectReference Include="..\PoeStudio.Core\PoeStudio.Core.csproj" />
   </ItemGroup>
 
   <PropertyGroup>
