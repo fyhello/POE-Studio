@@ -22,8 +22,24 @@ public sealed class ProfileStore
     {
         var layout = WorkspaceLayout.ForProfile(workspaceRoot, profile.Id);
         layout.EnsureDirectories();
-        await using var stream = File.Create(layout.ProfileJsonPath);
-        await JsonSerializer.SerializeAsync(stream, profile, JsonOptions, cancellationToken);
+        var tempPath = $"{layout.ProfileJsonPath}.{Guid.NewGuid():N}.tmp";
+
+        try
+        {
+            await using (var stream = File.Create(tempPath))
+            {
+                await JsonSerializer.SerializeAsync(stream, profile, JsonOptions, cancellationToken);
+            }
+
+            File.Move(tempPath, layout.ProfileJsonPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
     }
 
     public async Task<IReadOnlyList<ClientProfileDto>> ListAsync(CancellationToken cancellationToken)
@@ -35,8 +51,14 @@ public sealed class ProfileStore
         }
 
         var items = new List<ClientProfileDto>();
-        foreach (var file in Directory.EnumerateFiles(profilesRoot, "profile.json", SearchOption.AllDirectories))
+        foreach (var profileRoot in Directory.EnumerateDirectories(profilesRoot))
         {
+            var file = Path.Combine(profileRoot, "profile.json");
+            if (!File.Exists(file))
+            {
+                continue;
+            }
+
             await using var stream = File.OpenRead(file);
             var profile = await JsonSerializer.DeserializeAsync<ClientProfileDto>(stream, JsonOptions, cancellationToken);
             if (profile is not null)
