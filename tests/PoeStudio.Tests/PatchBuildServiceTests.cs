@@ -89,6 +89,24 @@ public sealed class PatchBuildServiceTests
         Assert.True(File.Exists(result.BundlePath));
     }
 
+    [Fact]
+    public async Task BuildAsync_native_bundles2_mode_fails_until_writer_is_available()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root);
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay);
+
+        var ex = await Assert.ThrowsAsync<PatchBuildException>(() => service.BuildAsync(
+            new PatchBuildRequest(profile.Id, WriterKind: PatchPackageWriterKind.NativeBundles2),
+            profile,
+            CancellationToken.None));
+
+        Assert.Equal("native_writer_unavailable", ex.ErrorCode);
+        Assert.Contains("Native Bundles2", ex.Message, StringComparison.Ordinal);
+    }
+
     private static ClientProfileDto Profile(string root)
     {
         var id = Guid.NewGuid().ToString("N");
@@ -109,6 +127,8 @@ public sealed class PatchBuildServiceTests
 
     private sealed class CapturingPatchPackageWriter : IPatchPackageWriter
     {
+        public PatchPackageWriterKind Kind => PatchPackageWriterKind.Mvp;
+
         public PatchPackageWriterContext? Context { get; private set; }
 
         public async Task<PatchPackageWriteResult> WriteAsync(PatchPackageWriterContext context, CancellationToken cancellationToken)

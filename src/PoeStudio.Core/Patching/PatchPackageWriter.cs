@@ -5,6 +5,8 @@ namespace PoeStudio.Core.Patching;
 
 public interface IPatchPackageWriter
 {
+    PatchPackageWriterKind Kind { get; }
+
     Task<PatchPackageWriteResult> WriteAsync(PatchPackageWriterContext context, CancellationToken cancellationToken);
 }
 
@@ -23,6 +25,8 @@ public sealed record PatchPackageWriteResult(
 
 public sealed class MvpPatchPackageWriter : IPatchPackageWriter
 {
+    public PatchPackageWriterKind Kind => PatchPackageWriterKind.Mvp;
+
     public async Task<PatchPackageWriteResult> WriteAsync(PatchPackageWriterContext context, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(context.BundlesDirectory);
@@ -67,4 +71,19 @@ public sealed class MvpPatchPackageWriter : IPatchPackageWriter
             writer.Write(content);
         }
     }
+}
+
+public sealed class UnavailablePatchPackageWriter(PatchPackageWriterKind kind, string errorCode, string message) : IPatchPackageWriter
+{
+    public PatchPackageWriterKind Kind { get; } = kind;
+
+    public Task<PatchPackageWriteResult> WriteAsync(PatchPackageWriterContext context, CancellationToken cancellationToken)
+    {
+        throw new PatchBuildException(errorCode, message);
+    }
+}
+
+public sealed class PatchBuildException(string errorCode, string message) : InvalidOperationException(message)
+{
+    public string ErrorCode { get; } = errorCode;
 }

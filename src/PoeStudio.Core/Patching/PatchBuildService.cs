@@ -20,18 +20,23 @@ public sealed class PatchBuildService
 
     private readonly string workspaceRoot;
     private readonly IPatchOverlayReader overlayStore;
-    private readonly IPatchPackageWriter packageWriter;
+    private readonly IReadOnlyDictionary<PatchPackageWriterKind, IPatchPackageWriter> packageWriters;
 
     public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore)
-        : this(workspaceRoot, overlayStore, new MvpPatchPackageWriter())
+        : this(workspaceRoot, overlayStore, [new MvpPatchPackageWriter(), CreateNativeUnavailableWriter(), CreateLibGgpkUnavailableWriter()])
     {
     }
 
     public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IPatchPackageWriter packageWriter)
+        : this(workspaceRoot, overlayStore, [packageWriter])
+    {
+    }
+
+    public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IEnumerable<IPatchPackageWriter> packageWriters)
     {
         this.workspaceRoot = Path.GetFullPath(workspaceRoot);
         this.overlayStore = overlayStore;
-        this.packageWriter = packageWriter;
+        this.packageWriters = packageWriters.ToDictionary(writer => writer.Kind);
     }
 
     public async Task<PatchDryRunResponse> DryRunAsync(
@@ -67,7 +72,12 @@ public sealed class PatchBuildService
             ? Path.Combine(outputDirectory, "Bundles2")
             : Path.Combine(outputDirectory, rootPrefix, "Bundles2");
 
-        var writeResult = await packageWriter.WriteAsync(
+        if (!packageWriters.TryGetValue(request.WriterKind, out var writer))
+        {
+            throw new PatchBuildException("patch_writer_unavailable", $"补丁写入器不可用：{request.WriterKind}");
+        }
+
+        var writeResult = await writer.WriteAsync(
             new PatchPackageWriterContext(profile, request, bundlesDirectory, overlayEntries, dryRun.Changes),
             cancellationToken);
 
@@ -160,6 +170,22 @@ public sealed class PatchBuildService
     private static string GetTemplateRoot(PatchZipTemplate template)
     {
         return template == PatchZipTemplate.Epic ? "PathOfExile2" : string.Empty;
+    }
+
+    private static IPatchPackageWriter CreateNativeUnavailableWriter()
+    {
+        return new UnavailablePatchPackageWriter(
+            PatchPackageWriterKind.NativeBundles2,
+            "native_writer_unavailable",
+            "Native Bundles2 写入器尚未接入，当前不能生成可安装的真实 Bundles2 补丁。");
+    }
+
+    private static IPatchPackageWriter CreateLibGgpkUnavailableWriter()
+    {
+        return new UnavailablePatchPackageWriter(
+            PatchPackageWriterKind.LibGgpk3Adapter,
+            "libggpk3_writer_unavailable",
+            "LibGGPK3 Adapter 尚未接入；正式闭源发布前还需要处理 AGPL 授权边界。");
     }
 
     private static IReadOnlyDictionary<TKey, int> CountBy<TKey>(

@@ -238,8 +238,15 @@ app.MapPost("/api/patch/build", async (
         return Results.NotFound(ApiResponse<PatchBuildResponse>.Failure("profile_not_found", "未找到客户端配置。"));
     }
 
-    var response = await patchBuild.BuildAsync(request, profile, cancellationToken);
-    return Results.Ok(ApiResponse<PatchBuildResponse>.Success(response));
+    try
+    {
+        var response = await patchBuild.BuildAsync(request, profile, cancellationToken);
+        return Results.Ok(ApiResponse<PatchBuildResponse>.Success(response));
+    }
+    catch (PatchBuildException ex)
+    {
+        return Results.BadRequest(ApiResponse<PatchBuildResponse>.Failure(ex.ErrorCode, ex.Message));
+    }
 });
 
 app.Run();

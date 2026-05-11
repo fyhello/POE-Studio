@@ -205,4 +205,34 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         Assert.True(File.Exists(buildPayload?.Data?.ZipPath));
         Assert.Equal(PatchBuildMode.OverlayBundleMvp, buildPayload?.Data?.BuildMode);
     }
+
+    [Fact]
+    public async Task Patch_build_native_mode_returns_clear_failure_until_writer_is_available()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "sample.txt"), "base");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+        await client.PostAsJsonAsync("/api/overlay/save-text", new SaveTextOverlayRequest(created.Data.Id, "text/sample.txt", "overlay"));
+
+        var build = await client.PostAsJsonAsync("/api/patch/build", new PatchBuildRequest(created.Data.Id, WriterKind: PatchPackageWriterKind.NativeBundles2));
+        var payload = await build.Content.ReadFromJsonAsync<ApiResponse<PatchBuildResponse>>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, build.StatusCode);
+        Assert.False(payload?.Ok);
+        Assert.Equal("native_writer_unavailable", payload?.ErrorCode);
+    }
 }

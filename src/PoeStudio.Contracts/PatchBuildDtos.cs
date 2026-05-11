@@ -17,7 +17,15 @@ public enum PatchZipTemplate
 
 public enum PatchBuildMode
 {
-    OverlayBundleMvp = 0
+    OverlayBundleMvp = 0,
+    NativeBundles2 = 1
+}
+
+public enum PatchPackageWriterKind
+{
+    Mvp = 0,
+    NativeBundles2 = 1,
+    LibGgpk3Adapter = 2
 }
 
 public sealed record PatchDryRunRequest(string ProfileId);
@@ -25,7 +33,8 @@ public sealed record PatchDryRunRequest(string ProfileId);
 public sealed record PatchBuildRequest(
     string ProfileId,
     PatchZipTemplate Template = PatchZipTemplate.Official,
-    string BundleName = "Tiny.V0.1.bundle.bin");
+    string BundleName = "Tiny.V0.1.bundle.bin",
+    PatchPackageWriterKind WriterKind = PatchPackageWriterKind.Mvp);
 
 public sealed record PatchChangeDto(
     string VirtualPath,
