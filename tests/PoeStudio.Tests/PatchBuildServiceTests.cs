@@ -169,6 +169,34 @@ public sealed class PatchBuildServiceTests
         Assert.False(File.Exists(Path.Combine(bundles, "Tiny.V0.1.bundle.bin")));
     }
 
+    [Fact]
+    public async Task UninstallAsync_restores_files_that_existed_before_install()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var clientRoot = Path.Combine(root, "client");
+        var bundles = Path.Combine(clientRoot, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var existingBundle = Path.Combine(bundles, "Tiny.V0.1.bundle.bin");
+        await File.WriteAllBytesAsync(existingBundle, [9, 9, 9]);
+        var profile = Profile(root) with
+        {
+            RootPath = clientRoot,
+            Bundles2Path = bundles,
+            IndexPath = Path.Combine(bundles, "_.index.bin")
+        };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay);
+        var build = await service.BuildAsync(new PatchBuildRequest(profile.Id), profile, CancellationToken.None);
+        var buildId = new DirectoryInfo(build.OutputDirectory).Name;
+
+        var installed = await service.InstallAsync(new PatchInstallRequest(profile.Id, buildId, Apply: true), profile, CancellationToken.None);
+        await service.UninstallAsync(new PatchUninstallRequest(profile.Id, buildId, Apply: true), profile, CancellationToken.None);
+
+        Assert.True(installed.Files.Single(file => file.RelativePath == "Tiny.V0.1.bundle.bin").TargetExists);
+        Assert.Equal([9, 9, 9], await File.ReadAllBytesAsync(existingBundle));
+    }
+
     private static ClientProfileDto Profile(string root)
     {
         var id = Guid.NewGuid().ToString("N");

@@ -164,14 +164,27 @@ public sealed class PatchBuildService
         string? installManifestPath = null;
         if (request.Apply)
         {
+            var backupRoot = Path.Combine(buildDirectory, "install_backups");
+            if (Directory.Exists(backupRoot))
+            {
+                Directory.Delete(backupRoot, recursive: true);
+            }
+
             foreach (var file in files)
             {
+                if (File.Exists(file.TargetPath))
+                {
+                    var backupPath = SafeCombine(backupRoot, file.RelativePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
+                    File.Copy(file.TargetPath, backupPath, overwrite: true);
+                }
+
                 Directory.CreateDirectory(Path.GetDirectoryName(file.TargetPath)!);
                 File.Copy(file.SourcePath, file.TargetPath, overwrite: true);
             }
 
             installManifestPath = Path.Combine(buildDirectory, "install_manifest.json");
-            await WriteJsonAsync(installManifestPath, new PatchInstallManifestDto(request.ProfileId, request.BuildId, DateTimeOffset.UtcNow, files), cancellationToken);
+            await WriteJsonAsync(installManifestPath, new PatchInstallManifestDto(request.ProfileId, request.BuildId, DateTimeOffset.UtcNow, backupRoot, files), cancellationToken);
         }
 
         return new PatchInstallResponse(request.ProfileId, request.BuildId, request.Apply, files.Length, files, installManifestPath, []);
@@ -197,24 +210,31 @@ public sealed class PatchBuildService
 
         await using var stream = File.OpenRead(manifestPath);
         var manifest = await JsonSerializer.DeserializeAsync<PatchInstallManifestDto>(stream, JsonOptions, cancellationToken);
-        var targets = manifest?.Files
-            .Select(file => file.TargetPath)
-            .Where(path => IsSubPath(profile.Bundles2Path, path))
-            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+        var files = manifest?.Files
+            .Where(file => IsSubPath(profile.Bundles2Path, file.TargetPath))
+            .OrderBy(file => file.TargetPath, StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
 
         if (request.Apply)
         {
-            foreach (var target in targets)
+            foreach (var file in files)
             {
-                if (File.Exists(target))
+                var backupPath = manifest is not null && !string.IsNullOrWhiteSpace(manifest.BackupRoot)
+                    ? SafeCombine(manifest.BackupRoot, file.RelativePath)
+                    : null;
+                if (file.TargetExists && backupPath is not null && File.Exists(backupPath))
                 {
-                    File.Delete(target);
+                    Directory.CreateDirectory(Path.GetDirectoryName(file.TargetPath)!);
+                    File.Copy(backupPath, file.TargetPath, overwrite: true);
+                }
+                else if (File.Exists(file.TargetPath))
+                {
+                    File.Delete(file.TargetPath);
                 }
             }
         }
 
-        return new PatchUninstallResponse(request.ProfileId, request.BuildId, request.Apply, targets.Length, targets, []);
+        return new PatchUninstallResponse(request.ProfileId, request.BuildId, request.Apply, files.Length, files.Select(file => file.TargetPath).ToArray(), []);
     }
 
     private async Task<IReadOnlyList<PatchChangeDto>> BuildChangesAsync(string profileId, CancellationToken cancellationToken)
@@ -326,5 +346,6 @@ public sealed class PatchBuildService
         string ProfileId,
         string BuildId,
         DateTimeOffset InstalledAt,
+        string BackupRoot,
         IReadOnlyList<PatchInstallFileDto> Files);
 }
