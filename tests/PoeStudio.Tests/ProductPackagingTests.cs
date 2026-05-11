@@ -23,6 +23,7 @@ public sealed class ProductPackagingTests
         Assert.Contains("PoeStudio.Api.exe", script, StringComparison.Ordinal);
         Assert.Contains("PoeStudio.Api.dll", script, StringComparison.Ordinal);
         Assert.Contains("src\\PoeStudio.Api\\PoeStudio.Api.csproj", script, StringComparison.Ordinal);
+        Assert.Contains("Get-NetTCPConnection", script, StringComparison.Ordinal);
     }
 
     [Fact]

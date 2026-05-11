@@ -5,10 +5,14 @@ $url = "http://localhost:5087"
 $exePath = Join-Path $root "PoeStudio.Api.exe"
 $dllPath = Join-Path $root "PoeStudio.Api.dll"
 $projectPath = Join-Path $root "src\PoeStudio.Api\PoeStudio.Api.csproj"
+$existing = Get-NetTCPConnection -LocalPort 5087 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 
 Set-Location $root
 
-if (Test-Path $exePath) {
+if ($existing) {
+    Write-Host "POE Studio 已在运行：$url"
+}
+elseif (Test-Path $exePath) {
     Start-Process -FilePath $exePath -ArgumentList @("--urls", $url) -WorkingDirectory $root -WindowStyle Hidden
 }
 elseif (Test-Path $dllPath) {
