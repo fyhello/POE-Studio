@@ -235,6 +235,46 @@ app.MapPost("/api/overlay/revert", async (
     }
 });
 
+app.MapPost("/api/overlay/batch-save-text", async (
+    BatchSaveTextOverlayRequest request,
+    ResourceIndexStore resourceIndex,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    var search = await resourceIndex.SearchAsync(new ResourceSearchRequest(
+        request.ProfileId,
+        Query: request.Query,
+        Skip: 0,
+        Take: Math.Clamp(request.Take, 1, 200)), cancellationToken);
+    var saved = new List<string>();
+    var warnings = new List<string>();
+
+    foreach (var resource in search.Items)
+    {
+        if (resource.Kind is not (ResourceKind.Text or ResourceKind.Ui))
+        {
+            warnings.Add($"跳过非文本资源：{resource.VirtualPath}");
+            continue;
+        }
+
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(
+            request.ProfileId,
+            resource.VirtualPath,
+            request.Text,
+            resource.PhysicalPath,
+            HasBasePhysicalPath: resource.PhysicalPath is not null), cancellationToken);
+        saved.Add(resource.VirtualPath);
+    }
+
+    var response = new BatchSaveTextOverlayResponse(
+        request.ProfileId,
+        search.Total,
+        saved.Count,
+        saved,
+        warnings);
+    return Results.Ok(ApiResponse<BatchSaveTextOverlayResponse>.Success(response));
+});
+
 app.MapPost("/api/patch/dry-run", async (
     PatchDryRunRequest request,
     ProfileStore profiles,

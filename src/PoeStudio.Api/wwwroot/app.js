@@ -174,6 +174,7 @@ async function previewResource(resource, button) {
   $("previewKind").textContent = preview.kind === 1 ? "文本" : preview.kind === 2 ? "十六进制" : "不可预览";
   $("previewText").value = preview.text || preview.hex || preview.message || "";
   $("saveOverlayBtn").disabled = preview.kind !== 1;
+  $("batchOverlayBtn").disabled = preview.kind !== 1;
   setStatus("预览已加载");
 }
 
@@ -196,6 +197,25 @@ async function patchDryRun() {
   const result = await api("/api/patch/dry-run", { profileId });
   writeLog($("actionOutput"), result);
   setStatus(`补丁预检完成：${result.totalChanges} 个改动`);
+}
+
+async function batchOverlay() {
+  const profileId = selectedProfileId();
+  const query = $("searchInput").value.trim();
+  if (!profileId || !query) {
+    setStatus("批量覆盖需要先输入搜索条件");
+    return;
+  }
+
+  setStatus("正在批量保存覆盖...");
+  const result = await api("/api/overlay/batch-save-text", {
+    profileId,
+    query,
+    text: $("previewText").value,
+    take: 50
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(`批量覆盖完成：${result.saved}/${result.matched}`);
 }
 
 async function patchBuild() {
@@ -245,6 +265,7 @@ function bind() {
     refreshBuildHistory();
   });
   $("saveOverlayBtn").addEventListener("click", saveOverlay);
+  $("batchOverlayBtn").addEventListener("click", batchOverlay);
   $("patchDryRunBtn").addEventListener("click", patchDryRun);
   $("patchBuildBtn").addEventListener("click", patchBuild);
   $("refreshBuildsBtn").addEventListener("click", refreshBuildHistory);

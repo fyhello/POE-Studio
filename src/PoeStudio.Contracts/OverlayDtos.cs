@@ -45,3 +45,16 @@ public sealed record RevertOverlayResponse(
     string ProfileId,
     string VirtualPath,
     bool Removed);
+
+public sealed record BatchSaveTextOverlayRequest(
+    string ProfileId,
+    string Query,
+    string Text,
+    int Take = 50);
+
+public sealed record BatchSaveTextOverlayResponse(
+    string ProfileId,
+    int Matched,
+    int Saved,
+    IReadOnlyList<string> SavedPaths,
+    IReadOnlyList<string> Warnings);

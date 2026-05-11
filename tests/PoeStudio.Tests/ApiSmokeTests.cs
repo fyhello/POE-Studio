@@ -183,6 +183,40 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Batch_overlay_save_updates_text_resources_from_search()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "one.txt"), "base");
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "two.txt"), "base");
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "text", "skip.bin"), [1, 2, 3]);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var batch = await client.PostAsJsonAsync("/api/overlay/batch-save-text", new BatchSaveTextOverlayRequest(created.Data.Id, "text", "changed"));
+        var batchPayload = await batch.Content.ReadFromJsonAsync<ApiResponse<BatchSaveTextOverlayResponse>>();
+        var list = await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(created.Data.Id));
+        var listPayload = await list.Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, batch.StatusCode);
+        Assert.Equal(2, batchPayload?.Data?.Matched);
+        Assert.Equal(2, batchPayload?.Data?.Saved);
+        Assert.Equal(2, listPayload?.Data?.Total);
+    }
+
+    [Fact]
     public async Task Patch_dry_run_and_build_return_manifest_and_zip_paths()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
