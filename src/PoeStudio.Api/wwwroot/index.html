@@ -114,6 +114,14 @@
         <textarea id="translationCsvText" spellcheck="false" placeholder="翻译 CSV 会显示在这里"></textarea>
       </div>
 
+      <div class="script-box">
+        <div class="button-row">
+          <button id="previewScriptBtn" type="button" disabled>预检脚本</button>
+          <button id="applyScriptBtn" type="button" disabled>应用脚本</button>
+        </div>
+        <textarea id="batchScriptText" spellcheck="false" placeholder='[{"name":"规则名","query":"text","find":"exile","replace":"流放者","kind":1,"extension":".txt","take":100}]'></textarea>
+      </div>
+
       <pre id="actionOutput" class="log"></pre>
 
       <div class="panel-title compact-title">

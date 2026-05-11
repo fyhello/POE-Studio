@@ -174,12 +174,14 @@ textarea:focus {
   min-width: 96px;
 }
 
-.translation-box {
+.translation-box,
+.script-box {
   display: grid;
   gap: 8px;
 }
 
-.translation-box textarea {
+.translation-box textarea,
+.script-box textarea {
   flex: none;
   min-height: 96px;
   max-height: 160px;

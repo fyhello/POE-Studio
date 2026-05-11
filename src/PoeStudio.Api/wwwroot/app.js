@@ -54,6 +54,8 @@ async function refreshProfiles() {
   $("refreshOverlayBtn").disabled = !state.selectedProfile;
   $("exportTranslationBtn").disabled = !state.selectedProfile;
   $("importTranslationBtn").disabled = !state.selectedProfile;
+  $("previewScriptBtn").disabled = !state.selectedProfile;
+  $("applyScriptBtn").disabled = !state.selectedProfile;
   setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
   if (state.selectedProfile) refreshBuildHistory();
   if (state.selectedProfile) refreshOverlayList();
@@ -379,6 +381,33 @@ async function importTranslationCsv() {
   refreshOverlayList();
 }
 
+async function runBatchScript(apply) {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  let operations;
+  try {
+    operations = JSON.parse($("batchScriptText").value || "[]");
+  } catch (error) {
+    setStatus("脚本 JSON 格式不正确");
+    return;
+  }
+
+  if (!Array.isArray(operations) || operations.length === 0) {
+    setStatus("脚本至少需要一条规则");
+    return;
+  }
+
+  setStatus(apply ? "正在应用批处理脚本..." : "正在预检批处理脚本...");
+  const result = await api("/api/batch/run-script", {
+    profileId,
+    operations,
+    apply
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(apply ? `脚本已应用：${result.changed}` : `脚本预检完成：${result.changed}`);
+  if (apply) refreshOverlayList();
+}
+
 async function patchBuild() {
   const profileId = selectedProfileId();
   if (!profileId) return;
@@ -478,6 +507,8 @@ function bind() {
   $("batchReplaceBtn").addEventListener("click", batchReplaceText);
   $("exportTranslationBtn").addEventListener("click", exportTranslationCsv);
   $("importTranslationBtn").addEventListener("click", importTranslationCsv);
+  $("previewScriptBtn").addEventListener("click", () => runBatchScript(false));
+  $("applyScriptBtn").addEventListener("click", () => runBatchScript(true));
   $("patchDryRunBtn").addEventListener("click", patchDryRun);
   $("patchBuildBtn").addEventListener("click", patchBuild);
   $("refreshBuildsBtn").addEventListener("click", refreshBuildHistory);

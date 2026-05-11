@@ -322,6 +322,48 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Batch_script_preview_and_apply_text_replacements()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "one.txt"), "alpha exile");
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "two.txt"), "beta exile");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+        var operation = new BatchScriptOperationDto("汉化 exile", "text", "exile", "流放者", ResourceKind.Text, ".txt", Take: 20);
+
+        var preview = await client.PostAsJsonAsync("/api/batch/run-script", new BatchScriptRunRequest(created.Data.Id, [operation], Apply: false));
+        var previewPayload = await preview.Content.ReadFromJsonAsync<ApiResponse<BatchScriptRunResponse>>();
+        var emptyList = await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(created.Data.Id));
+        var emptyListPayload = await emptyList.Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
+        var apply = await client.PostAsJsonAsync("/api/batch/run-script", new BatchScriptRunRequest(created.Data.Id, [operation], Apply: true));
+        var applyPayload = await apply.Content.ReadFromJsonAsync<ApiResponse<BatchScriptRunResponse>>();
+        var list = await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(created.Data.Id));
+        var listPayload = await list.Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        Assert.False(previewPayload?.Data?.Applied);
+        Assert.Equal(2, previewPayload?.Data?.Changed);
+        Assert.Equal(0, emptyListPayload?.Data?.Total);
+        Assert.Equal(HttpStatusCode.OK, apply.StatusCode);
+        Assert.True(applyPayload?.Data?.Applied);
+        Assert.Equal(2, applyPayload?.Data?.Changed);
+        Assert.Equal(2, listPayload?.Data?.Total);
+    }
+
+    [Fact]
     public async Task Patch_dry_run_and_build_return_manifest_and_zip_paths()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

@@ -1,5 +1,6 @@
 using PoeStudio.Contracts;
 using PoeStudio.Api.Jobs;
+using PoeStudio.Core.Batch;
 using PoeStudio.Core.ClientDetection;
 using PoeStudio.Core.Native;
 using PoeStudio.Core.Patching;
@@ -581,6 +582,80 @@ app.MapPost("/api/translation/import-csv", async (
         applied,
         warnings);
     return Results.Ok(ApiResponse<TranslationImportResponse>.Success(response));
+});
+
+app.MapPost("/api/batch/run-script", async (
+    BatchScriptRunRequest request,
+    ResourceIndexStore resourceIndex,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    if (request.Operations.Count == 0)
+    {
+        return Results.BadRequest(ApiResponse<BatchScriptRunResponse>.Failure("empty_batch_script", "批处理脚本至少需要一条规则。"));
+    }
+
+    var warnings = new List<string>();
+    var candidates = new List<(BatchScriptOperationDto Operation, ResourceSummaryDto Resource, string Text)>();
+    foreach (var operation in request.Operations)
+    {
+        if (string.IsNullOrWhiteSpace(operation.Query))
+        {
+            warnings.Add($"跳过空搜索规则：{operation.Name}");
+            continue;
+        }
+
+        var search = await resourceIndex.SearchAsync(new ResourceSearchRequest(
+            request.ProfileId,
+            Query: operation.Query,
+            Kind: operation.Kind,
+            Extension: operation.Extension,
+            Skip: 0,
+            Take: Math.Clamp(operation.Take, 1, 500)), cancellationToken);
+
+        foreach (var resource in search.Items)
+        {
+            if (resource.Kind is not (ResourceKind.Text or ResourceKind.Ui))
+            {
+                warnings.Add($"跳过非文本资源：{resource.VirtualPath}");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(resource.PhysicalPath) || !File.Exists(resource.PhysicalPath))
+            {
+                warnings.Add($"跳过尚不可读取的资源：{resource.VirtualPath}");
+                continue;
+            }
+
+            var text = await File.ReadAllTextAsync(resource.PhysicalPath, cancellationToken);
+            candidates.Add((operation, resource, text));
+        }
+    }
+
+    var runner = new BatchScriptRunner();
+    var result = runner.Run(request.ProfileId, request.Operations, candidates, request.Apply);
+    if (request.Apply)
+    {
+        foreach (var change in result.Changes)
+        {
+            var candidate = candidates.First(item =>
+                item.Operation.Name == change.OperationName
+                && item.Resource.VirtualPath == change.VirtualPath);
+            var replaced = candidate.Text.Replace(candidate.Operation.Find, candidate.Operation.Replace, StringComparison.Ordinal);
+            await overlay.SaveTextAsync(new SaveTextOverlayRequest(
+                request.ProfileId,
+                candidate.Resource.VirtualPath,
+                replaced,
+                candidate.Resource.PhysicalPath,
+                HasBasePhysicalPath: true), cancellationToken);
+        }
+    }
+
+    var response = result with
+    {
+        Warnings = result.Warnings.Concat(warnings).ToArray()
+    };
+    return Results.Ok(ApiResponse<BatchScriptRunResponse>.Success(response));
 });
 
 app.MapPost("/api/patch/dry-run", async (
