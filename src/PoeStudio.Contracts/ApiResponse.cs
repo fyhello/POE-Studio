@@ -7,3 +7,11 @@ public sealed record ApiResponse<T>(bool Ok, T? Data, string? ErrorCode, string?
     public static ApiResponse<T> Failure(string errorCode, string message) =>
         new(false, default, errorCode, message);
 }
+
+public sealed record AppDiagnosticsDto(
+    string Status,
+    string WorkspaceRoot,
+    bool WorkspaceWritable,
+    int ProfileCount,
+    DateTimeOffset CheckedAt,
+    IReadOnlyList<string> Warnings);

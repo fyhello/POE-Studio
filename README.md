@@ -10,6 +10,12 @@ POE2 客户端编辑与补丁工具 MVP。
 .\启动_POE_Studio.ps1
 ```
 
+也可以直接双击：
+
+```text
+启动_POE_Studio.bat
+```
+
 或者手动启动：
 
 ```powershell
@@ -32,6 +38,7 @@ http://localhost:5087/
 
 ```text
 artifacts\POE-Studio
+artifacts\POE-Studio.zip
 ```
 
 ## 当前主流程

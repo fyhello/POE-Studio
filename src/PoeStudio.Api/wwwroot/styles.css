@@ -74,6 +74,11 @@ h1 {
   font-size: 13px;
 }
 
+.top-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .shell {
   display: grid;
   grid-template-columns: 360px minmax(360px, 1fr) minmax(420px, 1.15fr);

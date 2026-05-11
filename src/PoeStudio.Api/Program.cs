@@ -70,6 +70,38 @@ app.MapGet("/api/health", () => ApiResponse<object>.Success(new
     utcTime = DateTimeOffset.UtcNow
 }));
 
+app.MapGet("/api/diagnostics", async (
+    IConfiguration config,
+    ProfileStore profiles,
+    CancellationToken cancellationToken) =>
+{
+    var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
+    var warnings = new List<string>();
+    var writable = false;
+    try
+    {
+        Directory.CreateDirectory(workspaceRoot);
+        var probe = Path.Combine(workspaceRoot, $".write-test-{Guid.NewGuid():N}");
+        await File.WriteAllTextAsync(probe, "ok", cancellationToken);
+        File.Delete(probe);
+        writable = true;
+    }
+    catch (Exception ex)
+    {
+        warnings.Add($"工作区不可写：{ex.Message}");
+    }
+
+    var profileCount = (await profiles.ListAsync(cancellationToken)).Count;
+    return ApiResponse<AppDiagnosticsDto>.Success(new AppDiagnosticsDto(
+        writable ? "ok" : "warning",
+        workspaceRoot,
+        writable,
+        profileCount,
+        DateTimeOffset.UtcNow,
+        warnings));
+});
+
 app.MapGet("/api/profiles", async (ProfileStore store, CancellationToken cancellationToken) =>
 {
     var profiles = await store.ListAsync(cancellationToken);

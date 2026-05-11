@@ -29,6 +29,20 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Diagnostics_returns_workspace_and_profile_count()
+    {
+        var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/api/diagnostics");
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<AppDiagnosticsDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(payload?.Ok);
+        Assert.True(payload?.Data?.WorkspaceWritable);
+        Assert.Equal("ok", payload?.Data?.Status);
+    }
+
+    [Fact]
     public async Task Workbench_home_page_is_served()
     {
         var client = factory.CreateClient();

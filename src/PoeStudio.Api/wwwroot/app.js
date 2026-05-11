@@ -68,6 +68,13 @@ async function detectClient() {
   setStatus(state.detected.detected ? "检测完成，可以保存配置" : "未检测到支持的客户端");
 }
 
+async function runDiagnostics() {
+  setStatus("正在自检...");
+  const result = await api("/api/diagnostics");
+  writeLog($("detectOutput"), result);
+  setStatus(result.workspaceWritable ? `自检通过：${result.profileCount} 个配置` : "自检发现问题");
+}
+
 async function saveProfile() {
   if (!state.detected) return;
   setStatus("正在保存配置...");
@@ -310,6 +317,7 @@ async function revertOverlay(virtualPath) {
 
 function bind() {
   $("refreshProfilesBtn").addEventListener("click", refreshProfiles);
+  $("diagnosticsBtn").addEventListener("click", runDiagnostics);
   $("cnPresetBtn").addEventListener("click", () => {
     $("rootPathInput").value = presets.cn;
   });
