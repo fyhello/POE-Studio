@@ -70,4 +70,102 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         var profile = Assert.Single(listPayload?.Data ?? []);
         Assert.Equal(OodleStatus.Found, profile.OodleStatus);
     }
+
+    [Fact]
+    public async Task Build_index_then_search_resources_returns_matches()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "metadata", "items"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "metadata", "items", "amulet.ot"), "item");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+
+        var build = await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+        var buildPayload = await build.Content.ReadFromJsonAsync<ApiResponse<ResourceIndexBuildResponse>>();
+        var search = await client.PostAsJsonAsync("/api/resources/search", new ResourceSearchRequest(created.Data.Id, Query: "amulet"));
+        var searchPayload = await search.Content.ReadFromJsonAsync<ApiResponse<ResourceSearchResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, build.StatusCode);
+        Assert.Equal(1, buildPayload?.Data?.TotalResources);
+        Assert.Equal(HttpStatusCode.OK, search.StatusCode);
+        var item = Assert.Single(searchPayload?.Data?.Items ?? []);
+        Assert.Equal("metadata/items/amulet.ot", item.VirtualPath);
+    }
+
+    [Fact]
+    public async Task Preview_resource_returns_text_content()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "config"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "config", "sample.json"), "{\"ok\":true}");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var preview = await client.PostAsJsonAsync("/api/preview", new ResourcePreviewRequest(created.Data.Id, "config/sample.json"));
+        var payload = await preview.Content.ReadFromJsonAsync<ApiResponse<ResourcePreviewResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        Assert.Equal(PreviewKind.Text, payload?.Data?.Kind);
+        Assert.Contains("\"ok\"", payload?.Data?.Text);
+    }
+
+    [Fact]
+    public async Task Overlay_save_list_diff_and_revert_work()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "sample.txt"), "base");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var save = await client.PostAsJsonAsync("/api/overlay/save-text", new SaveTextOverlayRequest(created.Data.Id, "text/sample.txt", "overlay"));
+        var savePayload = await save.Content.ReadFromJsonAsync<ApiResponse<OverlayEntryDto>>();
+        var list = await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(created.Data.Id));
+        var listPayload = await list.Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
+        var diff = await client.PostAsJsonAsync("/api/overlay/diff", new OverlayDiffRequest(created.Data.Id, "text/sample.txt"));
+        var diffPayload = await diff.Content.ReadFromJsonAsync<ApiResponse<OverlayDiffResponse>>();
+        var revert = await client.PostAsJsonAsync("/api/overlay/revert", new RevertOverlayRequest(created.Data.Id, "text/sample.txt"));
+        var revertPayload = await revert.Content.ReadFromJsonAsync<ApiResponse<RevertOverlayResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+        Assert.Equal("text/sample.txt", savePayload?.Data?.VirtualPath);
+        Assert.Single(listPayload?.Data?.Items ?? []);
+        Assert.True(diffPayload?.Data?.TextChanged);
+        Assert.True(revertPayload?.Data?.Removed);
+    }
 }

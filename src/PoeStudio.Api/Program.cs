@@ -1,6 +1,10 @@
 using PoeStudio.Contracts;
 using PoeStudio.Core.ClientDetection;
+using PoeStudio.Core.Preview;
+using PoeStudio.Core.Resources;
+using PoeStudio.Storage.Overlay;
 using PoeStudio.Storage.Profiles;
+using PoeStudio.Storage.Resources;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddCors();
@@ -10,6 +14,22 @@ builder.Services.AddSingleton(sp =>
     var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
     return new ProfileStore(workspaceRoot);
+});
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
+    return new ResourceIndexStore(workspaceRoot);
+});
+builder.Services.AddSingleton<FileSystemResourceIndexer>();
+builder.Services.AddSingleton<ResourcePreviewService>();
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
+    return new OverlayStore(workspaceRoot);
 });
 
 var app = builder.Build();
@@ -74,6 +94,111 @@ app.MapPost("/api/profiles", async (CreateProfileRequest request, ProfileStore s
 
     await store.SaveAsync(profile, cancellationToken);
     return Results.Ok(ApiResponse<ClientProfileDto>.Success(profile));
+});
+
+app.MapPost("/api/index/build", async (
+    ResourceIndexBuildRequest request,
+    ProfileStore profiles,
+    ResourceIndexStore resourceIndex,
+    FileSystemResourceIndexer indexer,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<ResourceIndexBuildResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    var result = await indexer.IndexAsync(profile, cancellationToken);
+    await resourceIndex.SaveAsync(profile.Id, result.Resources, result.Warnings, cancellationToken);
+    var response = new ResourceIndexBuildResponse(profile.Id, result.Resources.Count, DateTimeOffset.UtcNow, result.Warnings);
+    return Results.Ok(ApiResponse<ResourceIndexBuildResponse>.Success(response));
+});
+
+app.MapPost("/api/resources/search", async (
+    ResourceSearchRequest request,
+    ResourceIndexStore resourceIndex,
+    CancellationToken cancellationToken) =>
+{
+    var response = await resourceIndex.SearchAsync(request, cancellationToken);
+    return Results.Ok(ApiResponse<ResourceSearchResponse>.Success(response));
+});
+
+app.MapPost("/api/preview", async (
+    ResourcePreviewRequest request,
+    ResourceIndexStore resourceIndex,
+    ResourcePreviewService preview,
+    CancellationToken cancellationToken) =>
+{
+    var resource = await resourceIndex.GetByPathAsync(request.ProfileId, request.VirtualPath, cancellationToken);
+    if (resource is null)
+    {
+        return Results.NotFound(ApiResponse<ResourcePreviewResponse>.Failure("resource_not_found", "未找到资源，请先建立索引。"));
+    }
+
+    var response = await preview.BuildPreviewAsync(resource, request.Limit, cancellationToken);
+    return Results.Ok(ApiResponse<ResourcePreviewResponse>.Success(response));
+});
+
+app.MapPost("/api/overlay/save-text", async (
+    SaveTextOverlayRequest request,
+    ResourceIndexStore resourceIndex,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    var resource = await resourceIndex.GetByPathAsync(request.ProfileId, request.VirtualPath, cancellationToken);
+    var basePath = request.BasePhysicalPath ?? resource?.PhysicalPath;
+    var saveRequest = request with { BasePhysicalPath = basePath, HasBasePhysicalPath = basePath is not null };
+    try
+    {
+        var response = await overlay.SaveTextAsync(saveRequest, cancellationToken);
+        return Results.Ok(ApiResponse<OverlayEntryDto>.Success(response));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(ApiResponse<OverlayEntryDto>.Failure("invalid_virtual_path", ex.Message));
+    }
+});
+
+app.MapPost("/api/overlay/list", async (
+    OverlayListRequest request,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    var response = await overlay.ListAsync(request.ProfileId, cancellationToken);
+    return Results.Ok(ApiResponse<OverlayListResponse>.Success(response));
+});
+
+app.MapPost("/api/overlay/diff", async (
+    OverlayDiffRequest request,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var response = await overlay.DiffAsync(request, cancellationToken);
+        return Results.Ok(ApiResponse<OverlayDiffResponse>.Success(response));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(ApiResponse<OverlayDiffResponse>.Failure("invalid_virtual_path", ex.Message));
+    }
+});
+
+app.MapPost("/api/overlay/revert", async (
+    RevertOverlayRequest request,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var response = await overlay.RevertAsync(request, cancellationToken);
+        return Results.Ok(ApiResponse<RevertOverlayResponse>.Success(response));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(ApiResponse<RevertOverlayResponse>.Failure("invalid_virtual_path", ex.Message));
+    }
 });
 
 app.Run();
