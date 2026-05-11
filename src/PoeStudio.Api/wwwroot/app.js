@@ -56,6 +56,7 @@ async function refreshProfiles() {
   $("importTranslationBtn").disabled = !state.selectedProfile;
   $("previewScriptBtn").disabled = !state.selectedProfile;
   $("applyScriptBtn").disabled = !state.selectedProfile;
+  $("bulkExportBtn").disabled = !state.selectedProfile;
   setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
   if (state.selectedProfile) refreshBuildHistory();
   if (state.selectedProfile) refreshOverlayList();
@@ -174,6 +175,30 @@ async function searchResources() {
   $("resourceTotal").textContent = String(result.total);
   renderResources(result.items);
   setStatus(`找到 ${result.total} 个资源`);
+}
+
+async function bulkExportResources() {
+  const profileId = selectedProfileId();
+  const query = $("searchInput").value.trim();
+  if (!profileId || !query) {
+    setStatus("批量导出需要先输入搜索条件");
+    return;
+  }
+
+  setStatus("正在批量导出资源...");
+  const result = await api("/api/resources/bulk-export", {
+    profileId,
+    query,
+    take: 200,
+    oodlePath: $("oodlePathInput").value.trim() || null
+  });
+  writeLog($("actionOutput"), {
+    matched: result.matched,
+    exported: result.exported,
+    exportRoot: result.exportRoot,
+    warnings: result.warnings
+  });
+  setStatus(`批量导出完成：${result.exported}/${result.matched}`);
 }
 
 function renderResources(items) {
@@ -531,6 +556,7 @@ function bind() {
   $("quickConnectBtn").addEventListener("click", quickConnect);
   $("buildNativeIndexBtn").addEventListener("click", startNativeIndexJob);
   $("searchBtn").addEventListener("click", searchResources);
+  $("bulkExportBtn").addEventListener("click", bulkExportResources);
   $("searchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") searchResources();
   });

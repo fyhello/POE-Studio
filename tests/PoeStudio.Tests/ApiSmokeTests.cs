@@ -322,6 +322,39 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Bulk_resource_export_writes_matching_files_to_workspace()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "one.txt"), "one");
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "two.txt"), "two");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var export = await client.PostAsJsonAsync("/api/resources/bulk-export", new ResourceBulkExportRequest(created.Data.Id, "text", Kind: ResourceKind.Text));
+        var payload = await export.Content.ReadFromJsonAsync<ApiResponse<ResourceBulkExportResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, export.StatusCode);
+        Assert.Equal(2, payload?.Data?.Matched);
+        Assert.Equal(2, payload?.Data?.Exported);
+        Assert.True(Directory.Exists(payload?.Data?.ExportRoot));
+        Assert.All(payload?.Data?.Items ?? [], item => Assert.True(File.Exists(item.ExportPath)));
+        Assert.Contains(payload?.Data?.Items ?? [], item => item.VirtualPath == "text/one.txt" && File.ReadAllText(item.ExportPath) == "one");
+    }
+
+    [Fact]
     public async Task Batch_script_preview_and_apply_text_replacements()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

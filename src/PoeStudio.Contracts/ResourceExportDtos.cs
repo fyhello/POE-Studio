@@ -13,3 +13,24 @@ public sealed record ResourceExportResponse(
     string Base64Content,
     long Size,
     IReadOnlyList<string> Warnings);
+
+public sealed record ResourceBulkExportRequest(
+    string ProfileId,
+    string Query,
+    ResourceKind? Kind = null,
+    string? Extension = null,
+    int Take = 200,
+    string? OodlePath = null);
+
+public sealed record ResourceBulkExportItemDto(
+    string VirtualPath,
+    string ExportPath,
+    long Size);
+
+public sealed record ResourceBulkExportResponse(
+    string ProfileId,
+    int Matched,
+    int Exported,
+    string ExportRoot,
+    IReadOnlyList<ResourceBulkExportItemDto> Items,
+    IReadOnlyList<string> Warnings);

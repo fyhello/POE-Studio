@@ -278,6 +278,79 @@ app.MapPost("/api/resources/export", async (
     return Results.Ok(ApiResponse<ResourceExportResponse>.Success(response));
 });
 
+app.MapPost("/api/resources/bulk-export", async (
+    ResourceBulkExportRequest request,
+    ProfileStore profiles,
+    ResourceIndexStore resourceIndex,
+    NativeBundleResourceContentResolver nativeContentResolver,
+    IConfiguration config,
+    CancellationToken cancellationToken) =>
+{
+    var search = await resourceIndex.SearchAsync(new ResourceSearchRequest(
+        request.ProfileId,
+        Query: request.Query,
+        Kind: request.Kind,
+        Extension: request.Extension,
+        Skip: 0,
+        Take: Math.Clamp(request.Take, 1, 500)), cancellationToken);
+    var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
+    var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+    layout.EnsureDirectories();
+    var exportRoot = Path.Combine(layout.RawCacheRoot, $"export-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}");
+    Directory.CreateDirectory(exportRoot);
+    var warnings = new List<string>();
+    var exported = new List<ResourceBulkExportItemDto>();
+    ClientProfileDto? profile = null;
+
+    foreach (var resource in search.Items)
+    {
+        byte[] data;
+        if (NativeBundleResourceContentResolver.IsNativeResource(resource))
+        {
+            profile ??= await profiles.GetAsync(request.ProfileId, cancellationToken);
+            if (profile is null)
+            {
+                warnings.Add($"跳过 native 资源，客户端配置不存在：{resource.VirtualPath}");
+                continue;
+            }
+
+            var content = await nativeContentResolver.ReadAsync(profile, resource, request.OodlePath, cancellationToken);
+            if (!content.Ok)
+            {
+                warnings.Add($"跳过 native 资源：{resource.VirtualPath}：{content.Message}");
+                continue;
+            }
+
+            data = content.Data;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(resource.PhysicalPath) || !File.Exists(resource.PhysicalPath))
+            {
+                warnings.Add($"跳过不存在资源：{resource.VirtualPath}");
+                continue;
+            }
+
+            data = await File.ReadAllBytesAsync(resource.PhysicalPath, cancellationToken);
+        }
+
+        var target = SafeExportPath(exportRoot, resource.NormalizedPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        await File.WriteAllBytesAsync(target, data, cancellationToken);
+        exported.Add(new ResourceBulkExportItemDto(resource.VirtualPath, target, data.LongLength));
+    }
+
+    var response = new ResourceBulkExportResponse(
+        request.ProfileId,
+        search.Total,
+        exported.Count,
+        exportRoot,
+        exported,
+        warnings);
+    return Results.Ok(ApiResponse<ResourceBulkExportResponse>.Success(response));
+});
+
 app.MapPost("/api/preview", async (
     ResourcePreviewRequest request,
     ProfileStore profiles,
@@ -1229,6 +1302,19 @@ static string GuessContentType(string extension)
         ".txt" or ".filter" => "text/plain",
         _ => "application/octet-stream"
     };
+}
+
+static string SafeExportPath(string root, string virtualPath)
+{
+    var fullRoot = Path.GetFullPath(root);
+    var fullPath = Path.GetFullPath(Path.Combine(fullRoot, virtualPath.Replace('/', Path.DirectorySeparatorChar)));
+    var rootWithSeparator = fullRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    if (!fullPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+    {
+        throw new ArgumentException("Export path escaped export root.");
+    }
+
+    return fullPath;
 }
 
 sealed class IDisposableOodleCodec(IOodleCodec inner) : IOodleCodec, IDisposable
