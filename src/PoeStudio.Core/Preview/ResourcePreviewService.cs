@@ -1,10 +1,22 @@
 using System.Text;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
 
 namespace PoeStudio.Core.Preview;
 
 public sealed class ResourcePreviewService
 {
+    private readonly NativeBundleResourceContentResolver? nativeContentResolver;
+
+    public ResourcePreviewService()
+    {
+    }
+
+    public ResourcePreviewService(NativeBundleResourceContentResolver nativeContentResolver)
+    {
+        this.nativeContentResolver = nativeContentResolver;
+    }
+
     public async Task<ResourcePreviewResponse> BuildPreviewAsync(
         ResourceSummaryDto resource,
         int limit,
@@ -24,6 +36,44 @@ public sealed class ResourcePreviewService
         return await BuildHexPreviewAsync(resource, Math.Min(safeLimit, 4096), cancellationToken);
     }
 
+    public async Task<ResourcePreviewResponse> BuildPreviewAsync(
+        ResourceSummaryDto resource,
+        ClientProfileDto? profile,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        return await BuildPreviewAsync(resource, profile, limit, oodlePath: null, cancellationToken);
+    }
+
+    public async Task<ResourcePreviewResponse> BuildPreviewAsync(
+        ResourceSummaryDto resource,
+        ClientProfileDto? profile,
+        int limit,
+        string? oodlePath,
+        CancellationToken cancellationToken)
+    {
+        if (!NativeBundleResourceContentResolver.IsNativeResource(resource))
+        {
+            return await BuildPreviewAsync(resource, limit, cancellationToken);
+        }
+
+        if (profile is null || nativeContentResolver is null)
+        {
+            return Unavailable(resource, "native_preview_unavailable", "native 资源预览需要客户端配置和 Oodle。");
+        }
+
+        var content = await nativeContentResolver.ReadAsync(profile, resource, oodlePath, cancellationToken);
+        if (!content.Ok)
+        {
+            return Unavailable(resource, content.ErrorCode ?? "native_preview_unavailable", content.Message ?? "native 资源预览不可用。");
+        }
+
+        var safeLimit = Math.Clamp(limit, 1, 1024 * 1024);
+        return IsTextLike(resource)
+            ? BuildTextPreview(resource, content.Data, safeLimit)
+            : BuildHexPreview(resource, content.Data, Math.Min(safeLimit, 4096));
+    }
+
     private static async Task<ResourcePreviewResponse> BuildTextPreviewAsync(
         ResourceSummaryDto resource,
         int limit,
@@ -36,16 +86,7 @@ public sealed class ResourcePreviewService
         var textBytes = truncated ? buffer.AsSpan(0, Math.Min(limit, read)).ToArray() : buffer.AsSpan(0, read).ToArray();
         var text = Encoding.UTF8.GetString(textBytes);
 
-        return new ResourcePreviewResponse(
-            resource.ProfileId,
-            resource.VirtualPath,
-            PreviewKind.Text,
-            DetectLanguage(resource.Extension),
-            text,
-            Hex: null,
-            Truncated: truncated,
-            ErrorCode: null,
-            Message: null);
+        return TextResponse(resource, text, truncated);
     }
 
     private static async Task<ResourcePreviewResponse> BuildHexPreviewAsync(
@@ -58,6 +99,39 @@ public sealed class ResourcePreviewService
         var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
         var hex = string.Join(" ", buffer.Take(read).Select(item => item.ToString("X2")));
 
+        return HexResponse(resource, hex, stream.Length > limit);
+    }
+
+    private static ResourcePreviewResponse BuildTextPreview(ResourceSummaryDto resource, byte[] data, int limit)
+    {
+        var truncated = data.Length > limit;
+        var count = Math.Min(data.Length, limit);
+        return TextResponse(resource, Encoding.UTF8.GetString(data.AsSpan(0, count)), truncated);
+    }
+
+    private static ResourcePreviewResponse BuildHexPreview(ResourceSummaryDto resource, byte[] data, int limit)
+    {
+        var count = Math.Min(data.Length, limit);
+        var hex = string.Join(" ", data.Take(count).Select(item => item.ToString("X2")));
+        return HexResponse(resource, hex, data.Length > limit);
+    }
+
+    private static ResourcePreviewResponse TextResponse(ResourceSummaryDto resource, string text, bool truncated)
+    {
+        return new ResourcePreviewResponse(
+            resource.ProfileId,
+            resource.VirtualPath,
+            PreviewKind.Text,
+            DetectLanguage(resource.Extension),
+            text,
+            Hex: null,
+            Truncated: truncated,
+            ErrorCode: null,
+            Message: null);
+    }
+
+    private static ResourcePreviewResponse HexResponse(ResourceSummaryDto resource, string hex, bool truncated)
+    {
         return new ResourcePreviewResponse(
             resource.ProfileId,
             resource.VirtualPath,
@@ -65,7 +139,7 @@ public sealed class ResourcePreviewService
             Language: null,
             Text: null,
             Hex: hex,
-            Truncated: stream.Length > limit,
+            Truncated: truncated,
             ErrorCode: null,
             Message: null);
     }

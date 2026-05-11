@@ -1,4 +1,5 @@
 using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
 using PoeStudio.Core.Preview;
 
 namespace PoeStudio.Tests;
@@ -37,6 +38,27 @@ public sealed class ResourcePreviewServiceTests
     }
 
     [Fact]
+    public async Task BuildPreviewAsync_can_preview_native_bundle_resource_when_profile_is_supplied()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-preview-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "Metadata"));
+        var payload = System.Text.Encoding.UTF8.GetBytes("bundle text payload");
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "Metadata", "Text.bundle.bin"), NativeBundleTestData.CreateBundle(payload));
+        var profile = CreateProfile(root, bundles);
+        var resource = Resource(
+            "metadata/text/sample.txt",
+            ResourceKind.Text,
+            "native-bundles2://Metadata/Text.bundle.bin#offset=7&size=4");
+        var service = new ResourcePreviewService(new NativeBundleResourceContentResolver(new CopyOodleCodec()));
+
+        var result = await service.BuildPreviewAsync(resource, profile, 100, CancellationToken.None);
+
+        Assert.Equal(PreviewKind.Text, result.Kind);
+        Assert.Equal("text", result.Text);
+    }
+
+    [Fact]
     public async Task BuildPreviewAsync_reports_missing_file()
     {
         var service = new ResourcePreviewService();
@@ -60,5 +82,34 @@ public sealed class ResourcePreviewServiceTests
             PhysicalPath: physicalPath,
             SourceLayer: ResourceSourceLayer.Base,
             IndexedAt: DateTimeOffset.UtcNow);
+    }
+
+    private static ClientProfileDto CreateProfile(string root, string bundles)
+    {
+        var now = DateTimeOffset.UtcNow;
+        return new ClientProfileDto(
+            Id: "profile",
+            DisplayName: "POE2",
+            Platform: ClientPlatform.Official,
+            EntryKind: ClientEntryKind.Bundles2,
+            RootPath: root,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Found,
+            ClientFingerprint: "fingerprint",
+            CreatedAt: now,
+            UpdatedAt: now);
+    }
+
+    private sealed class CopyOodleCodec : IOodleCodec
+    {
+        public bool IsAvailable => true;
+
+        public int Decompress(ReadOnlySpan<byte> compressed, Span<byte> output, int compressor)
+        {
+            compressed.CopyTo(output);
+            return compressed.Length;
+        }
     }
 }

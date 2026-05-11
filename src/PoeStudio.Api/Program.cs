@@ -25,9 +25,9 @@ builder.Services.AddSingleton(sp =>
     return new ResourceIndexStore(workspaceRoot);
 });
 builder.Services.AddSingleton<FileSystemResourceIndexer>();
-builder.Services.AddSingleton<ResourcePreviewService>();
 builder.Services.AddSingleton<NativeBundles2IndexReader>();
 builder.Services.AddSingleton<NativeIndexRecordParser>();
+builder.Services.AddSingleton<NativeBundles2ResourceIndexer>();
 builder.Services.AddSingleton<IOodleCodec, MissingOodleCodec>();
 builder.Services.AddSingleton(sp =>
 {
@@ -38,6 +38,8 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddSingleton<OodleCodecFactory>(_ => path => new NativeOodleCodec(path));
 builder.Services.AddSingleton<NativeIndexPathService>();
+builder.Services.AddSingleton(sp => new NativeBundleResourceContentResolver(sp.GetRequiredService<IOodleCodec>()));
+builder.Services.AddSingleton(sp => new ResourcePreviewService(sp.GetRequiredService<NativeBundleResourceContentResolver>()));
 builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
@@ -148,6 +150,7 @@ app.MapPost("/api/resources/search", async (
 
 app.MapPost("/api/preview", async (
     ResourcePreviewRequest request,
+    ProfileStore profiles,
     ResourceIndexStore resourceIndex,
     ResourcePreviewService preview,
     CancellationToken cancellationToken) =>
@@ -158,7 +161,10 @@ app.MapPost("/api/preview", async (
         return Results.NotFound(ApiResponse<ResourcePreviewResponse>.Failure("resource_not_found", "未找到资源，请先建立索引。"));
     }
 
-    var response = await preview.BuildPreviewAsync(resource, request.Limit, cancellationToken);
+    var profile = NativeBundleResourceContentResolver.IsNativeResource(resource)
+        ? await profiles.GetAsync(request.ProfileId, cancellationToken)
+        : null;
+    var response = await preview.BuildPreviewAsync(resource, profile, request.Limit, request.OodlePath, cancellationToken);
     return Results.Ok(ApiResponse<ResourcePreviewResponse>.Success(response));
 });
 
@@ -330,7 +336,139 @@ app.MapPost("/api/native/bundles2/resolve-paths", async (
     }
 });
 
+app.MapPost("/api/native/bundles2/build-resource-index", async (
+    NativeResourceIndexBuildRequest request,
+    ProfileStore profiles,
+    NativeIndexCacheService cacheService,
+    NativeIndexRecordParser parser,
+    OodleCodecFactory oodleCodecFactory,
+    NativeBundles2ResourceIndexer nativeIndexer,
+    ResourceIndexStore resourceIndex,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<NativeResourceIndexBuildResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    var indexPath = string.IsNullOrWhiteSpace(request.IndexPath) ? profile.IndexPath : request.IndexPath;
+    if (string.IsNullOrWhiteSpace(indexPath))
+    {
+        return Results.BadRequest(ApiResponse<NativeResourceIndexBuildResponse>.Failure("missing_index_path", "客户端配置缺少 Bundles2/_.index.bin 路径。"));
+    }
+
+    try
+    {
+        var decompressed = await cacheService.DecompressIndexAsync(
+            new NativeIndexDecompressRequest(profile.Id, indexPath, request.OodlePath),
+            cancellationToken);
+        if (!decompressed.Ok)
+        {
+            return Results.Ok(ApiResponse<NativeResourceIndexBuildResponse>.Success(new NativeResourceIndexBuildResponse(
+                Ok: false,
+                profile.Id,
+                TotalFiles: 0,
+                ResolvedResources: 0,
+                FailedPaths: 0,
+                BundleCount: 0,
+                DirectoryCount: 0,
+                DateTimeOffset.UtcNow,
+                decompressed.Warnings)));
+        }
+
+        var parsed = await parser.ParseAsync(decompressed.CachePath, cancellationToken);
+        if (!parsed.Ok)
+        {
+            return Results.Ok(ApiResponse<NativeResourceIndexBuildResponse>.Success(new NativeResourceIndexBuildResponse(
+                Ok: false,
+                profile.Id,
+                TotalFiles: 0,
+                ResolvedResources: 0,
+                FailedPaths: 0,
+                BundleCount: 0,
+                DirectoryCount: 0,
+                DateTimeOffset.UtcNow,
+                parsed.Warnings)));
+        }
+
+        using var oodle = CreateDisposableCodec(request.OodlePath, oodleCodecFactory);
+        var bytes = await File.ReadAllBytesAsync(decompressed.CachePath, cancellationToken);
+        var directoryBundle = bytes.AsSpan((int)parsed.DirectoryBundleDataOffset, (int)parsed.DirectoryBundleDataSize).ToArray();
+        var directoryData = new NativeBundleDecompressor(oodle).Decompress(directoryBundle);
+        if (!directoryData.Ok)
+        {
+            return Results.Ok(ApiResponse<NativeResourceIndexBuildResponse>.Success(new NativeResourceIndexBuildResponse(
+                Ok: false,
+                profile.Id,
+                parsed.FileCount,
+                ResolvedResources: 0,
+                FailedPaths: 0,
+                parsed.BundleCount,
+                parsed.DirectoryCount,
+                DateTimeOffset.UtcNow,
+                directoryData.Warnings)));
+        }
+
+        var paths = new NativeIndexPathResolver().Resolve(parsed.Files, parsed.Directories, directoryData.Data);
+        var result = nativeIndexer.Index(profile, parsed, paths);
+        await resourceIndex.SaveAsync(profile.Id, result.Resources, result.Warnings, cancellationToken);
+        var response = new NativeResourceIndexBuildResponse(
+            Ok: true,
+            profile.Id,
+            result.TotalFiles,
+            result.Resources.Count,
+            result.FailedPaths,
+            parsed.BundleCount,
+            parsed.DirectoryCount,
+            DateTimeOffset.UtcNow,
+            result.Warnings);
+        return Results.Ok(ApiResponse<NativeResourceIndexBuildResponse>.Success(response));
+    }
+    catch (Exception ex) when (ex is FileNotFoundException or EntryPointNotFoundException or BadImageFormatException or DllNotFoundException)
+    {
+        return Results.Ok(ApiResponse<NativeResourceIndexBuildResponse>.Success(new NativeResourceIndexBuildResponse(
+            Ok: false,
+            profile.Id,
+            TotalFiles: 0,
+            ResolvedResources: 0,
+            FailedPaths: 0,
+            BundleCount: 0,
+            DirectoryCount: 0,
+            DateTimeOffset.UtcNow,
+            Warnings: [$"无法加载 oo2core.dll：{ex.Message}"])));
+    }
+});
+
 app.Run();
+
+static IDisposableOodleCodec CreateDisposableCodec(string? oodlePath, OodleCodecFactory factory)
+{
+    if (string.IsNullOrWhiteSpace(oodlePath))
+    {
+        return new IDisposableOodleCodec(new MissingOodleCodec());
+    }
+
+    return new IDisposableOodleCodec(factory(oodlePath));
+}
+
+sealed class IDisposableOodleCodec(IOodleCodec inner) : IOodleCodec, IDisposable
+{
+    public bool IsAvailable => inner.IsAvailable;
+
+    public int Decompress(ReadOnlySpan<byte> compressed, Span<byte> output, int compressor)
+    {
+        return inner.Decompress(compressed, output, compressor);
+    }
+
+    public void Dispose()
+    {
+        if (inner is IDisposable disposable)
+        {
+            disposable.Dispose();
+        }
+    }
+}
 
 public partial class Program
 {

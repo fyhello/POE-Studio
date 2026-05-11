@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 using PoeStudio.Contracts;
 
 namespace PoeStudio.Tests;
@@ -310,6 +311,96 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(1, payload?.Data?.BundleCount);
         Assert.Equal(1, payload?.Data?.FileCount);
         Assert.Equal(1, payload?.Data?.DirectoryCount);
+    }
+
+    [Fact]
+    public async Task Native_resource_index_build_returns_not_found_for_unknown_profile()
+    {
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/native/bundles2/build-resource-index",
+            new NativeResourceIndexBuildRequest("missing-profile", "C:/missing/_.index.bin", "C:/missing/oo2core.dll"));
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<NativeResourceIndexBuildResponse>>();
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.False(payload?.Ok);
+        Assert.Equal("profile_not_found", payload?.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Native_resource_index_build_reports_oodle_missing_without_crashing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var indexPath = Path.Combine(bundles, "_.index.bin");
+        await WriteIndexHeaderAsync(indexPath);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "Official",
+            RootPath: root,
+            Platform: ClientPlatform.Official,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: indexPath,
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/native/bundles2/build-resource-index",
+            new NativeResourceIndexBuildRequest(created!.Data!.Id, indexPath));
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<NativeResourceIndexBuildResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(payload?.Ok);
+        Assert.False(payload?.Data?.Ok);
+        Assert.Equal(0, payload?.Data?.ResolvedResources);
+        Assert.Contains(payload?.Data?.Warnings ?? [], warning => warning.Contains("Oodle", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Preview_native_resource_reports_oodle_missing_when_no_oodle_path_is_supplied()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "Metadata"));
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "Metadata", "Text.bundle.bin"), NativeBundleTestData.CreateBundle([1, 2, 3, 4]));
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "Official",
+            RootPath: root,
+            Platform: ClientPlatform.Official,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        var store = factory.Services.GetRequiredService<PoeStudio.Storage.Resources.ResourceIndexStore>();
+        await store.SaveAsync(created!.Data!.Id, [
+            new ResourceSummaryDto(
+                Id: "native",
+                ProfileId: created.Data.Id,
+                VirtualPath: "metadata/text/sample.txt",
+                NormalizedPath: "metadata/text/sample.txt",
+                Extension: ".txt",
+                Kind: ResourceKind.Text,
+                Size: 4,
+                PhysicalPath: "native-bundles2://Metadata/Text.bundle.bin#offset=0&size=4",
+                SourceLayer: ResourceSourceLayer.Base,
+                IndexedAt: DateTimeOffset.UtcNow)
+        ], [], CancellationToken.None);
+
+        var response = await client.PostAsJsonAsync("/api/preview", new ResourcePreviewRequest(created.Data.Id, "metadata/text/sample.txt"));
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<ResourcePreviewResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(PreviewKind.Unavailable, payload?.Data?.Kind);
+        Assert.Equal("native_oodle_missing", payload?.Data?.ErrorCode);
     }
 
     private static async Task WriteIndexHeaderAsync(string path)

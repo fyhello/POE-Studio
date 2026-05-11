@@ -10,7 +10,8 @@ public enum PreviewKind
 public sealed record ResourcePreviewRequest(
     string ProfileId,
     string VirtualPath,
-    int Limit = 65536);
+    int Limit = 65536,
+    string? OodlePath = null);
 
 public sealed record ResourcePreviewResponse(
     string ProfileId,

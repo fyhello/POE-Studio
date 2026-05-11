@@ -78,3 +78,19 @@ public sealed record NativeIndexResolvePathsResponse(
     int DirectoryCount,
     IReadOnlyList<string> SamplePaths,
     IReadOnlyList<string> Warnings);
+
+public sealed record NativeResourceIndexBuildRequest(
+    string ProfileId,
+    string? IndexPath = null,
+    string? OodlePath = null);
+
+public sealed record NativeResourceIndexBuildResponse(
+    bool Ok,
+    string ProfileId,
+    int TotalFiles,
+    int ResolvedResources,
+    int FailedPaths,
+    int BundleCount,
+    int DirectoryCount,
+    DateTimeOffset IndexedAt,
+    IReadOnlyList<string> Warnings);
