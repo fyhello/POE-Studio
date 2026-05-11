@@ -32,6 +32,23 @@ const writeLog = (target, value) => {
 
 const selectedProfileId = () => $("profileSelect").value || state.selectedProfile?.id;
 
+const formatLocalTime = (value) => new Date(value).toLocaleString("zh-CN", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit"
+});
+
+const auditActionText = (action) => action === "revert" ? "回滚" : "保存";
+
+const previewKindText = (kind) => ({
+  1: "文本",
+  2: "十六进制",
+  3: "图片",
+  4: "音频",
+  5: "字体"
+}[kind] || "不可预览");
+
 const presets = {
   cn: "C:\\WeGameApps\\rail_apps\\流放之路：降临(2002052)",
   global: "E:\\PSAutoRecover\\ui\\rood\\Grinding Gear Games\\Path of Exile 2"
@@ -253,15 +270,47 @@ async function previewResource(resource, button) {
     limit: 65536,
     oodlePath: $("oodlePathInput").value.trim() || null
   });
-  $("previewKind").textContent = preview.kind === 1 ? "文本" : preview.kind === 2 ? "十六进制" : "不可预览";
-  $("previewText").value = preview.text || preview.hex || preview.message || "";
+  renderPreview(preview);
   $("saveOverlayBtn").disabled = preview.kind !== 1;
   $("exportResourceBtn").disabled = false;
+  $("signatureBtn").disabled = false;
   $("replaceResourceBtn").disabled = false;
   $("inspectTableBtn").disabled = resource.kind !== 2;
   $("batchOverlayBtn").disabled = preview.kind !== 1;
   $("batchReplaceBtn").disabled = preview.kind !== 1;
   setStatus("预览已加载");
+}
+
+function renderPreview(preview) {
+  const media = $("mediaPreview");
+  const text = $("previewText");
+  $("previewKind").textContent = previewKindText(preview.kind);
+  media.classList.add("hidden");
+  media.innerHTML = "";
+  text.classList.remove("hidden");
+  text.readOnly = preview.kind !== 1;
+  text.value = preview.text || preview.hex || preview.message || "";
+
+  if (preview.kind === 3 && preview.base64Content && preview.mediaType) {
+    media.innerHTML = `<img alt="资源预览" src="data:${preview.mediaType};base64,${preview.base64Content}">`;
+  } else if (preview.kind === 4 && preview.base64Content && preview.mediaType) {
+    media.innerHTML = `<audio controls src="data:${preview.mediaType};base64,${preview.base64Content}"></audio>`;
+  } else if (preview.kind === 5 && preview.base64Content && preview.mediaType) {
+    const family = `font_${Date.now()}`;
+    const style = document.createElement("style");
+    style.textContent = `@font-face{font-family:${family};src:url(data:${preview.mediaType};base64,${preview.base64Content}) format("truetype");}`;
+    media.appendChild(style);
+    const sample = document.createElement("div");
+    sample.className = "font-sample";
+    sample.style.fontFamily = family;
+    sample.textContent = "流放之路 Path of Exile 2 0123456789";
+    media.appendChild(sample);
+  } else {
+    return;
+  }
+
+  media.classList.remove("hidden");
+  text.classList.add("hidden");
 }
 
 async function saveOverlay() {
@@ -296,6 +345,18 @@ async function exportResource() {
     warnings: result.warnings
   });
   setStatus(`资源已导出：${result.fileName}`);
+}
+
+async function extractSignature() {
+  if (!state.selectedResource) return;
+  setStatus("正在提取特征...");
+  const result = await api("/api/resources/signature", {
+    profileId: state.selectedResource.profileId,
+    virtualPath: state.selectedResource.virtualPath,
+    oodlePath: $("oodlePathInput").value.trim() || null
+  });
+  writeLog($("actionOutput"), result);
+  setStatus("特征已提取");
 }
 
 function chooseReplacementFile() {
@@ -552,6 +613,28 @@ async function refreshOverlayList() {
   if (result.items.length === 0) {
     list.innerHTML = '<div class="overlay-item"><div class="build-meta">暂无修改</div></div>';
   }
+  refreshOverlayAudit();
+}
+
+async function refreshOverlayAudit() {
+  const profileId = selectedProfileId();
+  const list = $("overlayAuditList");
+  if (!profileId || !list) return;
+  const result = await api("/api/overlay/audit", { profileId, take: 8 });
+  list.innerHTML = "";
+  for (const item of result.items) {
+    const row = document.createElement("div");
+    row.className = "audit-item";
+    row.innerHTML = `
+      <span class="audit-action">${auditActionText(item.action)}</span>
+      <span class="audit-path">${item.virtualPath}</span>
+      <span class="audit-time">${formatLocalTime(item.at)}</span>
+    `;
+    list.appendChild(row);
+  }
+  if (result.items.length === 0) {
+    list.innerHTML = '<div class="audit-item empty"><span class="build-meta">暂无操作</span></div>';
+  }
 }
 
 async function revertOverlay(virtualPath) {
@@ -590,6 +673,7 @@ function bind() {
   });
   $("saveOverlayBtn").addEventListener("click", saveOverlay);
   $("exportResourceBtn").addEventListener("click", exportResource);
+  $("signatureBtn").addEventListener("click", extractSignature);
   $("replaceResourceBtn").addEventListener("click", chooseReplacementFile);
   $("inspectTableBtn").addEventListener("click", inspectTable);
   $("replaceResourceInput").addEventListener("change", (event) => replaceResourceWithFile(event.target.files[0]));

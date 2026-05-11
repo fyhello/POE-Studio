@@ -38,6 +38,36 @@ public sealed class ResourcePreviewServiceTests
     }
 
     [Fact]
+    public async Task BuildPreviewAsync_returns_image_media_preview_for_png()
+    {
+        var file = Path.Combine(Path.GetTempPath(), "poe-studio-preview-tests", Guid.NewGuid().ToString("N"), "icon.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllBytesAsync(file, [0x89, 0x50, 0x4E, 0x47]);
+        var service = new ResourcePreviewService();
+
+        var result = await service.BuildPreviewAsync(Resource("art/icon.png", ResourceKind.Image, file), 100, CancellationToken.None);
+
+        Assert.Equal(PreviewKind.Image, result.Kind);
+        Assert.Equal("image/png", result.MediaType);
+        Assert.Equal("iVBORw==", result.Base64Content);
+    }
+
+    [Fact]
+    public async Task BuildPreviewAsync_returns_audio_media_preview_for_ogg()
+    {
+        var file = Path.Combine(Path.GetTempPath(), "poe-studio-preview-tests", Guid.NewGuid().ToString("N"), "click.ogg");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        await File.WriteAllBytesAsync(file, [79, 103, 103, 83]);
+        var service = new ResourcePreviewService();
+
+        var result = await service.BuildPreviewAsync(Resource("audio/click.ogg", ResourceKind.Audio, file), 100, CancellationToken.None);
+
+        Assert.Equal(PreviewKind.Audio, result.Kind);
+        Assert.Equal("audio/ogg", result.MediaType);
+        Assert.Equal("T2dnUw==", result.Base64Content);
+    }
+
+    [Fact]
     public async Task BuildPreviewAsync_can_preview_native_bundle_resource_when_profile_is_supplied()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-preview-tests", Guid.NewGuid().ToString("N"));

@@ -4,7 +4,10 @@ public enum PreviewKind
 {
     Unavailable = 0,
     Text = 1,
-    Hex = 2
+    Hex = 2,
+    Image = 3,
+    Audio = 4,
+    Font = 5
 }
 
 public sealed record ResourcePreviewRequest(
@@ -20,6 +23,8 @@ public sealed record ResourcePreviewResponse(
     string? Language,
     string? Text,
     string? Hex,
+    string? MediaType,
+    string? Base64Content,
     bool Truncated,
     string? ErrorCode,
     string? Message);

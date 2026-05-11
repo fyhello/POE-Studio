@@ -51,6 +51,10 @@ button.primary {
   display: none;
 }
 
+.hidden {
+  display: none !important;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -237,12 +241,17 @@ textarea:focus {
 }
 
 .build-list,
-.overlay-list {
+.overlay-list,
+.audit-list {
   max-height: 148px;
   overflow: auto;
   border: 1px solid #252d36;
   border-radius: 6px;
   background: #0f1318;
+}
+
+.audit-list {
+  max-height: 132px;
 }
 
 .build-item,
@@ -299,6 +308,36 @@ textarea:focus {
   font-size: 12px;
 }
 
+.audit-item {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-bottom: 1px solid #202830;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.audit-item.empty {
+  grid-template-columns: 1fr;
+}
+
+.audit-action {
+  color: #7db5ff;
+}
+
+.audit-path {
+  overflow: hidden;
+  color: #edf3f8;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-time {
+  color: #8fa2b5;
+}
+
 .resource-item {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -339,6 +378,35 @@ textarea:focus {
   color: #c2cfda;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.media-preview {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  overflow: auto;
+  border: 1px solid #252d36;
+  border-radius: 6px;
+  padding: 12px;
+  background: #0f1318;
+}
+
+.media-preview img {
+  max-width: 100%;
+  max-height: 460px;
+}
+
+.media-preview audio {
+  width: min(100%, 520px);
+}
+
+.font-sample {
+  width: 100%;
+  color: #edf3f8;
+  font-size: 28px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 textarea {

@@ -53,6 +53,22 @@ public sealed record RevertOverlayResponse(
     string VirtualPath,
     bool Removed);
 
+public sealed record OverlayAuditRequest(
+    string ProfileId,
+    int Take = 100);
+
+public sealed record OverlayAuditEventDto(
+    string Action,
+    string VirtualPath,
+    string? OverlayHash,
+    long? OverlaySize,
+    DateTimeOffset At);
+
+public sealed record OverlayAuditResponse(
+    string ProfileId,
+    int Total,
+    IReadOnlyList<OverlayAuditEventDto> Items);
+
 public sealed record BatchSaveTextOverlayRequest(
     string ProfileId,
     string Query,

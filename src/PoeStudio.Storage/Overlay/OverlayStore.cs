@@ -15,6 +15,8 @@ public sealed class OverlayStore : IPatchOverlayReader
         WriteIndented = true
     };
 
+    private static readonly JsonSerializerOptions JsonLineOptions = new(JsonSerializerDefaults.Web);
+
     private readonly string workspaceRoot;
 
     public OverlayStore(string workspaceRoot)
@@ -93,6 +95,7 @@ public sealed class OverlayStore : IPatchOverlayReader
         manifest.Items.RemoveAll(item => string.Equals(item.NormalizedPath, normalized, StringComparison.OrdinalIgnoreCase));
         manifest.Items.Add(entry);
         await SaveManifestAsync(layout, manifest, cancellationToken);
+        await AppendAuditAsync(layout, new OverlayAuditEventDto("save", normalized, entry.OverlayHash, entry.OverlaySize, now), cancellationToken);
         return entry;
     }
 
@@ -153,7 +156,41 @@ public sealed class OverlayStore : IPatchOverlayReader
 
         manifest.Items.RemoveAll(item => string.Equals(item.NormalizedPath, normalized, StringComparison.OrdinalIgnoreCase));
         await SaveManifestAsync(layout, manifest, cancellationToken);
+        await AppendAuditAsync(layout, new OverlayAuditEventDto("revert", normalized, entry.OverlayHash, entry.OverlaySize, DateTimeOffset.UtcNow), cancellationToken);
         return new RevertOverlayResponse(request.ProfileId, normalized, Removed: true);
+    }
+
+    public async Task<OverlayAuditResponse> AuditAsync(OverlayAuditRequest request, CancellationToken cancellationToken)
+    {
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        var path = GetAuditPath(layout);
+        if (!File.Exists(path))
+        {
+            return new OverlayAuditResponse(request.ProfileId, 0, []);
+        }
+
+        var events = new List<OverlayAuditEventDto>();
+        using var stream = File.OpenRead(path);
+        using var reader = new StreamReader(stream);
+        while (await reader.ReadLineAsync(cancellationToken) is { } line)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+
+            var item = JsonSerializer.Deserialize<OverlayAuditEventDto>(line, JsonLineOptions);
+            if (item is not null)
+            {
+                events.Add(item);
+            }
+        }
+
+        var ordered = events
+            .OrderByDescending(item => item.At)
+            .Take(Math.Clamp(request.Take, 1, 500))
+            .ToArray();
+        return new OverlayAuditResponse(request.ProfileId, events.Count, ordered);
     }
 
     private static async Task<string?> TryHashFileAsync(string? path, CancellationToken cancellationToken)
@@ -217,6 +254,17 @@ public sealed class OverlayStore : IPatchOverlayReader
     private static string GetManifestPath(WorkspaceLayout layout)
     {
         return Path.Combine(layout.OverlayRoot, "manifest.json");
+    }
+
+    private static string GetAuditPath(WorkspaceLayout layout)
+    {
+        return Path.Combine(layout.AuditRoot, "overlay-events.jsonl");
+    }
+
+    private static async Task AppendAuditAsync(WorkspaceLayout layout, OverlayAuditEventDto item, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(layout.AuditRoot);
+        await File.AppendAllTextAsync(GetAuditPath(layout), JsonSerializer.Serialize(item, JsonLineOptions) + Environment.NewLine, cancellationToken);
     }
 
     private sealed record OverlayManifest(List<OverlayEntryDto> Items);

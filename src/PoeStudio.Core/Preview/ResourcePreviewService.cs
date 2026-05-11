@@ -6,6 +6,8 @@ namespace PoeStudio.Core.Preview;
 
 public sealed class ResourcePreviewService
 {
+    private const int MaxMediaPreviewBytes = 8 * 1024 * 1024;
+
     private readonly NativeBundleResourceContentResolver? nativeContentResolver;
 
     public ResourcePreviewService()
@@ -31,6 +33,11 @@ public sealed class ResourcePreviewService
         if (IsTextLike(resource))
         {
             return await BuildTextPreviewAsync(resource, safeLimit, cancellationToken);
+        }
+
+        if (TryGetMediaType(resource, out var mediaKind, out var mediaType))
+        {
+            return await BuildMediaPreviewAsync(resource, mediaKind, mediaType, cancellationToken);
         }
 
         return await BuildHexPreviewAsync(resource, Math.Min(safeLimit, 4096), cancellationToken);
@@ -69,9 +76,17 @@ public sealed class ResourcePreviewService
         }
 
         var safeLimit = Math.Clamp(limit, 1, 1024 * 1024);
-        return IsTextLike(resource)
-            ? BuildTextPreview(resource, content.Data, safeLimit)
-            : BuildHexPreview(resource, content.Data, Math.Min(safeLimit, 4096));
+        if (IsTextLike(resource))
+        {
+            return BuildTextPreview(resource, content.Data, safeLimit);
+        }
+
+        if (TryGetMediaType(resource, out var mediaKind, out var mediaType))
+        {
+            return BuildMediaPreview(resource, content.Data, mediaKind, mediaType);
+        }
+
+        return BuildHexPreview(resource, content.Data, Math.Min(safeLimit, 4096));
     }
 
     private static async Task<ResourcePreviewResponse> BuildTextPreviewAsync(
@@ -102,6 +117,34 @@ public sealed class ResourcePreviewService
         return HexResponse(resource, hex, stream.Length > limit);
     }
 
+    private static async Task<ResourcePreviewResponse> BuildMediaPreviewAsync(
+        ResourceSummaryDto resource,
+        PreviewKind mediaKind,
+        string mediaType,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(resource.PhysicalPath!);
+        if (stream.Length > MaxMediaPreviewBytes)
+        {
+            return Unavailable(resource, "media_preview_too_large", "资源过大，请先导出后查看。");
+        }
+
+        var content = new byte[stream.Length];
+        var offset = 0;
+        while (offset < content.Length)
+        {
+            var read = await stream.ReadAsync(content.AsMemory(offset), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            offset += read;
+        }
+
+        return MediaResponse(resource, mediaKind, mediaType, content);
+    }
+
     private static ResourcePreviewResponse BuildTextPreview(ResourceSummaryDto resource, byte[] data, int limit)
     {
         var truncated = data.Length > limit;
@@ -116,6 +159,20 @@ public sealed class ResourcePreviewService
         return HexResponse(resource, hex, data.Length > limit);
     }
 
+    private static ResourcePreviewResponse BuildMediaPreview(
+        ResourceSummaryDto resource,
+        byte[] data,
+        PreviewKind mediaKind,
+        string mediaType)
+    {
+        if (data.Length > MaxMediaPreviewBytes)
+        {
+            return Unavailable(resource, "media_preview_too_large", "资源过大，请先导出后查看。");
+        }
+
+        return MediaResponse(resource, mediaKind, mediaType, data);
+    }
+
     private static ResourcePreviewResponse TextResponse(ResourceSummaryDto resource, string text, bool truncated)
     {
         return new ResourcePreviewResponse(
@@ -125,6 +182,8 @@ public sealed class ResourcePreviewService
             DetectLanguage(resource.Extension),
             text,
             Hex: null,
+            MediaType: null,
+            Base64Content: null,
             Truncated: truncated,
             ErrorCode: null,
             Message: null);
@@ -139,7 +198,29 @@ public sealed class ResourcePreviewService
             Language: null,
             Text: null,
             Hex: hex,
+            MediaType: null,
+            Base64Content: null,
             Truncated: truncated,
+            ErrorCode: null,
+            Message: null);
+    }
+
+    private static ResourcePreviewResponse MediaResponse(
+        ResourceSummaryDto resource,
+        PreviewKind mediaKind,
+        string mediaType,
+        byte[] content)
+    {
+        return new ResourcePreviewResponse(
+            resource.ProfileId,
+            resource.VirtualPath,
+            mediaKind,
+            Language: null,
+            Text: null,
+            Hex: null,
+            MediaType: mediaType,
+            Base64Content: Convert.ToBase64String(content),
+            Truncated: false,
             ErrorCode: null,
             Message: null);
     }
@@ -153,6 +234,8 @@ public sealed class ResourcePreviewService
             Language: null,
             Text: null,
             Hex: null,
+            MediaType: null,
+            Base64Content: null,
             Truncated: false,
             ErrorCode: errorCode,
             Message: message);
@@ -185,5 +268,21 @@ public sealed class ResourcePreviewService
             ".txt" => "text",
             _ => "text"
         };
+    }
+
+    private static bool TryGetMediaType(ResourceSummaryDto resource, out PreviewKind kind, out string mediaType)
+    {
+        (kind, mediaType) = resource.Extension.ToLowerInvariant() switch
+        {
+            ".png" => (PreviewKind.Image, "image/png"),
+            ".jpg" => (PreviewKind.Image, "image/jpeg"),
+            ".jpeg" => (PreviewKind.Image, "image/jpeg"),
+            ".bmp" => (PreviewKind.Image, "image/bmp"),
+            ".ogg" => (PreviewKind.Audio, "audio/ogg"),
+            ".wav" => (PreviewKind.Audio, "audio/wav"),
+            ".ttf" => (PreviewKind.Font, "font/ttf"),
+            _ => (PreviewKind.Unavailable, string.Empty)
+        };
+        return kind is PreviewKind.Image or PreviewKind.Audio or PreviewKind.Font;
     }
 }

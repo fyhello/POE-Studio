@@ -84,11 +84,13 @@
       </div>
 
       <div id="selectedPath" class="selected-path">选择一个资源</div>
+      <div id="mediaPreview" class="media-preview hidden"></div>
       <textarea id="previewText" spellcheck="false" placeholder="资源内容会显示在这里"></textarea>
 
       <div class="button-row">
         <button id="saveOverlayBtn" type="button" disabled>保存覆盖</button>
         <button id="exportResourceBtn" type="button" disabled>导出资源</button>
+        <button id="signatureBtn" type="button" disabled>提取特征</button>
         <button id="replaceResourceBtn" type="button" disabled>替换资源</button>
         <button id="inspectTableBtn" type="button" disabled>检查表格</button>
         <button id="batchOverlayBtn" type="button" disabled>批量覆盖</button>
@@ -132,6 +134,11 @@
         <button id="refreshOverlayBtn" type="button" disabled>刷新</button>
       </div>
       <div id="overlayList" class="overlay-list"></div>
+
+      <div class="panel-title compact-title">
+        <h2>最近操作</h2>
+      </div>
+      <div id="overlayAuditList" class="audit-list"></div>
 
       <div class="panel-title compact-title">
         <h2>最近补丁</h2>

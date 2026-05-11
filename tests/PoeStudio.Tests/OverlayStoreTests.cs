@@ -79,4 +79,20 @@ public sealed class OverlayStoreTests
         Assert.False(File.Exists(saved.OverlayPath));
         Assert.Empty(list.Items);
     }
+
+    [Fact]
+    public async Task AuditAsync_lists_overlay_save_and_revert_events()
+    {
+        var store = new OverlayStore(Path.Combine(Path.GetTempPath(), "poe-studio-overlay-tests", Guid.NewGuid().ToString("N")));
+        var profileId = Guid.NewGuid().ToString("N");
+
+        await store.SaveTextAsync(new SaveTextOverlayRequest(profileId, "text/base.txt", "overlay text"), CancellationToken.None);
+        await store.RevertAsync(new RevertOverlayRequest(profileId, "text/base.txt"), CancellationToken.None);
+        var audit = await store.AuditAsync(new OverlayAuditRequest(profileId), CancellationToken.None);
+
+        Assert.Equal(2, audit.Total);
+        Assert.Equal("revert", audit.Items[0].Action);
+        Assert.Equal("save", audit.Items[1].Action);
+        Assert.All(audit.Items, item => Assert.Equal("text/base.txt", item.VirtualPath));
+    }
 }

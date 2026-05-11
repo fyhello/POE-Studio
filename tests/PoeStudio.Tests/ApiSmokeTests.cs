@@ -179,6 +179,38 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Resource_signature_returns_hash_header_and_match_hints()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "config"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "config", "sample.json"), "{\"ok\":true}");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var signature = await client.PostAsJsonAsync("/api/resources/signature", new ResourceSignatureRequest(created.Data.Id, "config/sample.json"));
+        var payload = await signature.Content.ReadFromJsonAsync<ApiResponse<ResourceSignatureResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, signature.StatusCode);
+        Assert.Equal(ResourceKind.Text, payload?.Data?.Kind);
+        Assert.Equal(11, payload?.Data?.Size);
+        Assert.Equal(64, payload?.Data?.Sha256.Length);
+        Assert.StartsWith("7B 22 6F 6B", payload?.Data?.HeaderHex);
+        Assert.Contains("path:config/sample.json", payload?.Data?.MatchHints ?? []);
+    }
+
+    [Fact]
     public async Task Overlay_save_list_diff_and_revert_work()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
@@ -207,12 +239,17 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         var diffPayload = await diff.Content.ReadFromJsonAsync<ApiResponse<OverlayDiffResponse>>();
         var revert = await client.PostAsJsonAsync("/api/overlay/revert", new RevertOverlayRequest(created.Data.Id, "text/sample.txt"));
         var revertPayload = await revert.Content.ReadFromJsonAsync<ApiResponse<RevertOverlayResponse>>();
+        var audit = await client.PostAsJsonAsync("/api/overlay/audit", new OverlayAuditRequest(created.Data.Id));
+        var auditPayload = await audit.Content.ReadFromJsonAsync<ApiResponse<OverlayAuditResponse>>();
 
         Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, audit.StatusCode);
         Assert.Equal("text/sample.txt", savePayload?.Data?.VirtualPath);
         Assert.Single(listPayload?.Data?.Items ?? []);
         Assert.True(diffPayload?.Data?.TextChanged);
         Assert.True(revertPayload?.Data?.Removed);
+        Assert.Equal(2, auditPayload?.Data?.Total);
+        Assert.Equal("revert", auditPayload?.Data?.Items.FirstOrDefault()?.Action);
     }
 
     [Fact]

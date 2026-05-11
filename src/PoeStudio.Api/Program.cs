@@ -1,5 +1,6 @@
 using PoeStudio.Contracts;
 using PoeStudio.Api.Jobs;
+using System.Security.Cryptography;
 using PoeStudio.Core.Batch;
 using PoeStudio.Core.ClientDetection;
 using PoeStudio.Core.Native;
@@ -278,6 +279,50 @@ app.MapPost("/api/resources/export", async (
     return Results.Ok(ApiResponse<ResourceExportResponse>.Success(response));
 });
 
+app.MapPost("/api/resources/signature", async (
+    ResourceSignatureRequest request,
+    ProfileStore profiles,
+    ResourceIndexStore resourceIndex,
+    NativeBundleResourceContentResolver nativeContentResolver,
+    CancellationToken cancellationToken) =>
+{
+    var resource = await resourceIndex.GetByPathAsync(request.ProfileId, request.VirtualPath, cancellationToken);
+    if (resource is null)
+    {
+        return Results.NotFound(ApiResponse<ResourceSignatureResponse>.Failure("resource_not_found", "未找到资源，请先建立索引。"));
+    }
+
+    var read = await ReadResourceBytesAsync(
+        request.ProfileId,
+        request.OodlePath,
+        resource,
+        profiles,
+        nativeContentResolver,
+        cancellationToken);
+    if (!read.Ok)
+    {
+        return read.StatusCode == StatusCodes.Status404NotFound
+            ? Results.NotFound(ApiResponse<ResourceSignatureResponse>.Failure(read.ErrorCode, read.Message))
+            : Results.BadRequest(ApiResponse<ResourceSignatureResponse>.Failure(read.ErrorCode, read.Message));
+    }
+
+    var hash = SHA256.HashData(read.Data);
+    var header = string.Join(" ", read.Data.Take(32).Select(item => item.ToString("X2")));
+    var response = new ResourceSignatureResponse(
+        request.ProfileId,
+        resource.VirtualPath,
+        resource.Kind,
+        resource.Extension,
+        read.Data.LongLength,
+        Convert.ToHexString(hash).ToLowerInvariant(),
+        header,
+        GuessContentType(resource.Extension),
+        resource.SourceLayer.ToString(),
+        BuildMatchHints(resource, read.Data.LongLength, hash),
+        []);
+    return Results.Ok(ApiResponse<ResourceSignatureResponse>.Success(response));
+});
+
 app.MapPost("/api/resources/bulk-export", async (
     ResourceBulkExportRequest request,
     ProfileStore profiles,
@@ -494,6 +539,15 @@ app.MapPost("/api/overlay/list", async (
 {
     var response = await overlay.ListAsync(request.ProfileId, cancellationToken);
     return Results.Ok(ApiResponse<OverlayListResponse>.Success(response));
+});
+
+app.MapPost("/api/overlay/audit", async (
+    OverlayAuditRequest request,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    var response = await overlay.AuditAsync(request, cancellationToken);
+    return Results.Ok(ApiResponse<OverlayAuditResponse>.Success(response));
 });
 
 app.MapPost("/api/overlay/diff", async (
@@ -1365,6 +1419,55 @@ static string GuessContentType(string extension)
     };
 }
 
+static async Task<ResourceBytesReadResult> ReadResourceBytesAsync(
+    string profileId,
+    string? oodlePath,
+    ResourceSummaryDto resource,
+    ProfileStore profiles,
+    NativeBundleResourceContentResolver nativeContentResolver,
+    CancellationToken cancellationToken)
+{
+    if (NativeBundleResourceContentResolver.IsNativeResource(resource))
+    {
+        var profile = await profiles.GetAsync(profileId, cancellationToken);
+        if (profile is null)
+        {
+            return ResourceBytesReadResult.Fail(StatusCodes.Status404NotFound, "profile_not_found", "未找到客户端配置。");
+        }
+
+        var content = await nativeContentResolver.ReadAsync(profile, resource, oodlePath, cancellationToken);
+        if (!content.Ok)
+        {
+            return ResourceBytesReadResult.Fail(
+                StatusCodes.Status400BadRequest,
+                content.ErrorCode ?? "native_resource_read_failed",
+                content.Message ?? "native 资源读取失败。");
+        }
+
+        return ResourceBytesReadResult.Success(content.Data);
+    }
+
+    if (string.IsNullOrWhiteSpace(resource.PhysicalPath) || !File.Exists(resource.PhysicalPath))
+    {
+        return ResourceBytesReadResult.Fail(StatusCodes.Status404NotFound, "resource_file_missing", "资源文件不存在，可能尚未提取或索引已过期。");
+    }
+
+    return ResourceBytesReadResult.Success(await File.ReadAllBytesAsync(resource.PhysicalPath, cancellationToken));
+}
+
+static IReadOnlyList<string> BuildMatchHints(ResourceSummaryDto resource, long size, byte[] hash)
+{
+    var hashText = Convert.ToHexString(hash).ToLowerInvariant();
+    return
+    [
+        $"path:{resource.NormalizedPath}",
+        $"kind:{resource.Kind}",
+        $"ext:{resource.Extension}",
+        $"size:{size}",
+        $"sha256:{hashText}"
+    ];
+}
+
 static string SafeExportPath(string root, string virtualPath)
 {
     var fullRoot = Path.GetFullPath(root);
@@ -1383,6 +1486,24 @@ static bool IsSubPath(string root, string path)
     var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
     var fullPath = Path.GetFullPath(path);
     return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+}
+
+sealed record ResourceBytesReadResult(
+    bool Ok,
+    byte[] Data,
+    int StatusCode,
+    string ErrorCode,
+    string Message)
+{
+    public static ResourceBytesReadResult Success(byte[] data)
+    {
+        return new ResourceBytesReadResult(true, data, StatusCodes.Status200OK, string.Empty, string.Empty);
+    }
+
+    public static ResourceBytesReadResult Fail(int statusCode, string errorCode, string message)
+    {
+        return new ResourceBytesReadResult(false, [], statusCode, errorCode, message);
+    }
 }
 
 sealed class IDisposableOodleCodec(IOodleCodec inner) : IOodleCodec, IDisposable

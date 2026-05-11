@@ -14,6 +14,24 @@ public sealed record ResourceExportResponse(
     long Size,
     IReadOnlyList<string> Warnings);
 
+public sealed record ResourceSignatureRequest(
+    string ProfileId,
+    string VirtualPath,
+    string? OodlePath = null);
+
+public sealed record ResourceSignatureResponse(
+    string ProfileId,
+    string VirtualPath,
+    ResourceKind Kind,
+    string Extension,
+    long Size,
+    string Sha256,
+    string HeaderHex,
+    string ContentType,
+    string SourceLayer,
+    IReadOnlyList<string> MatchHints,
+    IReadOnlyList<string> Warnings);
+
 public sealed record ResourceBulkExportRequest(
     string ProfileId,
     string Query,
