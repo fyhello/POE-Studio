@@ -37,4 +37,5 @@ public sealed record CreateProfileRequest(
     string? ContentGgpkPath,
     string? Bundles2Path,
     string? IndexPath,
+    OodleStatus OodleStatus,
     string ClientFingerprint);

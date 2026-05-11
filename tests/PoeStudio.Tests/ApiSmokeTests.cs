@@ -43,4 +43,31 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         Assert.True(payload?.Ok);
         Assert.Equal(ClientEntryKind.Bundles2, payload?.Data?.EntryKind);
     }
+
+    [Fact]
+    public async Task Create_then_list_profiles_preserves_oodle_status()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var request = new CreateProfileRequest(
+            DisplayName: "Steam client",
+            RootPath: root,
+            Platform: ClientPlatform.Steam,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: Path.Combine(root, "Bundles2"),
+            IndexPath: Path.Combine(root, "Bundles2", "_.index.bin"),
+            OodleStatus: OodleStatus.Found,
+            ClientFingerprint: "fingerprint");
+        var client = factory.CreateClient();
+
+        var createResponse = await client.PostAsJsonAsync("/api/profiles", request);
+        var createPayload = await createResponse.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        var listPayload = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<ClientProfileDto>>>("/api/profiles");
+
+        Assert.Equal(HttpStatusCode.OK, createResponse.StatusCode);
+        Assert.Equal(OodleStatus.Found, createPayload?.Data?.OodleStatus);
+        var profile = Assert.Single(listPayload?.Data ?? []);
+        Assert.Equal(OodleStatus.Found, profile.OodleStatus);
+    }
 }

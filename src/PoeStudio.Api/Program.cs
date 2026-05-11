@@ -67,7 +67,7 @@ app.MapPost("/api/profiles", async (CreateProfileRequest request, ProfileStore s
         ContentGgpkPath: request.ContentGgpkPath,
         Bundles2Path: request.Bundles2Path,
         IndexPath: request.IndexPath,
-        OodleStatus: OodleStatus.Unknown,
+        OodleStatus: request.OodleStatus,
         ClientFingerprint: request.ClientFingerprint,
         CreatedAt: now,
         UpdatedAt: now);
