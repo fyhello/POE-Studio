@@ -44,6 +44,7 @@ async function refreshProfiles() {
   state.selectedProfile = state.profiles[0] || null;
   $("buildNativeIndexBtn").disabled = !state.selectedProfile;
   $("patchDryRunBtn").disabled = !state.selectedProfile;
+  $("patchBuildBtn").disabled = !state.selectedProfile;
   setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
 }
 
@@ -100,16 +101,25 @@ function trackJob(jobId) {
       setStatus(`${job.kind}: ${job.message}`);
       if (job.status === 2 || job.status === 3) {
         clearInterval(state.jobTimer);
-        if (job.resultJson) {
-          writeLog($("detectOutput"), JSON.parse(job.resultJson));
-        }
-        await searchResources();
+        if (job.resultJson) handleJobResult(job);
       }
     } catch (error) {
       clearInterval(state.jobTimer);
       setStatus(error.message);
     }
   }, 500);
+}
+
+function handleJobResult(job) {
+  const result = JSON.parse(job.resultJson);
+  if (job.kind === "patch-build") {
+    writeLog($("actionOutput"), result);
+    setStatus(result.zipPath ? `补丁已生成：${result.zipPath}` : job.message);
+    return;
+  }
+
+  writeLog($("detectOutput"), result);
+  searchResources();
 }
 
 async function searchResources() {
@@ -185,6 +195,18 @@ async function patchDryRun() {
   setStatus(`补丁预检完成：${result.totalChanges} 个改动`);
 }
 
+async function patchBuild() {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  setStatus("正在启动补丁构建...");
+  const job = await api("/api/jobs/patch/build", {
+    profileId,
+    template: 3,
+    writerKind: 0
+  });
+  trackJob(job.id);
+}
+
 function bind() {
   $("refreshProfilesBtn").addEventListener("click", refreshProfiles);
   $("detectBtn").addEventListener("click", detectClient);
@@ -200,6 +222,7 @@ function bind() {
   });
   $("saveOverlayBtn").addEventListener("click", saveOverlay);
   $("patchDryRunBtn").addEventListener("click", patchDryRun);
+  $("patchBuildBtn").addEventListener("click", patchBuild);
 }
 
 bind();

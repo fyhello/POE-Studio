@@ -563,6 +563,45 @@ app.MapPost("/api/jobs/native/bundles2/build-resource-index", (
     return Results.Ok(ApiResponse<JobSnapshotDto>.Success(job));
 });
 
+app.MapPost("/api/jobs/patch/build", (
+    PatchBuildRequest request,
+    InMemoryJobStore jobs,
+    IServiceScopeFactory scopeFactory) =>
+{
+    var job = jobs.Create("patch-build", "任务已创建，等待开始。");
+    _ = Task.Run(async () =>
+    {
+        using var scope = scopeFactory.CreateScope();
+        var scopedJobs = scope.ServiceProvider.GetRequiredService<InMemoryJobStore>();
+        try
+        {
+            scopedJobs.Update(job.Id, JobStatus.Running, 10, "正在读取客户端配置。");
+            var profiles = scope.ServiceProvider.GetRequiredService<ProfileStore>();
+            var profile = await profiles.GetAsync(request.ProfileId, CancellationToken.None);
+            if (profile is null)
+            {
+                scopedJobs.Fail(job.Id, "profile_not_found", "未找到客户端配置。");
+                return;
+            }
+
+            scopedJobs.Update(job.Id, JobStatus.Running, 35, "正在构建补丁包。");
+            var patchBuild = scope.ServiceProvider.GetRequiredService<PatchBuildService>();
+            var response = await patchBuild.BuildAsync(request, profile, CancellationToken.None);
+            scopedJobs.Succeed(job.Id, "补丁包已生成。", System.Text.Json.JsonSerializer.Serialize(response));
+        }
+        catch (PatchBuildException ex)
+        {
+            scopedJobs.Fail(job.Id, ex.ErrorCode, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            scopedJobs.Fail(job.Id, "job_failed", ex.Message);
+        }
+    });
+
+    return Results.Ok(ApiResponse<JobSnapshotDto>.Success(job));
+});
+
 app.MapGet("/api/jobs/{jobId}", (string jobId, InMemoryJobStore jobs) =>
 {
     var job = jobs.Get(jobId);
