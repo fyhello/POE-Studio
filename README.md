@@ -22,6 +22,18 @@ dotnet run --project src\PoeStudio.Api\PoeStudio.Api.csproj --urls http://localh
 http://localhost:5087/
 ```
 
+## 发布成品目录
+
+```powershell
+.\发布_POE_Studio.ps1
+```
+
+输出目录：
+
+```text
+artifacts\POE-Studio
+```
+
 ## 当前主流程
 
 1. 选择“国服路径”或“国际服路径”，确认 `oo2core.dll` 路径。
