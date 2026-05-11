@@ -575,6 +575,51 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Patch_install_and_uninstall_endpoints_apply_build_files()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "sample.txt"), "base");
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "_.index.bin"), [1, 2, 3]);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+        await client.PostAsJsonAsync("/api/overlay/save-text", new SaveTextOverlayRequest(created.Data.Id, "text/sample.txt", "overlay"));
+        await client.PostAsJsonAsync("/api/patch/build", new PatchBuildRequest(created.Data.Id));
+        var history = await client.PostAsJsonAsync("/api/patch/build-history", new PatchBuildHistoryRequest(created.Data.Id));
+        var historyPayload = await history.Content.ReadFromJsonAsync<ApiResponse<PatchBuildHistoryResponse>>();
+        var buildId = Assert.Single(historyPayload?.Data?.Items ?? []).BuildId;
+
+        var preview = await client.PostAsJsonAsync("/api/patch/install", new PatchInstallRequest(created.Data.Id, buildId, Apply: false));
+        var previewPayload = await preview.Content.ReadFromJsonAsync<ApiResponse<PatchInstallResponse>>();
+        var install = await client.PostAsJsonAsync("/api/patch/install", new PatchInstallRequest(created.Data.Id, buildId, Apply: true));
+        var installPayload = await install.Content.ReadFromJsonAsync<ApiResponse<PatchInstallResponse>>();
+        var uninstall = await client.PostAsJsonAsync("/api/patch/uninstall", new PatchUninstallRequest(created.Data.Id, buildId, Apply: true));
+        var uninstallPayload = await uninstall.Content.ReadFromJsonAsync<ApiResponse<PatchUninstallResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        Assert.False(previewPayload?.Data?.Applied);
+        Assert.Equal(2, previewPayload?.Data?.FileCount);
+        Assert.Equal(HttpStatusCode.OK, install.StatusCode);
+        Assert.True(installPayload?.Data?.Applied);
+        Assert.True(File.Exists(installPayload?.Data?.InstallManifestPath));
+        Assert.Equal(HttpStatusCode.OK, uninstall.StatusCode);
+        Assert.True(uninstallPayload?.Data?.Applied);
+        Assert.Equal(2, uninstallPayload?.Data?.Removed);
+    }
+
+    [Fact]
     public async Task Patch_build_native_mode_returns_clear_failure_until_writer_is_available()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

@@ -287,6 +287,18 @@ textarea:focus {
   font-size: 12px;
 }
 
+.build-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.build-actions button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
 .resource-item {
   display: grid;
   grid-template-columns: 1fr auto;

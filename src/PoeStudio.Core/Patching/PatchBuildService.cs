@@ -123,6 +123,100 @@ public sealed class PatchBuildService
             warnings);
     }
 
+    public async Task<PatchInstallResponse> InstallAsync(
+        PatchInstallRequest request,
+        ClientProfileDto profile,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(profile.Bundles2Path))
+        {
+            return new PatchInstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], null, ["客户端配置缺少 Bundles2 路径。"]);
+        }
+
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        var buildDirectory = Path.Combine(layout.BuildsRoot, request.BuildId);
+        if (!Directory.Exists(buildDirectory))
+        {
+            return new PatchInstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], null, ["未找到构建目录。"]);
+        }
+
+        var bundlesSource = FindBundlesDirectory(buildDirectory);
+        if (bundlesSource is null)
+        {
+            return new PatchInstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], null, ["构建输出中未找到 Bundles2 目录。"]);
+        }
+
+        var files = Directory.EnumerateFiles(bundlesSource, "*", SearchOption.AllDirectories)
+            .Select(path =>
+            {
+                var relative = Path.GetRelativePath(bundlesSource, path).Replace('\\', '/');
+                var target = SafeCombine(profile.Bundles2Path, relative);
+                return new PatchInstallFileDto(
+                    relative,
+                    path,
+                    target,
+                    new FileInfo(path).Length,
+                    File.Exists(target));
+            })
+            .OrderBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        string? installManifestPath = null;
+        if (request.Apply)
+        {
+            foreach (var file in files)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(file.TargetPath)!);
+                File.Copy(file.SourcePath, file.TargetPath, overwrite: true);
+            }
+
+            installManifestPath = Path.Combine(buildDirectory, "install_manifest.json");
+            await WriteJsonAsync(installManifestPath, new PatchInstallManifestDto(request.ProfileId, request.BuildId, DateTimeOffset.UtcNow, files), cancellationToken);
+        }
+
+        return new PatchInstallResponse(request.ProfileId, request.BuildId, request.Apply, files.Length, files, installManifestPath, []);
+    }
+
+    public async Task<PatchUninstallResponse> UninstallAsync(
+        PatchUninstallRequest request,
+        ClientProfileDto profile,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(profile.Bundles2Path))
+        {
+            return new PatchUninstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], ["客户端配置缺少 Bundles2 路径。"]);
+        }
+
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        var buildDirectory = Path.Combine(layout.BuildsRoot, request.BuildId);
+        var manifestPath = Path.Combine(buildDirectory, "install_manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            return new PatchUninstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], ["未找到安装清单。"]);
+        }
+
+        await using var stream = File.OpenRead(manifestPath);
+        var manifest = await JsonSerializer.DeserializeAsync<PatchInstallManifestDto>(stream, JsonOptions, cancellationToken);
+        var targets = manifest?.Files
+            .Select(file => file.TargetPath)
+            .Where(path => IsSubPath(profile.Bundles2Path, path))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
+
+        if (request.Apply)
+        {
+            foreach (var target in targets)
+            {
+                if (File.Exists(target))
+                {
+                    File.Delete(target);
+                }
+            }
+        }
+
+        return new PatchUninstallResponse(request.ProfileId, request.BuildId, request.Apply, targets.Length, targets, []);
+    }
+
     private async Task<IReadOnlyList<PatchChangeDto>> BuildChangesAsync(string profileId, CancellationToken cancellationToken)
     {
         var entries = await overlayStore.GetEntriesAsync(profileId, cancellationToken);
@@ -172,6 +266,38 @@ public sealed class PatchBuildService
         return template == PatchZipTemplate.Epic ? "PathOfExile2" : string.Empty;
     }
 
+    private static string? FindBundlesDirectory(string buildDirectory)
+    {
+        var direct = Path.Combine(buildDirectory, "Bundles2");
+        if (Directory.Exists(direct))
+        {
+            return direct;
+        }
+
+        return Directory.EnumerateDirectories(buildDirectory, "Bundles2", SearchOption.AllDirectories)
+            .OrderBy(path => path.Length)
+            .FirstOrDefault();
+    }
+
+    private static string SafeCombine(string root, string relativePath)
+    {
+        var fullRoot = Path.GetFullPath(root);
+        var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+        if (!IsSubPath(fullRoot, fullPath))
+        {
+            throw new ArgumentException("Target path escaped Bundles2 root.");
+        }
+
+        return fullPath;
+    }
+
+    private static bool IsSubPath(string root, string path)
+    {
+        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var fullPath = Path.GetFullPath(path);
+        return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static IPatchPackageWriter CreateNativeUnavailableWriter()
     {
         return new UnavailablePatchPackageWriter(
@@ -195,4 +321,10 @@ public sealed class PatchBuildService
     {
         return changes.GroupBy(keySelector).ToDictionary(group => group.Key, group => group.Count());
     }
+
+    private sealed record PatchInstallManifestDto(
+        string ProfileId,
+        string BuildId,
+        DateTimeOffset InstalledAt,
+        IReadOnlyList<PatchInstallFileDto> Files);
 }

@@ -794,6 +794,45 @@ app.MapPost("/api/patch/build-history", async (
     return Results.Ok(ApiResponse<PatchBuildHistoryResponse>.Success(new PatchBuildHistoryResponse(request.ProfileId, items)));
 });
 
+app.MapPost("/api/patch/install", async (
+    PatchInstallRequest request,
+    ProfileStore profiles,
+    PatchBuildService patchBuild,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<PatchInstallResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    try
+    {
+        var response = await patchBuild.InstallAsync(request, profile, cancellationToken);
+        return Results.Ok(ApiResponse<PatchInstallResponse>.Success(response));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(ApiResponse<PatchInstallResponse>.Failure("invalid_install_target", ex.Message));
+    }
+});
+
+app.MapPost("/api/patch/uninstall", async (
+    PatchUninstallRequest request,
+    ProfileStore profiles,
+    PatchBuildService patchBuild,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<PatchUninstallResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    var response = await patchBuild.UninstallAsync(request, profile, cancellationToken);
+    return Results.Ok(ApiResponse<PatchUninstallResponse>.Success(response));
+});
+
 app.MapGet("/api/patch/download/{profileId}/{buildId}", (
     string profileId,
     string buildId,

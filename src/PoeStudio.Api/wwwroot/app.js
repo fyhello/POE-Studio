@@ -448,11 +448,39 @@ async function refreshBuildHistory() {
         ${item.downloadUrl ? `<a class="download-link" href="${item.downloadUrl}">下载</a>` : ""}
       </div>
       <div class="build-meta">${item.buildId} · ${Math.max(1, Math.round(item.zipSize / 1024))} KB</div>
+      <div class="build-actions">
+        <button type="button" data-action="install-preview">预检安装</button>
+        <button type="button" data-action="install">安装</button>
+        <button type="button" data-action="uninstall-preview">预检卸载</button>
+        <button type="button" data-action="uninstall">卸载</button>
+      </div>
     `;
+    for (const button of row.querySelectorAll("button")) {
+      button.addEventListener("click", () => runPatchInstallAction(item.buildId, button.dataset.action));
+    }
     list.appendChild(row);
   }
   if (result.items.length === 0) {
     list.innerHTML = '<div class="build-item"><div class="build-meta">暂无补丁输出</div></div>';
+  }
+}
+
+async function runPatchInstallAction(buildId, action) {
+  const profileId = selectedProfileId();
+  if (!profileId || !buildId) return;
+  const uninstall = action.includes("uninstall");
+  const apply = action === "install" || action === "uninstall";
+  setStatus(uninstall ? (apply ? "正在卸载补丁..." : "正在预检卸载...") : (apply ? "正在安装补丁..." : "正在预检安装..."));
+  const result = await api(uninstall ? "/api/patch/uninstall" : "/api/patch/install", {
+    profileId,
+    buildId,
+    apply
+  });
+  writeLog($("actionOutput"), result);
+  if (uninstall) {
+    setStatus(apply ? `补丁已卸载：${result.removed}` : `卸载预检：${result.removed}`);
+  } else {
+    setStatus(apply ? `补丁已安装：${result.fileCount}` : `安装预检：${result.fileCount}`);
   }
 }
 

@@ -107,6 +107,68 @@ public sealed class PatchBuildServiceTests
         Assert.Contains("Native Bundles2", ex.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task InstallAsync_previews_and_applies_patch_files_under_client_bundles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var clientRoot = Path.Combine(root, "client");
+        var bundles = Path.Combine(clientRoot, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var profile = Profile(root) with
+        {
+            RootPath = clientRoot,
+            Bundles2Path = bundles,
+            IndexPath = Path.Combine(bundles, "_.index.bin")
+        };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay);
+        var build = await service.BuildAsync(new PatchBuildRequest(profile.Id), profile, CancellationToken.None);
+        var buildId = new DirectoryInfo(build.OutputDirectory).Name;
+
+        var preview = await service.InstallAsync(new PatchInstallRequest(profile.Id, buildId, Apply: false), profile, CancellationToken.None);
+
+        Assert.False(preview.Applied);
+        Assert.Equal(2, preview.FileCount);
+        Assert.False(File.Exists(Path.Combine(bundles, "Tiny.V0.1.bundle.bin")));
+        var applied = await service.InstallAsync(new PatchInstallRequest(profile.Id, buildId, Apply: true), profile, CancellationToken.None);
+
+        Assert.True(applied.Applied);
+        Assert.True(File.Exists(Path.Combine(bundles, "_.index.bin")));
+        Assert.True(File.Exists(Path.Combine(bundles, "Tiny.V0.1.bundle.bin")));
+        Assert.True(File.Exists(applied.InstallManifestPath));
+    }
+
+    [Fact]
+    public async Task UninstallAsync_previews_and_removes_installed_patch_files()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var clientRoot = Path.Combine(root, "client");
+        var bundles = Path.Combine(clientRoot, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var profile = Profile(root) with
+        {
+            RootPath = clientRoot,
+            Bundles2Path = bundles,
+            IndexPath = Path.Combine(bundles, "_.index.bin")
+        };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay);
+        var build = await service.BuildAsync(new PatchBuildRequest(profile.Id), profile, CancellationToken.None);
+        var buildId = new DirectoryInfo(build.OutputDirectory).Name;
+        await service.InstallAsync(new PatchInstallRequest(profile.Id, buildId, Apply: true), profile, CancellationToken.None);
+
+        var preview = await service.UninstallAsync(new PatchUninstallRequest(profile.Id, buildId, Apply: false), profile, CancellationToken.None);
+        var removed = await service.UninstallAsync(new PatchUninstallRequest(profile.Id, buildId, Apply: true), profile, CancellationToken.None);
+
+        Assert.False(preview.Applied);
+        Assert.Equal(2, preview.Removed);
+        Assert.True(removed.Applied);
+        Assert.Equal(2, removed.Removed);
+        Assert.False(File.Exists(Path.Combine(bundles, "Tiny.V0.1.bundle.bin")));
+    }
+
     private static ClientProfileDto Profile(string root)
     {
         var id = Guid.NewGuid().ToString("N");

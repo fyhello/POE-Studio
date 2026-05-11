@@ -100,3 +100,37 @@ public sealed record PatchBuildHistoryItemDto(
     string? RollbackManifestPath,
     DateTimeOffset CreatedAt,
     long ZipSize);
+
+public sealed record PatchInstallRequest(
+    string ProfileId,
+    string BuildId,
+    bool Apply = false);
+
+public sealed record PatchInstallFileDto(
+    string RelativePath,
+    string SourcePath,
+    string TargetPath,
+    long Size,
+    bool TargetExists);
+
+public sealed record PatchInstallResponse(
+    string ProfileId,
+    string BuildId,
+    bool Applied,
+    int FileCount,
+    IReadOnlyList<PatchInstallFileDto> Files,
+    string? InstallManifestPath,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchUninstallRequest(
+    string ProfileId,
+    string BuildId,
+    bool Apply = false);
+
+public sealed record PatchUninstallResponse(
+    string ProfileId,
+    string BuildId,
+    bool Applied,
+    int Removed,
+    IReadOnlyList<string> RemovedPaths,
+    IReadOnlyList<string> Warnings);
