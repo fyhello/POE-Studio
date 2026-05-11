@@ -10,6 +10,21 @@ public static class ClientDetector
     public static ClientDetectionResult Detect(string rootPath, string? oodleSearchPath = null)
     {
         var warnings = new List<string>();
+        if (string.IsNullOrWhiteSpace(rootPath))
+        {
+            warnings.Add("客户端根路径不能为空。");
+            return BuildResult(
+                detected: false,
+                platform: ClientPlatform.Unknown,
+                entryKind: ClientEntryKind.Unknown,
+                rootPath: string.Empty,
+                contentGgpkPath: null,
+                bundles2Path: null,
+                indexPath: null,
+                new OodleDetectionResult(OodleStatus.Missing, null),
+                warnings);
+        }
+
         var fullRoot = Path.GetFullPath(rootPath);
         var contentGgpk = Path.Combine(fullRoot, "Content.ggpk");
         var bundles2 = Path.Combine(fullRoot, "Bundles2");

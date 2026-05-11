@@ -45,6 +45,17 @@ public sealed class ClientDetectorTests
         Assert.Contains(result.Warnings, item => item.Contains("未找到"));
     }
 
+    [Fact]
+    public void Detect_returns_warning_when_root_path_is_empty()
+    {
+        var result = ClientDetector.Detect("");
+
+        Assert.False(result.Detected);
+        Assert.Equal(ClientPlatform.Unknown, result.Platform);
+        Assert.Equal(ClientEntryKind.Unknown, result.EntryKind);
+        Assert.Contains(result.Warnings, item => item.Contains("不能为空"));
+    }
+
     private static string CreateTempDirectory()
     {
         var path = Path.Combine(Path.GetTempPath(), "poe-studio-tests", Guid.NewGuid().ToString("N"));
