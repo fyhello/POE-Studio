@@ -41,6 +41,43 @@ public sealed class NativeIndexCacheServiceTests
         Assert.Equal(2, result.ChunkCount);
     }
 
+    [Fact]
+    public async Task DecompressIndexAsync_uses_request_oodle_path_factory()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-native-cache-tests", Guid.NewGuid().ToString("N"));
+        var indexPath = Path.Combine(root, "_.index.bin");
+        var oodlePath = Path.Combine(root, "oo2core.dll");
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(oodlePath, "fake");
+        await NativeIndexTestFile.WriteBundleAsync(indexPath, [1, 2, 3, 4], compressor: 12, chunkSize: 262144);
+        var service = new NativeIndexCacheService(root, new MissingOodleCodec(), path =>
+        {
+            Assert.Equal(oodlePath, path);
+            return new CopyOodleCodec();
+        });
+
+        var result = await service.DecompressIndexAsync(new NativeIndexDecompressRequest("profile", indexPath, oodlePath), CancellationToken.None);
+
+        Assert.True(result.Ok);
+        Assert.Equal(NativeIndexDecompressStatus.Cached, result.Status);
+    }
+
+    [Fact]
+    public async Task DecompressIndexAsync_reports_missing_request_oodle_path()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-native-cache-tests", Guid.NewGuid().ToString("N"));
+        var indexPath = Path.Combine(root, "_.index.bin");
+        Directory.CreateDirectory(root);
+        await NativeIndexTestFile.WriteBundleAsync(indexPath, [1, 2, 3, 4], compressor: 12, chunkSize: 262144);
+        var service = new NativeIndexCacheService(root, new MissingOodleCodec());
+
+        var result = await service.DecompressIndexAsync(new NativeIndexDecompressRequest("profile", indexPath, Path.Combine(root, "missing.dll")), CancellationToken.None);
+
+        Assert.False(result.Ok);
+        Assert.Equal(NativeIndexDecompressStatus.OodleMissing, result.Status);
+        Assert.Contains(result.Warnings, warning => warning.Contains("oo2core", StringComparison.OrdinalIgnoreCase));
+    }
+
     private sealed class MissingOodleCodec : IOodleCodec
     {
         public bool IsAvailable => false;

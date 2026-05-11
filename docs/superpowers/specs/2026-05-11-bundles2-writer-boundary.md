@@ -87,3 +87,25 @@ profiles/<profileId>/cache/raw/native/bundles2/index.decompressed.bin
 - 使用 `NativeLibrary.Load` 或隔离的 P/Invoke resolver。
 - 不把 DLL 复制进发布包，避免分发授权风险。
 - 接入前先用小样本和真实国服 `_.index.bin` 做只读解压验证。
+
+## 真实 Oodle 只读解压验证
+
+本机验证 DLL：
+
+```text
+E:\VisualGGPK3_ascii\oo2core.dll
+```
+
+验证输入：
+
+```text
+C:\WeGameApps\rail_apps\流放之路：降临(2002052)\Bundles2\_.index.bin
+```
+
+验证结果：
+
+- `NativeOodleCodec` 通过用户指定路径动态加载 DLL。
+- `NativeIndexCacheService` 解压成功，状态为 `Cached`。
+- 输出缓存大小：153,151,305 bytes。
+- 输出大小与 header 中的 uncompressed size 一致。
+- 解压过程只读打开客户端 index，不修改客户端目录。

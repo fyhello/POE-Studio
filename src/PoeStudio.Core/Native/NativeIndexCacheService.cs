@@ -9,12 +9,19 @@ public sealed class NativeIndexCacheService
 
     private readonly string workspaceRoot;
     private readonly IOodleCodec oodleCodec;
+    private readonly OodleCodecFactory oodleCodecFactory;
     private readonly NativeBundles2IndexReader reader = new();
 
     public NativeIndexCacheService(string workspaceRoot, IOodleCodec oodleCodec)
+        : this(workspaceRoot, oodleCodec, path => new NativeOodleCodec(path))
+    {
+    }
+
+    public NativeIndexCacheService(string workspaceRoot, IOodleCodec oodleCodec, OodleCodecFactory oodleCodecFactory)
     {
         this.workspaceRoot = Path.GetFullPath(workspaceRoot);
         this.oodleCodec = oodleCodec;
+        this.oodleCodecFactory = oodleCodecFactory;
     }
 
     public async Task<NativeIndexDecompressResponse> DecompressIndexAsync(
@@ -22,7 +29,9 @@ public sealed class NativeIndexCacheService
         CancellationToken cancellationToken)
     {
         var cachePath = GetCachePath(request.ProfileId);
-        var probe = await reader.ProbeAsync(request.IndexPath, oodleCodec.IsAvailable, cancellationToken);
+        using var requestCodec = TryCreateRequestCodec(request.OodlePath, out var oodleWarning);
+        var codec = requestCodec ?? oodleCodec;
+        var probe = await reader.ProbeAsync(request.IndexPath, codec.IsAvailable, cancellationToken);
         if (!probe.Exists)
         {
             return Response(request, cachePath, false, NativeIndexDecompressStatus.Missing, probe.UncompressedSize, probe.ChunkCount, probe.Warnings);
@@ -33,9 +42,10 @@ public sealed class NativeIndexCacheService
             return Response(request, cachePath, false, NativeIndexDecompressStatus.InvalidHeader, probe.UncompressedSize, probe.ChunkCount, probe.Warnings);
         }
 
-        if (!oodleCodec.IsAvailable)
+        if (!codec.IsAvailable)
         {
-            return Response(request, cachePath, false, NativeIndexDecompressStatus.OodleMissing, probe.UncompressedSize, probe.ChunkCount, probe.Warnings);
+            var warnings = oodleWarning is null ? probe.Warnings : probe.Warnings.Concat([oodleWarning]).ToArray();
+            return Response(request, cachePath, false, NativeIndexDecompressStatus.OodleMissing, probe.UncompressedSize, probe.ChunkCount, warnings);
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
@@ -52,7 +62,7 @@ public sealed class NativeIndexCacheService
             await input.ReadExactlyAsync(compressed, cancellationToken);
             var expected = Math.Min(chunkSize, remaining);
             var decompressed = new byte[expected];
-            var actual = oodleCodec.Decompress(compressed, decompressed, probe.Compressor!.Value);
+            var actual = codec.Decompress(compressed, decompressed, probe.Compressor!.Value);
             if (actual != expected)
             {
                 return Response(
@@ -78,6 +88,31 @@ public sealed class NativeIndexCacheService
         return Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
     }
 
+    private IDisposableOodleCodec? TryCreateRequestCodec(string? oodlePath, out string? warning)
+    {
+        warning = null;
+        if (string.IsNullOrWhiteSpace(oodlePath))
+        {
+            return null;
+        }
+
+        if (!File.Exists(oodlePath))
+        {
+            warning = $"指定的 oo2core.dll 不存在：{oodlePath}";
+            return null;
+        }
+
+        try
+        {
+            return new IDisposableOodleCodec(oodleCodecFactory(oodlePath));
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or EntryPointNotFoundException or BadImageFormatException or DllNotFoundException)
+        {
+            warning = $"无法加载 oo2core.dll：{ex.Message}";
+            return null;
+        }
+    }
+
     private static NativeIndexDecompressResponse Response(
         NativeIndexDecompressRequest request,
         string cachePath,
@@ -96,5 +131,23 @@ public sealed class NativeIndexCacheService
             uncompressedSize,
             chunkCount,
             warnings);
+    }
+
+    private sealed class IDisposableOodleCodec(IOodleCodec inner) : IOodleCodec, IDisposable
+    {
+        public bool IsAvailable => inner.IsAvailable;
+
+        public int Decompress(ReadOnlySpan<byte> compressed, Span<byte> output, int compressor)
+        {
+            return inner.Decompress(compressed, output, compressor);
+        }
+
+        public void Dispose()
+        {
+            if (inner is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+        }
     }
 }

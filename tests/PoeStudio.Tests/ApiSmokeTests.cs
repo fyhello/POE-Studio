@@ -273,6 +273,26 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         Assert.False(payload?.Data?.Ok);
     }
 
+    [Fact]
+    public async Task Native_index_decompress_reports_missing_request_oodle_path()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var indexPath = Path.Combine(bundles, "_.index.bin");
+        await WriteIndexHeaderAsync(indexPath);
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/native/bundles2/decompress-index",
+            new NativeIndexDecompressRequest("profile", indexPath, Path.Combine(root, "missing-oo2core.dll")));
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<NativeIndexDecompressResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(NativeIndexDecompressStatus.OodleMissing, payload?.Data?.Status);
+        Assert.Contains(payload?.Data?.Warnings ?? [], warning => warning.Contains("oo2core", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static async Task WriteIndexHeaderAsync(string path)
     {
         await using var stream = File.Create(path);

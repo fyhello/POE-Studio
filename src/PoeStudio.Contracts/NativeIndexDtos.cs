@@ -38,7 +38,8 @@ public enum NativeIndexDecompressStatus
 
 public sealed record NativeIndexDecompressRequest(
     string ProfileId,
-    string IndexPath);
+    string IndexPath,
+    string? OodlePath = null);
 
 public sealed record NativeIndexDecompressResponse(
     string ProfileId,
