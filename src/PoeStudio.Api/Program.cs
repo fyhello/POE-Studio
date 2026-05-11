@@ -898,6 +898,62 @@ app.MapPost("/api/tables/inspect", async (
     return Results.Ok(ApiResponse<TableInspectResponse>.Success(response));
 });
 
+app.MapPost("/api/tables/save", async (
+    TableSaveRequest request,
+    ProfileStore profiles,
+    ResourceIndexStore resourceIndex,
+    NativeBundleResourceContentResolver nativeContentResolver,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    var resource = await resourceIndex.GetByPathAsync(request.ProfileId, request.VirtualPath, cancellationToken);
+    if (resource is null)
+    {
+        return Results.NotFound(ApiResponse<TableSaveResponse>.Failure("resource_not_found", "未找到资源，请先建立索引。"));
+    }
+
+    if (resource.Kind != ResourceKind.Table)
+    {
+        return Results.BadRequest(ApiResponse<TableSaveResponse>.Failure("not_table_resource", "该资源不是表格/数据文件。"));
+    }
+
+    var read = await ReadResourceBytesAsync(
+        request.ProfileId,
+        request.OodlePath,
+        resource,
+        profiles,
+        nativeContentResolver,
+        cancellationToken);
+    if (!read.Ok)
+    {
+        return read.StatusCode == StatusCodes.Status404NotFound
+            ? Results.NotFound(ApiResponse<TableSaveResponse>.Failure(read.ErrorCode, read.Message))
+            : Results.BadRequest(ApiResponse<TableSaveResponse>.Failure(read.ErrorCode, read.Message));
+    }
+
+    try
+    {
+        var edited = new TableInspector().ApplyCellEdits(resource, read.Data, request.Edits);
+        var entry = await overlay.SaveTextAsync(new SaveTextOverlayRequest(
+            request.ProfileId,
+            resource.VirtualPath,
+            edited,
+            resource.PhysicalPath,
+            HasBasePhysicalPath: !NativeBundleResourceContentResolver.IsNativeResource(resource) && resource.PhysicalPath is not null),
+            cancellationToken);
+        var response = new TableSaveResponse(request.ProfileId, resource.VirtualPath, request.Edits.Count, entry);
+        return Results.Ok(ApiResponse<TableSaveResponse>.Success(response));
+    }
+    catch (ArgumentOutOfRangeException ex)
+    {
+        return Results.BadRequest(ApiResponse<TableSaveResponse>.Failure("table_edit_out_of_range", ex.Message));
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(ApiResponse<TableSaveResponse>.Failure("table_edit_unsupported", ex.Message));
+    }
+});
+
 app.MapPost("/api/patch/dry-run", async (
     PatchDryRunRequest request,
     ProfileStore profiles,

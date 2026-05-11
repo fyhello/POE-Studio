@@ -4,6 +4,7 @@ const state = {
   selectedProfile: null,
   selectedResource: null,
   lastExportRoot: null,
+  tableEditBase: null,
   jobTimer: null
 };
 
@@ -287,6 +288,10 @@ function renderPreview(preview) {
   $("previewKind").textContent = previewKindText(preview.kind);
   media.classList.add("hidden");
   media.innerHTML = "";
+  $("tableEditor").classList.add("hidden");
+  $("tableEditor").innerHTML = "";
+  state.tableEditBase = null;
+  $("saveTableBtn").disabled = true;
   text.classList.remove("hidden");
   text.readOnly = preview.kind !== 1;
   text.value = preview.text || preview.hex || preview.message || "";
@@ -388,7 +393,66 @@ async function inspectTable() {
     oodlePath: $("oodlePathInput").value.trim() || null
   });
   writeLog($("actionOutput"), result);
+  renderTableEditor(result);
   setStatus(result.structured ? `表格预览：${result.previewRowCount} 行` : "表格二进制预览已生成");
+}
+
+function renderTableEditor(result) {
+  const editor = $("tableEditor");
+  editor.innerHTML = "";
+  editor.classList.add("hidden");
+  $("saveTableBtn").disabled = true;
+  state.tableEditBase = null;
+  if (!result.structured || !result.rows?.length) {
+    return;
+  }
+
+  const table = document.createElement("table");
+  for (const row of result.rows) {
+    const tr = document.createElement("tr");
+    for (let columnIndex = 0; columnIndex < row.cells.length; columnIndex++) {
+      const cell = document.createElement(row.rowNumber === 1 ? "th" : "td");
+      const input = document.createElement("input");
+      input.value = row.cells[columnIndex];
+      input.dataset.rowNumber = String(row.rowNumber);
+      input.dataset.columnIndex = String(columnIndex);
+      input.dataset.original = row.cells[columnIndex];
+      cell.appendChild(input);
+      tr.appendChild(cell);
+    }
+    table.appendChild(tr);
+  }
+  editor.appendChild(table);
+  editor.classList.remove("hidden");
+  $("previewText").classList.add("hidden");
+  $("saveTableBtn").disabled = false;
+  state.tableEditBase = result;
+}
+
+async function saveTableEdits() {
+  if (!state.selectedResource || !state.tableEditBase) return;
+  const edits = Array.from($("tableEditor").querySelectorAll("input"))
+    .filter(input => input.value !== input.dataset.original)
+    .map(input => ({
+      rowNumber: Number(input.dataset.rowNumber),
+      columnIndex: Number(input.dataset.columnIndex),
+      value: input.value
+    }));
+  if (edits.length === 0) {
+    setStatus("表格没有改动");
+    return;
+  }
+
+  setStatus("正在保存表格覆盖...");
+  const result = await api("/api/tables/save", {
+    profileId: state.selectedResource.profileId,
+    virtualPath: state.selectedResource.virtualPath,
+    edits,
+    oodlePath: $("oodlePathInput").value.trim() || null
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(`表格已保存：${result.editedCells} 处`);
+  refreshOverlayList();
 }
 
 function readFileAsBase64(file) {
@@ -672,6 +736,7 @@ function bind() {
     refreshOverlayList();
   });
   $("saveOverlayBtn").addEventListener("click", saveOverlay);
+  $("saveTableBtn").addEventListener("click", saveTableEdits);
   $("exportResourceBtn").addEventListener("click", exportResource);
   $("signatureBtn").addEventListener("click", extractSignature);
   $("replaceResourceBtn").addEventListener("click", chooseReplacementFile);

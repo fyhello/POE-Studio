@@ -504,6 +504,42 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Table_save_cell_edit_writes_overlay_for_structured_text_table()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "metadata", "items"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "metadata", "items", "sample.ot"), "Id\tName\r\n1\tSword\r\n2\tShield");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var save = await client.PostAsJsonAsync("/api/tables/save", new TableSaveRequest(
+            created.Data.Id,
+            "metadata/items/sample.ot",
+            [new TableCellEditDto(RowNumber: 2, ColumnIndex: 1, Value: "长剑")]));
+        var payload = await save.Content.ReadFromJsonAsync<ApiResponse<TableSaveResponse>>();
+        var list = await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(created.Data.Id));
+        var listPayload = await list.Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+        Assert.Equal(1, payload?.Data?.EditedCells);
+        var overlay = Assert.Single(listPayload?.Data?.Items ?? []);
+        Assert.Equal("metadata/items/sample.ot", overlay.VirtualPath);
+        Assert.Contains("1\t长剑", await File.ReadAllTextAsync(overlay.OverlayPath));
+    }
+
+    [Fact]
     public async Task Table_inspect_returns_hex_preview_for_binary_dat()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

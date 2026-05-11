@@ -48,6 +48,44 @@ public sealed class TableInspector
             Warnings: delimiter is null ? ["未识别到稳定分隔符，按原始文本预览。"] : []);
     }
 
+    public string ApplyCellEdits(ResourceSummaryDto resource, byte[] data, IReadOnlyList<TableCellEditDto> edits)
+    {
+        var slice = data.AsSpan(0, data.Length).ToArray();
+        if (LooksBinary(resource, slice))
+        {
+            throw new InvalidOperationException("二进制表格暂不支持单元格编辑。");
+        }
+
+        var text = Encoding.UTF8.GetString(slice);
+        var newline = text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
+        var lines = text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n', StringSplitOptions.None);
+        var nonEmpty = lines.Where(line => line.Length > 0).ToArray();
+        var delimiter = DetectDelimiter(nonEmpty);
+        if (delimiter is null)
+        {
+            throw new InvalidOperationException("未识别到稳定分隔符，不能安全写回表格。");
+        }
+
+        foreach (var edit in edits)
+        {
+            if (edit.RowNumber < 1 || edit.RowNumber > lines.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(edits), $"行号超出范围：{edit.RowNumber}");
+            }
+
+            var cells = lines[edit.RowNumber - 1].Split(delimiter.Value).ToArray();
+            if (edit.ColumnIndex < 0 || edit.ColumnIndex >= cells.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(edits), $"列号超出范围：{edit.ColumnIndex}");
+            }
+
+            cells[edit.ColumnIndex] = edit.Value;
+            lines[edit.RowNumber - 1] = string.Join(delimiter.Value, cells);
+        }
+
+        return string.Join(newline, lines);
+    }
+
     private static bool LooksBinary(ResourceSummaryDto resource, byte[] data)
     {
         if (resource.Extension.Equals(".dat", StringComparison.OrdinalIgnoreCase)
