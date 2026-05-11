@@ -7,6 +7,13 @@ public sealed record SaveTextOverlayRequest(
     string? BasePhysicalPath = null,
     bool HasBasePhysicalPath = false);
 
+public sealed record SaveBinaryOverlayRequest(
+    string ProfileId,
+    string VirtualPath,
+    string Base64Content,
+    string? BasePhysicalPath = null,
+    bool HasBasePhysicalPath = false);
+
 public sealed record OverlayListRequest(string ProfileId);
 
 public sealed record OverlayListResponse(

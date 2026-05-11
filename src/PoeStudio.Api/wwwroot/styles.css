@@ -47,6 +47,10 @@ button.primary {
   border-color: #2e74c6;
 }
 
+.hidden-file {
+  display: none;
+}
+
 .topbar {
   display: flex;
   align-items: center;

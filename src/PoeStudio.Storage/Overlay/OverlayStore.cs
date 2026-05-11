@@ -31,18 +31,62 @@ public sealed class OverlayStore : IPatchOverlayReader
         Directory.CreateDirectory(Path.GetDirectoryName(overlayPath)!);
 
         await File.WriteAllTextAsync(overlayPath, request.Text, Encoding.UTF8, cancellationToken);
+        return await UpsertManifestAsync(
+            layout,
+            request.ProfileId,
+            normalized,
+            overlayPath,
+            request.BasePhysicalPath,
+            request.HasBasePhysicalPath,
+            cancellationToken);
+    }
+
+    public async Task<OverlayEntryDto> SaveBytesAsync(
+        string profileId,
+        string virtualPath,
+        byte[] content,
+        string? BasePhysicalPath,
+        bool HasBasePhysicalPath,
+        CancellationToken cancellationToken)
+    {
+        var normalized = ResourcePath.Normalize(virtualPath);
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, profileId);
+        layout.EnsureDirectories();
+        var overlayPath = ResourcePath.ToSafePhysicalPath(layout.OverlayFilesRoot, normalized);
+        Directory.CreateDirectory(Path.GetDirectoryName(overlayPath)!);
+
+        await File.WriteAllBytesAsync(overlayPath, content, cancellationToken);
+        return await UpsertManifestAsync(
+            layout,
+            profileId,
+            normalized,
+            overlayPath,
+            BasePhysicalPath,
+            HasBasePhysicalPath,
+            cancellationToken);
+    }
+
+    private async Task<OverlayEntryDto> UpsertManifestAsync(
+        WorkspaceLayout layout,
+        string profileId,
+        string normalized,
+        string overlayPath,
+        string? basePhysicalPath,
+        bool hasBasePhysicalPath,
+        CancellationToken cancellationToken)
+    {
         var now = DateTimeOffset.UtcNow;
         var manifest = await LoadManifestAsync(layout, cancellationToken);
         var existing = manifest.Items.FirstOrDefault(item => string.Equals(item.NormalizedPath, normalized, StringComparison.OrdinalIgnoreCase));
         var entry = new OverlayEntryDto(
-            request.ProfileId,
+            profileId,
             normalized,
             normalized,
             overlayPath,
             new FileInfo(overlayPath).Length,
             await HashFileAsync(overlayPath, cancellationToken),
-            request.HasBasePhysicalPath ? await TryHashFileAsync(request.BasePhysicalPath, cancellationToken) : existing?.BaseHash,
-            request.HasBasePhysicalPath ? GetFileSize(request.BasePhysicalPath) : existing?.BaseSize,
+            hasBasePhysicalPath ? await TryHashFileAsync(basePhysicalPath, cancellationToken) : existing?.BaseHash,
+            hasBasePhysicalPath ? GetFileSize(basePhysicalPath) : existing?.BaseSize,
             existing?.CreatedAt ?? now,
             now);
 

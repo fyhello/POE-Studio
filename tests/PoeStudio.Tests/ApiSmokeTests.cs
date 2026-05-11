@@ -286,6 +286,42 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Binary_resource_export_and_overlay_save_work()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "art", "icons"));
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "art", "icons", "item.dds"), [1, 2, 3, 4]);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var export = await client.PostAsJsonAsync("/api/resources/export", new ResourceExportRequest(created.Data.Id, "art/icons/item.dds"));
+        var exportPayload = await export.Content.ReadFromJsonAsync<ApiResponse<ResourceExportResponse>>();
+        var save = await client.PostAsJsonAsync("/api/overlay/save-binary", new SaveBinaryOverlayRequest(
+            created.Data.Id,
+            "art/icons/item.dds",
+            Convert.ToBase64String([9, 8, 7])));
+        var savePayload = await save.Content.ReadFromJsonAsync<ApiResponse<OverlayEntryDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, export.StatusCode);
+        Assert.Equal(Convert.ToBase64String([1, 2, 3, 4]), exportPayload?.Data?.Base64Content);
+        Assert.Equal(HttpStatusCode.OK, save.StatusCode);
+        Assert.Equal(3, savePayload?.Data?.OverlaySize);
+        Assert.Equal([9, 8, 7], await File.ReadAllBytesAsync(savePayload!.Data!.OverlayPath));
+    }
+
+    [Fact]
     public async Task Patch_dry_run_and_build_return_manifest_and_zip_paths()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

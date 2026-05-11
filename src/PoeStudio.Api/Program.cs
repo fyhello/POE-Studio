@@ -222,6 +222,60 @@ app.MapPost("/api/resources/search", async (
     return Results.Ok(ApiResponse<ResourceSearchResponse>.Success(response));
 });
 
+app.MapPost("/api/resources/export", async (
+    ResourceExportRequest request,
+    ProfileStore profiles,
+    ResourceIndexStore resourceIndex,
+    NativeBundleResourceContentResolver nativeContentResolver,
+    CancellationToken cancellationToken) =>
+{
+    var resource = await resourceIndex.GetByPathAsync(request.ProfileId, request.VirtualPath, cancellationToken);
+    if (resource is null)
+    {
+        return Results.NotFound(ApiResponse<ResourceExportResponse>.Failure("resource_not_found", "未找到资源，请先建立索引。"));
+    }
+
+    byte[] data;
+    var warnings = new List<string>();
+    if (NativeBundleResourceContentResolver.IsNativeResource(resource))
+    {
+        var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+        if (profile is null)
+        {
+            return Results.NotFound(ApiResponse<ResourceExportResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+        }
+
+        var content = await nativeContentResolver.ReadAsync(profile, resource, request.OodlePath, cancellationToken);
+        if (!content.Ok)
+        {
+            return Results.BadRequest(ApiResponse<ResourceExportResponse>.Failure(
+                content.ErrorCode ?? "native_export_failed",
+                content.Message ?? "native 资源导出失败。"));
+        }
+
+        data = content.Data;
+    }
+    else
+    {
+        if (string.IsNullOrWhiteSpace(resource.PhysicalPath) || !File.Exists(resource.PhysicalPath))
+        {
+            return Results.NotFound(ApiResponse<ResourceExportResponse>.Failure("resource_file_missing", "资源文件不存在，可能尚未提取或索引已过期。"));
+        }
+
+        data = await File.ReadAllBytesAsync(resource.PhysicalPath, cancellationToken);
+    }
+
+    var response = new ResourceExportResponse(
+        request.ProfileId,
+        resource.VirtualPath,
+        Path.GetFileName(resource.VirtualPath),
+        GuessContentType(resource.Extension),
+        Convert.ToBase64String(data),
+        data.LongLength,
+        warnings);
+    return Results.Ok(ApiResponse<ResourceExportResponse>.Success(response));
+});
+
 app.MapPost("/api/preview", async (
     ResourcePreviewRequest request,
     ProfileStore profiles,
@@ -254,6 +308,41 @@ app.MapPost("/api/overlay/save-text", async (
     try
     {
         var response = await overlay.SaveTextAsync(saveRequest, cancellationToken);
+        return Results.Ok(ApiResponse<OverlayEntryDto>.Success(response));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(ApiResponse<OverlayEntryDto>.Failure("invalid_virtual_path", ex.Message));
+    }
+});
+
+app.MapPost("/api/overlay/save-binary", async (
+    SaveBinaryOverlayRequest request,
+    ResourceIndexStore resourceIndex,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    var resource = await resourceIndex.GetByPathAsync(request.ProfileId, request.VirtualPath, cancellationToken);
+    var basePath = request.BasePhysicalPath ?? resource?.PhysicalPath;
+    byte[] content;
+    try
+    {
+        content = Convert.FromBase64String(request.Base64Content);
+    }
+    catch (FormatException)
+    {
+        return Results.BadRequest(ApiResponse<OverlayEntryDto>.Failure("invalid_base64", "二进制内容不是合法 Base64。"));
+    }
+
+    try
+    {
+        var response = await overlay.SaveBytesAsync(
+            request.ProfileId,
+            request.VirtualPath,
+            content,
+            basePath,
+            HasBasePhysicalPath: basePath is not null,
+            cancellationToken);
         return Results.Ok(ApiResponse<OverlayEntryDto>.Success(response));
     }
     catch (ArgumentException ex)
@@ -956,6 +1045,24 @@ static IDisposableOodleCodec CreateDisposableCodec(string? oodlePath, OodleCodec
     }
 
     return new IDisposableOodleCodec(factory(oodlePath));
+}
+
+static string GuessContentType(string extension)
+{
+    return extension.ToLowerInvariant() switch
+    {
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".bmp" => "image/bmp",
+        ".dds" => "image/vnd-ms.dds",
+        ".ogg" => "audio/ogg",
+        ".wav" => "audio/wav",
+        ".ttf" => "font/ttf",
+        ".json" => "application/json",
+        ".xml" => "application/xml",
+        ".txt" or ".filter" => "text/plain",
+        _ => "application/octet-stream"
+    };
 }
 
 sealed class IDisposableOodleCodec(IOodleCodec inner) : IOodleCodec, IDisposable

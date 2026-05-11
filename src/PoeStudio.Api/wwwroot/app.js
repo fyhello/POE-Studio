@@ -208,6 +208,8 @@ async function previewResource(resource, button) {
   $("previewKind").textContent = preview.kind === 1 ? "文本" : preview.kind === 2 ? "十六进制" : "不可预览";
   $("previewText").value = preview.text || preview.hex || preview.message || "";
   $("saveOverlayBtn").disabled = preview.kind !== 1;
+  $("exportResourceBtn").disabled = false;
+  $("replaceResourceBtn").disabled = false;
   $("batchOverlayBtn").disabled = preview.kind !== 1;
   $("batchReplaceBtn").disabled = preview.kind !== 1;
   setStatus("预览已加载");
@@ -224,6 +226,59 @@ async function saveOverlay() {
   writeLog($("actionOutput"), result);
   setStatus("覆盖已保存");
   refreshOverlayList();
+}
+
+async function exportResource() {
+  if (!state.selectedResource) return;
+  setStatus("正在导出资源...");
+  const result = await api("/api/resources/export", {
+    profileId: state.selectedResource.profileId,
+    virtualPath: state.selectedResource.virtualPath,
+    oodlePath: $("oodlePathInput").value.trim() || null
+  });
+  const link = document.createElement("a");
+  link.href = `data:${result.contentType};base64,${result.base64Content}`;
+  link.download = result.fileName || "resource.bin";
+  link.click();
+  writeLog($("actionOutput"), {
+    virtualPath: result.virtualPath,
+    size: result.size,
+    contentType: result.contentType,
+    warnings: result.warnings
+  });
+  setStatus(`资源已导出：${result.fileName}`);
+}
+
+function chooseReplacementFile() {
+  if (!state.selectedResource) return;
+  $("replaceResourceInput").value = "";
+  $("replaceResourceInput").click();
+}
+
+async function replaceResourceWithFile(file) {
+  if (!state.selectedResource || !file) return;
+  setStatus("正在保存替换资源...");
+  const base64Content = await readFileAsBase64(file);
+  const result = await api("/api/overlay/save-binary", {
+    profileId: state.selectedResource.profileId,
+    virtualPath: state.selectedResource.virtualPath,
+    base64Content
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(`替换已保存：${file.name}`);
+  refreshOverlayList();
+}
+
+function readFileAsBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const value = String(reader.result || "");
+      resolve(value.includes(",") ? value.split(",", 2)[1] : value);
+    };
+    reader.onerror = () => reject(reader.error || new Error("读取文件失败"));
+    reader.readAsDataURL(file);
+  });
 }
 
 async function patchDryRun() {
@@ -416,6 +471,9 @@ function bind() {
     refreshOverlayList();
   });
   $("saveOverlayBtn").addEventListener("click", saveOverlay);
+  $("exportResourceBtn").addEventListener("click", exportResource);
+  $("replaceResourceBtn").addEventListener("click", chooseReplacementFile);
+  $("replaceResourceInput").addEventListener("change", (event) => replaceResourceWithFile(event.target.files[0]));
   $("batchOverlayBtn").addEventListener("click", batchOverlay);
   $("batchReplaceBtn").addEventListener("click", batchReplaceText);
   $("exportTranslationBtn").addEventListener("click", exportTranslationCsv);

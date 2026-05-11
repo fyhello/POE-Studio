@@ -22,6 +22,22 @@ public sealed class OverlayStoreTests
     }
 
     [Fact]
+    public async Task SaveBytesAsync_writes_binary_overlay_and_list_returns_entry()
+    {
+        var store = new OverlayStore(Path.Combine(Path.GetTempPath(), "poe-studio-overlay-tests", Guid.NewGuid().ToString("N")));
+        var profileId = Guid.NewGuid().ToString("N");
+
+        var saved = await store.SaveBytesAsync(profileId, "art/icons/item.dds", [1, 2, 3, 4], BasePhysicalPath: null, HasBasePhysicalPath: false, CancellationToken.None);
+        var list = await store.ListAsync(profileId, CancellationToken.None);
+
+        Assert.True(File.Exists(saved.OverlayPath));
+        Assert.Equal([1, 2, 3, 4], await File.ReadAllBytesAsync(saved.OverlayPath));
+        var item = Assert.Single(list.Items);
+        Assert.Equal("art/icons/item.dds", item.VirtualPath);
+        Assert.Equal(4, item.OverlaySize);
+    }
+
+    [Fact]
     public async Task SaveTextAsync_rejects_path_traversal()
     {
         var store = new OverlayStore(Path.Combine(Path.GetTempPath(), "poe-studio-overlay-tests", Guid.NewGuid().ToString("N")));
