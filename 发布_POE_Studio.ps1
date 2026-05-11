@@ -19,9 +19,8 @@ dotnet publish "src\PoeStudio.Api\PoeStudio.Api.csproj" `
     -o $publishDir `
     --nologo
 
-Copy-Item (Join-Path $root "启动_POE_Studio.ps1") (Join-Path $publishDir "启动_POE_Studio.ps1") -Force
-Copy-Item (Join-Path $root "启动_POE_Studio.bat") (Join-Path $publishDir "启动_POE_Studio.bat") -Force
-Copy-Item (Join-Path $root "停止_POE_Studio.bat") (Join-Path $publishDir "停止_POE_Studio.bat") -Force
+Get-ChildItem $root -Filter "*_POE_Studio.ps1" | Copy-Item -Destination $publishDir -Force
+Get-ChildItem $root -Filter "*_POE_Studio.bat" | Copy-Item -Destination $publishDir -Force
 Copy-Item (Join-Path $root "README.md") (Join-Path $publishDir "README.md") -Force
 Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zipPath -Force
 
