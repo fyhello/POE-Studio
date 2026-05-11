@@ -3,6 +3,7 @@ const state = {
   detected: null,
   selectedProfile: null,
   selectedResource: null,
+  lastExportRoot: null,
   jobTimer: null
 };
 
@@ -57,6 +58,7 @@ async function refreshProfiles() {
   $("previewScriptBtn").disabled = !state.selectedProfile;
   $("applyScriptBtn").disabled = !state.selectedProfile;
   $("bulkExportBtn").disabled = !state.selectedProfile;
+  $("bulkImportBtn").disabled = !state.selectedProfile;
   setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
   if (state.selectedProfile) refreshBuildHistory();
   if (state.selectedProfile) refreshOverlayList();
@@ -192,6 +194,7 @@ async function bulkExportResources() {
     take: 200,
     oodlePath: $("oodlePathInput").value.trim() || null
   });
+  state.lastExportRoot = result.exportRoot;
   writeLog($("actionOutput"), {
     matched: result.matched,
     exported: result.exported,
@@ -199,6 +202,24 @@ async function bulkExportResources() {
     warnings: result.warnings
   });
   setStatus(`批量导出完成：${result.exported}/${result.matched}`);
+}
+
+async function bulkImportOverlay() {
+  const profileId = selectedProfileId();
+  if (!profileId || !state.lastExportRoot) {
+    setStatus("请先批量导出，再从导出目录导入覆盖");
+    return;
+  }
+
+  setStatus("正在从导出目录导入覆盖...");
+  const result = await api("/api/resources/bulk-import-overlay", {
+    profileId,
+    exportRoot: state.lastExportRoot,
+    take: 500
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(`导入覆盖完成：${result.imported}`);
+  refreshOverlayList();
 }
 
 function renderResources(items) {
@@ -557,6 +578,7 @@ function bind() {
   $("buildNativeIndexBtn").addEventListener("click", startNativeIndexJob);
   $("searchBtn").addEventListener("click", searchResources);
   $("bulkExportBtn").addEventListener("click", bulkExportResources);
+  $("bulkImportBtn").addEventListener("click", bulkImportOverlay);
   $("searchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") searchResources();
   });

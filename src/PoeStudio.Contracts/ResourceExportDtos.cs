@@ -34,3 +34,15 @@ public sealed record ResourceBulkExportResponse(
     string ExportRoot,
     IReadOnlyList<ResourceBulkExportItemDto> Items,
     IReadOnlyList<string> Warnings);
+
+public sealed record ResourceBulkImportOverlayRequest(
+    string ProfileId,
+    string ExportRoot,
+    int Take = 500);
+
+public sealed record ResourceBulkImportOverlayResponse(
+    string ProfileId,
+    string ExportRoot,
+    int Imported,
+    IReadOnlyList<string> ImportedPaths,
+    IReadOnlyList<string> Warnings);

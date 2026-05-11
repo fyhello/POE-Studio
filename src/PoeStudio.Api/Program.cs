@@ -351,6 +351,67 @@ app.MapPost("/api/resources/bulk-export", async (
     return Results.Ok(ApiResponse<ResourceBulkExportResponse>.Success(response));
 });
 
+app.MapPost("/api/resources/bulk-import-overlay", async (
+    ResourceBulkImportOverlayRequest request,
+    ResourceIndexStore resourceIndex,
+    OverlayStore overlay,
+    IConfiguration config,
+    CancellationToken cancellationToken) =>
+{
+    var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
+    var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+    var exportRoot = Path.GetFullPath(request.ExportRoot);
+    var rawRoot = Path.GetFullPath(layout.RawCacheRoot);
+    if (!IsSubPath(rawRoot, exportRoot) || !Directory.Exists(exportRoot))
+    {
+        return Results.BadRequest(ApiResponse<ResourceBulkImportOverlayResponse>.Failure("invalid_export_root", "导入目录必须来自当前配置的批量导出工作区。"));
+    }
+
+    var imported = new List<string>();
+    var warnings = new List<string>();
+    var files = Directory.EnumerateFiles(exportRoot, "*", SearchOption.AllDirectories)
+        .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+        .Take(Math.Clamp(request.Take, 1, 2000))
+        .ToArray();
+
+    foreach (var file in files)
+    {
+        var relative = Path.GetRelativePath(exportRoot, file).Replace('\\', '/');
+        try
+        {
+            var resource = await resourceIndex.GetByPathAsync(request.ProfileId, relative, cancellationToken);
+            if (resource is null)
+            {
+                warnings.Add($"跳过未索引资源：{relative}");
+                continue;
+            }
+
+            var bytes = await File.ReadAllBytesAsync(file, cancellationToken);
+            await overlay.SaveBytesAsync(
+                request.ProfileId,
+                resource.VirtualPath,
+                bytes,
+                resource.PhysicalPath,
+                HasBasePhysicalPath: resource.PhysicalPath is not null && File.Exists(resource.PhysicalPath),
+                cancellationToken);
+            imported.Add(resource.VirtualPath);
+        }
+        catch (ArgumentException ex)
+        {
+            warnings.Add($"跳过路径不合法资源：{relative}：{ex.Message}");
+        }
+    }
+
+    var response = new ResourceBulkImportOverlayResponse(
+        request.ProfileId,
+        exportRoot,
+        imported.Count,
+        imported,
+        warnings);
+    return Results.Ok(ApiResponse<ResourceBulkImportOverlayResponse>.Success(response));
+});
+
 app.MapPost("/api/preview", async (
     ResourcePreviewRequest request,
     ProfileStore profiles,
@@ -1315,6 +1376,13 @@ static string SafeExportPath(string root, string virtualPath)
     }
 
     return fullPath;
+}
+
+static bool IsSubPath(string root, string path)
+{
+    var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    var fullPath = Path.GetFullPath(path);
+    return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
 }
 
 sealed class IDisposableOodleCodec(IOodleCodec inner) : IOodleCodec, IDisposable

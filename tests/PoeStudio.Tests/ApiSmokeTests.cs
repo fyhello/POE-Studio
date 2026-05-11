@@ -355,6 +355,45 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Bulk_import_overlay_reads_export_workspace_files()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "one.txt"), "one");
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "two.txt"), "two");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+        var export = await client.PostAsJsonAsync("/api/resources/bulk-export", new ResourceBulkExportRequest(created.Data.Id, "text", Kind: ResourceKind.Text));
+        var exportPayload = await export.Content.ReadFromJsonAsync<ApiResponse<ResourceBulkExportResponse>>();
+        var one = Assert.Single(exportPayload!.Data!.Items.Where(item => item.VirtualPath == "text/one.txt"));
+        await File.WriteAllTextAsync(one.ExportPath, "changed one");
+
+        var import = await client.PostAsJsonAsync("/api/resources/bulk-import-overlay", new ResourceBulkImportOverlayRequest(created.Data.Id, exportPayload.Data.ExportRoot));
+        var importPayload = await import.Content.ReadFromJsonAsync<ApiResponse<ResourceBulkImportOverlayResponse>>();
+        var list = await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(created.Data.Id));
+        var listPayload = await list.Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, import.StatusCode);
+        Assert.Equal(2, importPayload?.Data?.Imported);
+        Assert.Contains("text/one.txt", importPayload?.Data?.ImportedPaths ?? []);
+        Assert.Equal(2, listPayload?.Data?.Total);
+        var overlayOne = Assert.Single(listPayload!.Data!.Items.Where(item => item.VirtualPath == "text/one.txt"));
+        Assert.Equal("changed one", await File.ReadAllTextAsync(overlayOne.OverlayPath));
+    }
+
+    [Fact]
     public async Task Batch_script_preview_and_apply_text_replacements()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
