@@ -31,6 +31,11 @@ const writeLog = (target, value) => {
 
 const selectedProfileId = () => $("profileSelect").value || state.selectedProfile?.id;
 
+const presets = {
+  cn: "C:\\WeGameApps\\rail_apps\\流放之路：降临(2002052)",
+  global: "E:\\PSAutoRecover\\ui\\rood\\Grinding Gear Games\\Path of Exile 2"
+};
+
 async function refreshProfiles() {
   state.profiles = await api("/api/profiles");
   $("profileCount").textContent = String(state.profiles.length);
@@ -81,6 +86,19 @@ async function saveProfile() {
   $("profileSelect").value = profile.id;
   state.selectedProfile = profile;
   setStatus("配置已保存");
+}
+
+async function quickConnect() {
+  setStatus("正在一键接入客户端...");
+  const profile = await api("/api/profiles/detect-and-save", {
+    rootPath: $("rootPathInput").value.trim(),
+    oodleSearchPath: $("oodlePathInput").value.trim() || null
+  });
+  await refreshProfiles();
+  $("profileSelect").value = profile.id;
+  state.selectedProfile = profile;
+  writeLog($("detectOutput"), profile);
+  setStatus("客户端已接入");
 }
 
 async function startNativeIndexJob() {
@@ -292,8 +310,15 @@ async function revertOverlay(virtualPath) {
 
 function bind() {
   $("refreshProfilesBtn").addEventListener("click", refreshProfiles);
+  $("cnPresetBtn").addEventListener("click", () => {
+    $("rootPathInput").value = presets.cn;
+  });
+  $("globalPresetBtn").addEventListener("click", () => {
+    $("rootPathInput").value = presets.global;
+  });
   $("detectBtn").addEventListener("click", detectClient);
   $("saveProfileBtn").addEventListener("click", saveProfile);
+  $("quickConnectBtn").addEventListener("click", quickConnect);
   $("buildNativeIndexBtn").addEventListener("click", startNativeIndexJob);
   $("searchBtn").addEventListener("click", searchResources);
   $("searchInput").addEventListener("keydown", (event) => {

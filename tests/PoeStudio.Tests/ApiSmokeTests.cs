@@ -85,6 +85,25 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Detect_and_save_creates_profile_in_one_request()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "_.index.bin"), [1, 2, 3]);
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/profiles/detect-and-save", new DetectClientRequest(root));
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        var listPayload = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<ClientProfileDto>>>("/api/profiles");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(payload?.Ok);
+        Assert.Equal(ClientEntryKind.Bundles2, payload?.Data?.EntryKind);
+        Assert.Equal(payload?.Data?.Id, Assert.Single(listPayload?.Data ?? []).Id);
+    }
+
+    [Fact]
     public async Task Build_index_then_search_resources_returns_matches()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

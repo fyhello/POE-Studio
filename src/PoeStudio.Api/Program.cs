@@ -100,6 +100,41 @@ app.MapPost("/api/profiles/detect", (DetectClientRequest request) =>
     return Results.Ok(ApiResponse<DetectClientResponse>.Success(response));
 });
 
+app.MapPost("/api/profiles/detect-and-save", async (
+    DetectClientRequest request,
+    ProfileStore store,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(request.RootPath))
+    {
+        return Results.BadRequest(ApiResponse<ClientProfileDto>.Failure("invalid_root_path", "客户端目录不能为空。"));
+    }
+
+    var result = ClientDetector.Detect(request.RootPath, request.OodleSearchPath);
+    if (!result.Detected)
+    {
+        return Results.BadRequest(ApiResponse<ClientProfileDto>.Failure("client_not_detected", "未检测到支持的 POE 客户端。"));
+    }
+
+    var now = DateTimeOffset.UtcNow;
+    var profile = new ClientProfileDto(
+        Id: Guid.NewGuid().ToString("N"),
+        DisplayName: $"{result.Platform} POE2",
+        Platform: result.Platform,
+        EntryKind: result.EntryKind,
+        RootPath: result.RootPath,
+        ContentGgpkPath: result.ContentGgpkPath,
+        Bundles2Path: result.Bundles2Path,
+        IndexPath: result.IndexPath,
+        OodleStatus: result.OodleStatus,
+        ClientFingerprint: result.ClientFingerprint,
+        CreatedAt: now,
+        UpdatedAt: now);
+
+    await store.SaveAsync(profile, cancellationToken);
+    return Results.Ok(ApiResponse<ClientProfileDto>.Success(profile));
+});
+
 app.MapPost("/api/profiles", async (CreateProfileRequest request, ProfileStore store, CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(request.DisplayName) || string.IsNullOrWhiteSpace(request.RootPath))
