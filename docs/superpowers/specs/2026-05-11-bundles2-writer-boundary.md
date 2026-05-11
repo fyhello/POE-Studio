@@ -65,3 +65,25 @@ C:\WeGameApps\rail_apps\流放之路：降临(2002052)\Bundles2\_.index.bin
 - First compressed chunk：34,636 bytes。
 
 结论：当前 Native 探针能安全读取 bundle header；内部 index 记录解析需要 Oodle 解压支持后再推进。
+
+## Oodle 解压缓存边界
+
+新增 `NativeIndexCacheService` 用于把 `_.index.bin` 解压到 workspace cache：
+
+```text
+profiles/<profileId>/cache/raw/native/bundles2/index.decompressed.bin
+```
+
+当前核心边界：
+
+- 业务层只依赖 `IOodleCodec`。
+- 默认实现是 `MissingOodleCodec`，不会尝试加载或分发 `oo2core.dll`。
+- 没有 Oodle 时返回 `OodleMissing`，不会写缓存文件。
+- 测试使用可注入 copy codec 验证 chunk 读取、输出缓存和长度校验流程。
+
+下一步接真实 Oodle 时应新增独立实现，例如 `NativeOodleCodec`：
+
+- 由用户指定本机 `oo2core.dll` 路径。
+- 使用 `NativeLibrary.Load` 或隔离的 P/Invoke resolver。
+- 不把 DLL 复制进发布包，避免分发授权风险。
+- 接入前先用小样本和真实国服 `_.index.bin` 做只读解压验证。

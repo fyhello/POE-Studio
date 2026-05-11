@@ -26,3 +26,26 @@ public sealed record NativeIndexProbeResponse(
     int? ChunkSize,
     IReadOnlyList<int> CompressedChunkSizes,
     IReadOnlyList<string> Warnings);
+
+public enum NativeIndexDecompressStatus
+{
+    Missing = 0,
+    InvalidHeader = 1,
+    OodleMissing = 2,
+    Failed = 3,
+    Cached = 4
+}
+
+public sealed record NativeIndexDecompressRequest(
+    string ProfileId,
+    string IndexPath);
+
+public sealed record NativeIndexDecompressResponse(
+    string ProfileId,
+    string IndexPath,
+    string CachePath,
+    bool Ok,
+    NativeIndexDecompressStatus Status,
+    long? UncompressedSize,
+    int? ChunkCount,
+    IReadOnlyList<string> Warnings);

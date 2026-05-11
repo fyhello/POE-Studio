@@ -27,6 +27,14 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<FileSystemResourceIndexer>();
 builder.Services.AddSingleton<ResourcePreviewService>();
 builder.Services.AddSingleton<NativeBundles2IndexReader>();
+builder.Services.AddSingleton<IOodleCodec, MissingOodleCodec>();
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
+    return new NativeIndexCacheService(workspaceRoot, sp.GetRequiredService<IOodleCodec>());
+});
 builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
@@ -258,6 +266,22 @@ app.MapPost("/api/native/bundles2/probe-index", async (
 {
     var response = await reader.ProbeAsync(request.IndexPath, request.OodleAvailable, cancellationToken);
     return Results.Ok(ApiResponse<NativeIndexProbeResponse>.Success(response));
+});
+
+app.MapPost("/api/native/bundles2/decompress-index", async (
+    NativeIndexDecompressRequest request,
+    NativeIndexCacheService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var response = await service.DecompressIndexAsync(request, cancellationToken);
+        return Results.Ok(ApiResponse<NativeIndexDecompressResponse>.Success(response));
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(ApiResponse<NativeIndexDecompressResponse>.Failure("invalid_profile_id", ex.Message));
+    }
 });
 
 app.Run();
