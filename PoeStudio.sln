@@ -1,0 +1,57 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{F65B9FD7-D3E8-4330-A0ED-63A46CAED58C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PoeStudio.Contracts", "src\PoeStudio.Contracts\PoeStudio.Contracts.csproj", "{8B47BE0F-4557-4EB8-8984-9F92A0CE1D9B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PoeStudio.Core", "src\PoeStudio.Core\PoeStudio.Core.csproj", "{59767AAE-7701-4E6F-82FC-094B5226518D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PoeStudio.Storage", "src\PoeStudio.Storage\PoeStudio.Storage.csproj", "{1D1784D3-F896-426B-927E-6D81D2271B76}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PoeStudio.Api", "src\PoeStudio.Api\PoeStudio.Api.csproj", "{47E6650E-5F7B-46DE-BF72-146ACA6C7840}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{9382248A-CC40-48B0-9373-87ED01B043DC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PoeStudio.Tests", "tests\PoeStudio.Tests\PoeStudio.Tests.csproj", "{D5E2E79F-6E31-4927-B835-2C7B8308BCC2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8B47BE0F-4557-4EB8-8984-9F92A0CE1D9B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8B47BE0F-4557-4EB8-8984-9F92A0CE1D9B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8B47BE0F-4557-4EB8-8984-9F92A0CE1D9B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8B47BE0F-4557-4EB8-8984-9F92A0CE1D9B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{59767AAE-7701-4E6F-82FC-094B5226518D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{59767AAE-7701-4E6F-82FC-094B5226518D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{59767AAE-7701-4E6F-82FC-094B5226518D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{59767AAE-7701-4E6F-82FC-094B5226518D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1D1784D3-F896-426B-927E-6D81D2271B76}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1D1784D3-F896-426B-927E-6D81D2271B76}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1D1784D3-F896-426B-927E-6D81D2271B76}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1D1784D3-F896-426B-927E-6D81D2271B76}.Release|Any CPU.Build.0 = Release|Any CPU
+		{47E6650E-5F7B-46DE-BF72-146ACA6C7840}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{47E6650E-5F7B-46DE-BF72-146ACA6C7840}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{47E6650E-5F7B-46DE-BF72-146ACA6C7840}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{47E6650E-5F7B-46DE-BF72-146ACA6C7840}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D5E2E79F-6E31-4927-B835-2C7B8308BCC2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D5E2E79F-6E31-4927-B835-2C7B8308BCC2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D5E2E79F-6E31-4927-B835-2C7B8308BCC2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D5E2E79F-6E31-4927-B835-2C7B8308BCC2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{8B47BE0F-4557-4EB8-8984-9F92A0CE1D9B} = {F65B9FD7-D3E8-4330-A0ED-63A46CAED58C}
+		{59767AAE-7701-4E6F-82FC-094B5226518D} = {F65B9FD7-D3E8-4330-A0ED-63A46CAED58C}
+		{1D1784D3-F896-426B-927E-6D81D2271B76} = {F65B9FD7-D3E8-4330-A0ED-63A46CAED58C}
+		{47E6650E-5F7B-46DE-BF72-146ACA6C7840} = {F65B9FD7-D3E8-4330-A0ED-63A46CAED58C}
+		{D5E2E79F-6E31-4927-B835-2C7B8308BCC2} = {9382248A-CC40-48B0-9373-87ED01B043DC}
+	EndGlobalSection
+EndGlobal
