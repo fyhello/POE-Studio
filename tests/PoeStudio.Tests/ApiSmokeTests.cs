@@ -168,4 +168,41 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         Assert.True(diffPayload?.Data?.TextChanged);
         Assert.True(revertPayload?.Data?.Removed);
     }
+
+    [Fact]
+    public async Task Patch_dry_run_and_build_return_manifest_and_zip_paths()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "sample.txt"), "base");
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "_.index.bin"), [1, 2, 3]);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+        await client.PostAsJsonAsync("/api/overlay/save-text", new SaveTextOverlayRequest(created.Data.Id, "text/sample.txt", "overlay"));
+
+        var dryRun = await client.PostAsJsonAsync("/api/patch/dry-run", new PatchDryRunRequest(created.Data.Id));
+        var dryRunPayload = await dryRun.Content.ReadFromJsonAsync<ApiResponse<PatchDryRunResponse>>();
+        var build = await client.PostAsJsonAsync("/api/patch/build", new PatchBuildRequest(created.Data.Id, PatchZipTemplate.Epic));
+        var buildPayload = await build.Content.ReadFromJsonAsync<ApiResponse<PatchBuildResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, dryRun.StatusCode);
+        Assert.Equal(1, dryRunPayload?.Data?.TotalChanges);
+        Assert.Equal(HttpStatusCode.OK, build.StatusCode);
+        Assert.True(File.Exists(buildPayload?.Data?.ManifestPath));
+        Assert.True(File.Exists(buildPayload?.Data?.RollbackManifestPath));
+        Assert.True(File.Exists(buildPayload?.Data?.ZipPath));
+        Assert.Equal(PatchBuildMode.OverlayBundleMvp, buildPayload?.Data?.BuildMode);
+    }
 }

@@ -2,12 +2,13 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Patching;
 using PoeStudio.Core.Resources;
 using PoeStudio.Core.Workspace;
 
 namespace PoeStudio.Storage.Overlay;
 
-public sealed class OverlayStore
+public sealed class OverlayStore : IPatchOverlayReader
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -57,6 +58,12 @@ public sealed class OverlayStore
         var manifest = await LoadManifestAsync(layout, cancellationToken);
         var items = manifest.Items.OrderBy(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase).ToArray();
         return new OverlayListResponse(profileId, items.Length, items);
+    }
+
+    public async Task<IReadOnlyList<OverlayEntryDto>> GetEntriesAsync(string profileId, CancellationToken cancellationToken)
+    {
+        var list = await ListAsync(profileId, cancellationToken);
+        return list.Items;
     }
 
     public async Task<OverlayDiffResponse> DiffAsync(OverlayDiffRequest request, CancellationToken cancellationToken)

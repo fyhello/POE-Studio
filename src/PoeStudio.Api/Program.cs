@@ -1,5 +1,6 @@
 using PoeStudio.Contracts;
 using PoeStudio.Core.ClientDetection;
+using PoeStudio.Core.Patching;
 using PoeStudio.Core.Preview;
 using PoeStudio.Core.Resources;
 using PoeStudio.Storage.Overlay;
@@ -30,6 +31,14 @@ builder.Services.AddSingleton(sp =>
     var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
     return new OverlayStore(workspaceRoot);
+});
+builder.Services.AddSingleton(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
+    var overlay = sp.GetRequiredService<OverlayStore>();
+    return new PatchBuildService(workspaceRoot, overlay);
 });
 
 var app = builder.Build();
@@ -199,6 +208,38 @@ app.MapPost("/api/overlay/revert", async (
     {
         return Results.BadRequest(ApiResponse<RevertOverlayResponse>.Failure("invalid_virtual_path", ex.Message));
     }
+});
+
+app.MapPost("/api/patch/dry-run", async (
+    PatchDryRunRequest request,
+    ProfileStore profiles,
+    PatchBuildService patchBuild,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<PatchDryRunResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    var response = await patchBuild.DryRunAsync(request, profile, cancellationToken);
+    return Results.Ok(ApiResponse<PatchDryRunResponse>.Success(response));
+});
+
+app.MapPost("/api/patch/build", async (
+    PatchBuildRequest request,
+    ProfileStore profiles,
+    PatchBuildService patchBuild,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<PatchBuildResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    var response = await patchBuild.BuildAsync(request, profile, cancellationToken);
+    return Results.Ok(ApiResponse<PatchBuildResponse>.Success(response));
 });
 
 app.Run();

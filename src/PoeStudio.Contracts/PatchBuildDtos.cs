@@ -1,0 +1,77 @@
+namespace PoeStudio.Contracts;
+
+public enum PatchRiskLevel
+{
+    Low = 0,
+    Medium = 1,
+    High = 2
+}
+
+public enum PatchZipTemplate
+{
+    Official = 0,
+    Epic = 1,
+    Steam = 2,
+    WeGame = 3
+}
+
+public enum PatchBuildMode
+{
+    OverlayBundleMvp = 0
+}
+
+public sealed record PatchDryRunRequest(string ProfileId);
+
+public sealed record PatchBuildRequest(
+    string ProfileId,
+    PatchZipTemplate Template = PatchZipTemplate.Official,
+    string BundleName = "Tiny.V0.1.bundle.bin");
+
+public sealed record PatchChangeDto(
+    string VirtualPath,
+    string Extension,
+    ResourceKind Kind,
+    PatchRiskLevel RiskLevel,
+    long OverlaySize,
+    string OverlayHash,
+    string? BaseHash);
+
+public sealed record PatchDryRunResponse(
+    string ProfileId,
+    int TotalChanges,
+    IReadOnlyList<PatchChangeDto> Changes,
+    IReadOnlyDictionary<ResourceKind, int> KindCounts,
+    IReadOnlyDictionary<PatchRiskLevel, int> RiskCounts,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchBuildResponse(
+    string ProfileId,
+    PatchBuildMode BuildMode,
+    PatchZipTemplate Template,
+    string OutputDirectory,
+    string IndexPath,
+    string BundlePath,
+    string ManifestPath,
+    string RollbackManifestPath,
+    string ZipPath,
+    int TotalChanges,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchManifestDto(
+    string ProfileId,
+    PatchBuildMode BuildMode,
+    PatchZipTemplate Template,
+    string BundleName,
+    DateTimeOffset BuiltAt,
+    IReadOnlyList<PatchChangeDto> Changes,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchRollbackManifestDto(
+    string ProfileId,
+    DateTimeOffset BuiltAt,
+    IReadOnlyList<PatchRollbackItemDto> Items);
+
+public sealed record PatchRollbackItemDto(
+    string VirtualPath,
+    string? BaseHash,
+    string OverlayHash);
