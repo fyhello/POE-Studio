@@ -1,5 +1,6 @@
 using PoeStudio.Contracts;
 using PoeStudio.Core.ClientDetection;
+using PoeStudio.Core.Native;
 using PoeStudio.Core.Patching;
 using PoeStudio.Core.Preview;
 using PoeStudio.Core.Resources;
@@ -25,6 +26,7 @@ builder.Services.AddSingleton(sp =>
 });
 builder.Services.AddSingleton<FileSystemResourceIndexer>();
 builder.Services.AddSingleton<ResourcePreviewService>();
+builder.Services.AddSingleton<NativeBundles2IndexReader>();
 builder.Services.AddSingleton(sp =>
 {
     var config = sp.GetRequiredService<IConfiguration>();
@@ -247,6 +249,15 @@ app.MapPost("/api/patch/build", async (
     {
         return Results.BadRequest(ApiResponse<PatchBuildResponse>.Failure(ex.ErrorCode, ex.Message));
     }
+});
+
+app.MapPost("/api/native/bundles2/probe-index", async (
+    NativeIndexProbeRequest request,
+    NativeBundles2IndexReader reader,
+    CancellationToken cancellationToken) =>
+{
+    var response = await reader.ProbeAsync(request.IndexPath, request.OodleAvailable, cancellationToken);
+    return Results.Ok(ApiResponse<NativeIndexProbeResponse>.Success(response));
 });
 
 app.Run();

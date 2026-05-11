@@ -235,4 +235,43 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         Assert.False(payload?.Ok);
         Assert.Equal("native_writer_unavailable", payload?.ErrorCode);
     }
+
+    [Fact]
+    public async Task Native_index_probe_returns_header_status()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var indexPath = Path.Combine(bundles, "_.index.bin");
+        await WriteIndexHeaderAsync(indexPath);
+        var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync("/api/native/bundles2/probe-index", new NativeIndexProbeRequest(indexPath, OodleAvailable: false));
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<NativeIndexProbeResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(payload?.Data?.HeaderValid);
+        Assert.Equal(NativeIndexProbeStatus.HeaderOnlyOodleMissing, payload?.Data?.Status);
+    }
+
+    private static async Task WriteIndexHeaderAsync(string path)
+    {
+        await using var stream = File.Create(path);
+        await using var writer = new BinaryWriter(stream);
+        writer.Write(1024);
+        writer.Write(512);
+        writer.Write(52);
+        writer.Write(9);
+        writer.Write(1);
+        writer.Write(1024L);
+        writer.Write(512L);
+        writer.Write(1);
+        writer.Write(262144);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(0);
+        writer.Write(512);
+        writer.Write(new byte[512]);
+    }
 }

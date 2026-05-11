@@ -44,3 +44,24 @@ M5 已经完成补丁构建工作流，但当前 `OverlayBundleMvp` 只负责验
 2. 能在真实国服 `_.index.bin` 上快速输出统计和警告。
 3. 不修改客户端文件，所有解析结果写入 workspace cache。
 4. 通过行为对照测试再推进 writer。
+
+## 真实国服 index 头部探测
+
+只读探测路径：
+
+```text
+C:\WeGameApps\rail_apps\流放之路：降临(2002052)\Bundles2\_.index.bin
+```
+
+观测结果：
+
+- 文件大小：124,951,295 bytes。
+- 解压后大小：153,151,305 bytes。
+- 压缩后大小：124,948,895 bytes。
+- Header size：2,388 bytes。
+- Compressor：12。
+- Chunk count：585。
+- Chunk size：262,144 bytes。
+- First compressed chunk：34,636 bytes。
+
+结论：当前 Native 探针能安全读取 bundle header；内部 index 记录解析需要 Oodle 解压支持后再推进。
