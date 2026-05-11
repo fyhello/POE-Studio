@@ -362,6 +362,84 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Native_resource_index_job_returns_job_snapshot_immediately()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var indexPath = Path.Combine(bundles, "_.index.bin");
+        await WriteIndexHeaderAsync(indexPath);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "Official",
+            RootPath: root,
+            Platform: ClientPlatform.Official,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: indexPath,
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+
+        var start = await client.PostAsJsonAsync(
+            "/api/jobs/native/bundles2/build-resource-index",
+            new NativeResourceIndexBuildRequest(created!.Data!.Id, indexPath));
+        var startPayload = await start.Content.ReadFromJsonAsync<ApiResponse<JobSnapshotDto>>();
+        var status = await client.GetAsync($"/api/jobs/{startPayload!.Data!.Id}");
+        var statusPayload = await status.Content.ReadFromJsonAsync<ApiResponse<JobSnapshotDto>>();
+
+        Assert.Equal(HttpStatusCode.OK, start.StatusCode);
+        Assert.Equal("native-bundles2-resource-index", startPayload.Data.Kind);
+        Assert.InRange(startPayload.Data.ProgressPercent, 0, 100);
+        Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+        Assert.Equal(startPayload.Data.Id, statusPayload?.Data?.Id);
+    }
+
+    [Fact]
+    public async Task Native_resource_index_job_eventually_exposes_result_json()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var indexPath = Path.Combine(bundles, "_.index.bin");
+        await WriteIndexHeaderAsync(indexPath);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "Official",
+            RootPath: root,
+            Platform: ClientPlatform.Official,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: indexPath,
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        var start = await client.PostAsJsonAsync(
+            "/api/jobs/native/bundles2/build-resource-index",
+            new NativeResourceIndexBuildRequest(created!.Data!.Id, indexPath));
+        var startPayload = await start.Content.ReadFromJsonAsync<ApiResponse<JobSnapshotDto>>();
+
+        JobSnapshotDto? snapshot = null;
+        for (var i = 0; i < 20; i++)
+        {
+            await Task.Delay(25);
+            var statusPayload = await client.GetFromJsonAsync<ApiResponse<JobSnapshotDto>>($"/api/jobs/{startPayload!.Data!.Id}");
+            snapshot = statusPayload?.Data;
+            if (snapshot?.Status is JobStatus.Succeeded or JobStatus.Failed)
+            {
+                break;
+            }
+        }
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(JobStatus.Succeeded, snapshot!.Status);
+        Assert.Equal(100, snapshot.ProgressPercent);
+        Assert.Contains("\"ok\":false", snapshot.ResultJson, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Preview_native_resource_reports_oodle_missing_when_no_oodle_path_is_supplied()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
