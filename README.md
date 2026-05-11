@@ -16,6 +16,12 @@ POE2 客户端编辑与补丁工具 MVP。
 启动_POE_Studio.bat
 ```
 
+停止后台服务：
+
+```text
+停止_POE_Studio.bat
+```
+
 或者手动启动：
 
 ```powershell

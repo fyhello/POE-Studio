@@ -14,11 +14,14 @@ if (Test-Path $zipPath) {
 
 dotnet publish "src\PoeStudio.Api\PoeStudio.Api.csproj" `
     -c Release `
+    -r win-x64 `
+    --self-contained true `
     -o $publishDir `
     --nologo
 
 Copy-Item (Join-Path $root "启动_POE_Studio.ps1") (Join-Path $publishDir "启动_POE_Studio.ps1") -Force
 Copy-Item (Join-Path $root "启动_POE_Studio.bat") (Join-Path $publishDir "启动_POE_Studio.bat") -Force
+Copy-Item (Join-Path $root "停止_POE_Studio.bat") (Join-Path $publishDir "停止_POE_Studio.bat") -Force
 Copy-Item (Join-Path $root "README.md") (Join-Path $publishDir "README.md") -Force
 Compress-Archive -Path (Join-Path $publishDir "*") -DestinationPath $zipPath -Force
 
