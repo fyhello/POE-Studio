@@ -38,6 +38,23 @@ public sealed class ResourceIndexStoreTests
         Assert.Empty(result.Items);
     }
 
+    [Fact]
+    public async Task SearchAsync_uses_latest_saved_index()
+    {
+        var store = new ResourceIndexStore(Path.Combine(Path.GetTempPath(), "poe-studio-index-store-tests", Guid.NewGuid().ToString("N")));
+        var profileId = Guid.NewGuid().ToString("N");
+        await store.SaveAsync(profileId, [Resource(profileId, "text/one.txt", ResourceKind.Text, ".txt")], [], CancellationToken.None);
+
+        var first = await store.SearchAsync(new ResourceSearchRequest(profileId, Query: "one"), CancellationToken.None);
+        await store.SaveAsync(profileId, [Resource(profileId, "text/two.txt", ResourceKind.Text, ".txt")], [], CancellationToken.None);
+        var oldQuery = await store.SearchAsync(new ResourceSearchRequest(profileId, Query: "one"), CancellationToken.None);
+        var newQuery = await store.SearchAsync(new ResourceSearchRequest(profileId, Query: "two"), CancellationToken.None);
+
+        Assert.Single(first.Items);
+        Assert.Empty(oldQuery.Items);
+        Assert.Single(newQuery.Items);
+    }
+
     private static ResourceSummaryDto Resource(string profileId, string path, ResourceKind kind, string extension)
     {
         return new ResourceSummaryDto(

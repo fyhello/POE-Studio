@@ -12,6 +12,8 @@ public sealed class ResourceIndexStore
     };
 
     private readonly string workspaceRoot;
+    private readonly Dictionary<string, IReadOnlyList<ResourceSummaryDto>> resourceCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object cacheLock = new();
 
     public ResourceIndexStore(string workspaceRoot)
     {
@@ -37,6 +39,10 @@ public sealed class ResourceIndexStore
             }
 
             File.Move(tempPath, path, overwrite: true);
+            lock (cacheLock)
+            {
+                resourceCache[profileId] = resources;
+            }
         }
         finally
         {
@@ -91,9 +97,23 @@ public sealed class ResourceIndexStore
             return Array.Empty<ResourceSummaryDto>();
         }
 
+        lock (cacheLock)
+        {
+            if (resourceCache.TryGetValue(profileId, out var cached))
+            {
+                return cached;
+            }
+        }
+
         await using var stream = File.OpenRead(path);
         var document = await JsonSerializer.DeserializeAsync<ResourceIndexDocument>(stream, JsonOptions, cancellationToken);
-        return document?.Resources ?? Array.Empty<ResourceSummaryDto>();
+        var resources = document?.Resources ?? Array.Empty<ResourceSummaryDto>();
+        lock (cacheLock)
+        {
+            resourceCache[profileId] = resources;
+        }
+
+        return resources;
     }
 
     private string GetIndexPath(string profileId)
