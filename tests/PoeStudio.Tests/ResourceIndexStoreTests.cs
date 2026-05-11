@@ -55,6 +55,32 @@ public sealed class ResourceIndexStoreTests
         Assert.Single(newQuery.Items);
     }
 
+    [Fact]
+    public async Task SaveAsync_writes_streaming_shards_and_new_store_can_search_without_json_cache()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-index-store-tests", Guid.NewGuid().ToString("N"));
+        var profileId = Guid.NewGuid().ToString("N");
+        var first = new ResourceIndexStore(root);
+        await first.SaveAsync(profileId, [
+            Resource(profileId, "metadata/items/amulet.ot", ResourceKind.Table, ".ot"),
+            Resource(profileId, "text/client/strings.txt", ResourceKind.Text, ".txt"),
+            Resource(profileId, "art/textures/icon.dds", ResourceKind.Image, ".dds")
+        ], [], CancellationToken.None);
+
+        var shardRoot = Path.Combine(root, "profiles", profileId, "cache", "index", "resources-v2", "shards");
+        Assert.True(Directory.Exists(shardRoot));
+        Assert.NotEmpty(Directory.EnumerateFiles(shardRoot, "*.jsonl"));
+
+        var second = new ResourceIndexStore(root);
+        var tableResult = await second.SearchAsync(new ResourceSearchRequest(profileId, Query: "items", Kind: ResourceKind.Table, Extension: ".ot"), CancellationToken.None);
+        var pathResult = await second.GetByPathAsync(profileId, "text/client/strings.txt", CancellationToken.None);
+
+        Assert.Single(tableResult.Items);
+        Assert.Equal("metadata/items/amulet.ot", tableResult.Items[0].VirtualPath);
+        Assert.NotNull(pathResult);
+        Assert.Equal(ResourceKind.Text, pathResult.Kind);
+    }
+
     private static ResourceSummaryDto Resource(string profileId, string path, ResourceKind kind, string extension)
     {
         return new ResourceSummaryDto(

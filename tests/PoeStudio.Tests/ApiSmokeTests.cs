@@ -250,6 +250,42 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Batch_replace_text_overlay_replaces_matching_text_resources()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "one.txt"), "hello exile");
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "two.txt"), "hello world");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var batch = await client.PostAsJsonAsync("/api/overlay/batch-replace-text", new BatchReplaceTextOverlayRequest(
+            created.Data.Id,
+            "text",
+            "hello",
+            "你好"));
+        var batchPayload = await batch.Content.ReadFromJsonAsync<ApiResponse<BatchReplaceTextOverlayResponse>>();
+        var preview = await client.PostAsJsonAsync("/api/preview", new ResourcePreviewRequest(created.Data.Id, "text/one.txt"));
+        var previewPayload = await preview.Content.ReadFromJsonAsync<ApiResponse<ResourcePreviewResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, batch.StatusCode);
+        Assert.Equal(2, batchPayload?.Data?.Changed);
+        Assert.Equal("hello exile", previewPayload?.Data?.Text);
+    }
+
+    [Fact]
     public async Task Patch_dry_run_and_build_return_manifest_and_zip_paths()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

@@ -159,6 +159,28 @@ textarea:focus {
   flex: 1;
 }
 
+.batch-replace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.batch-replace button {
+  min-width: 96px;
+}
+
+.translation-box {
+  display: grid;
+  gap: 8px;
+}
+
+.translation-box textarea {
+  flex: none;
+  min-height: 96px;
+  max-height: 160px;
+}
+
 .progress-wrap {
   display: grid;
   gap: 7px;

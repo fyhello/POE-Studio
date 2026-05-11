@@ -5,6 +5,7 @@ using PoeStudio.Core.Native;
 using PoeStudio.Core.Patching;
 using PoeStudio.Core.Preview;
 using PoeStudio.Core.Resources;
+using PoeStudio.Core.Translation;
 using PoeStudio.Core.Workspace;
 using PoeStudio.Storage.Overlay;
 using PoeStudio.Storage.Profiles;
@@ -340,6 +341,157 @@ app.MapPost("/api/overlay/batch-save-text", async (
         saved,
         warnings);
     return Results.Ok(ApiResponse<BatchSaveTextOverlayResponse>.Success(response));
+});
+
+app.MapPost("/api/overlay/batch-replace-text", async (
+    BatchReplaceTextOverlayRequest request,
+    ResourceIndexStore resourceIndex,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrEmpty(request.Find))
+    {
+        return Results.BadRequest(ApiResponse<BatchReplaceTextOverlayResponse>.Failure("empty_find", "查找内容不能为空。"));
+    }
+
+    var search = await resourceIndex.SearchAsync(new ResourceSearchRequest(
+        request.ProfileId,
+        Query: request.Query,
+        Skip: 0,
+        Take: Math.Clamp(request.Take, 1, 200)), cancellationToken);
+    var changed = new List<string>();
+    var warnings = new List<string>();
+
+    foreach (var resource in search.Items)
+    {
+        if (resource.Kind is not (ResourceKind.Text or ResourceKind.Ui))
+        {
+            warnings.Add($"跳过非文本资源：{resource.VirtualPath}");
+            continue;
+        }
+
+        if (string.IsNullOrWhiteSpace(resource.PhysicalPath) || !File.Exists(resource.PhysicalPath))
+        {
+            warnings.Add($"跳过尚不可批量读取的资源：{resource.VirtualPath}");
+            continue;
+        }
+
+        var text = await File.ReadAllTextAsync(resource.PhysicalPath, cancellationToken);
+        if (!text.Contains(request.Find, StringComparison.Ordinal))
+        {
+            continue;
+        }
+
+        var replaced = text.Replace(request.Find, request.Replace, StringComparison.Ordinal);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(
+            request.ProfileId,
+            resource.VirtualPath,
+            replaced,
+            resource.PhysicalPath,
+            HasBasePhysicalPath: true), cancellationToken);
+        changed.Add(resource.VirtualPath);
+    }
+
+    var response = new BatchReplaceTextOverlayResponse(
+        request.ProfileId,
+        search.Total,
+        changed.Count,
+        changed,
+        warnings);
+    return Results.Ok(ApiResponse<BatchReplaceTextOverlayResponse>.Success(response));
+});
+
+app.MapPost("/api/translation/export-csv", async (
+    TranslationExportRequest request,
+    ResourceIndexStore resourceIndex,
+    CancellationToken cancellationToken) =>
+{
+    var search = await resourceIndex.SearchAsync(new ResourceSearchRequest(
+        request.ProfileId,
+        Query: request.Query,
+        Skip: 0,
+        Take: Math.Clamp(request.Take, 1, 500)), cancellationToken);
+    var warnings = new List<string>();
+    var entries = new List<TranslationEntryDto>();
+
+    foreach (var resource in search.Items)
+    {
+        if (resource.Kind is not (ResourceKind.Text or ResourceKind.Ui))
+        {
+            warnings.Add($"跳过非文本资源：{resource.VirtualPath}");
+            continue;
+        }
+
+        if (string.IsNullOrWhiteSpace(resource.PhysicalPath) || !File.Exists(resource.PhysicalPath))
+        {
+            warnings.Add($"跳过尚不可导出的资源：{resource.VirtualPath}");
+            continue;
+        }
+
+        var text = await File.ReadAllTextAsync(resource.PhysicalPath, cancellationToken);
+        entries.Add(new TranslationEntryDto(resource.VirtualPath, text, string.Empty, "new"));
+    }
+
+    var response = new TranslationExportResponse(
+        request.ProfileId,
+        search.Total,
+        entries.Count,
+        TranslationCsv.Write(entries),
+        warnings);
+    return Results.Ok(ApiResponse<TranslationExportResponse>.Success(response));
+});
+
+app.MapPost("/api/translation/import-csv", async (
+    TranslationImportRequest request,
+    ResourceIndexStore resourceIndex,
+    OverlayStore overlay,
+    CancellationToken cancellationToken) =>
+{
+    var entries = TranslationCsv.Read(request.Csv);
+    var applied = new List<string>();
+    var warnings = new List<string>();
+
+    foreach (var entry in entries)
+    {
+        if (string.IsNullOrWhiteSpace(entry.TargetText))
+        {
+            continue;
+        }
+
+        if (string.Equals(entry.SourceText, entry.TargetText, StringComparison.Ordinal))
+        {
+            continue;
+        }
+
+        var resource = await resourceIndex.GetByPathAsync(request.ProfileId, entry.VirtualPath, cancellationToken);
+        if (resource is null)
+        {
+            warnings.Add($"资源不存在：{entry.VirtualPath}");
+            continue;
+        }
+
+        if (resource.Kind is not (ResourceKind.Text or ResourceKind.Ui))
+        {
+            warnings.Add($"跳过非文本资源：{entry.VirtualPath}");
+            continue;
+        }
+
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(
+            request.ProfileId,
+            resource.VirtualPath,
+            entry.TargetText,
+            resource.PhysicalPath,
+            HasBasePhysicalPath: resource.PhysicalPath is not null), cancellationToken);
+        applied.Add(resource.VirtualPath);
+    }
+
+    var response = new TranslationImportResponse(
+        request.ProfileId,
+        entries.Count,
+        applied.Count,
+        applied,
+        warnings);
+    return Results.Ok(ApiResponse<TranslationImportResponse>.Success(response));
 });
 
 app.MapPost("/api/patch/dry-run", async (

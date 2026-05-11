@@ -58,3 +58,17 @@ public sealed record BatchSaveTextOverlayResponse(
     int Saved,
     IReadOnlyList<string> SavedPaths,
     IReadOnlyList<string> Warnings);
+
+public sealed record BatchReplaceTextOverlayRequest(
+    string ProfileId,
+    string Query,
+    string Find,
+    string Replace,
+    int Take = 50);
+
+public sealed record BatchReplaceTextOverlayResponse(
+    string ProfileId,
+    int Matched,
+    int Changed,
+    IReadOnlyList<string> ChangedPaths,
+    IReadOnlyList<string> Warnings);

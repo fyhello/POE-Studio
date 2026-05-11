@@ -91,6 +91,26 @@
         <button id="patchBuildBtn" type="button" disabled>生成补丁</button>
       </div>
 
+      <div class="batch-replace">
+        <label>
+          查找
+          <input id="batchFindInput" type="text" placeholder="原文片段" spellcheck="false">
+        </label>
+        <label>
+          替换为
+          <input id="batchReplaceInput" type="text" placeholder="新文本" spellcheck="false">
+        </label>
+        <button id="batchReplaceBtn" type="button" disabled>批量替换</button>
+      </div>
+
+      <div class="translation-box">
+        <div class="button-row">
+          <button id="exportTranslationBtn" type="button" disabled>导出翻译 CSV</button>
+          <button id="importTranslationBtn" type="button" disabled>导入并应用</button>
+        </div>
+        <textarea id="translationCsvText" spellcheck="false" placeholder="翻译 CSV 会显示在这里"></textarea>
+      </div>
+
       <pre id="actionOutput" class="log"></pre>
 
       <div class="panel-title compact-title">

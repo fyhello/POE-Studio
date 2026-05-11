@@ -52,6 +52,8 @@ async function refreshProfiles() {
   $("patchBuildBtn").disabled = !state.selectedProfile;
   $("refreshBuildsBtn").disabled = !state.selectedProfile;
   $("refreshOverlayBtn").disabled = !state.selectedProfile;
+  $("exportTranslationBtn").disabled = !state.selectedProfile;
+  $("importTranslationBtn").disabled = !state.selectedProfile;
   setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
   if (state.selectedProfile) refreshBuildHistory();
   if (state.selectedProfile) refreshOverlayList();
@@ -207,6 +209,7 @@ async function previewResource(resource, button) {
   $("previewText").value = preview.text || preview.hex || preview.message || "";
   $("saveOverlayBtn").disabled = preview.kind !== 1;
   $("batchOverlayBtn").disabled = preview.kind !== 1;
+  $("batchReplaceBtn").disabled = preview.kind !== 1;
   setStatus("预览已加载");
 }
 
@@ -249,6 +252,75 @@ async function batchOverlay() {
   });
   writeLog($("actionOutput"), result);
   setStatus(`批量覆盖完成：${result.saved}/${result.matched}`);
+  refreshOverlayList();
+}
+
+async function batchReplaceText() {
+  const profileId = selectedProfileId();
+  const query = $("searchInput").value.trim();
+  const find = $("batchFindInput").value;
+  if (!profileId || !query) {
+    setStatus("批量替换需要先输入搜索条件");
+    return;
+  }
+
+  if (!find) {
+    setStatus("批量替换需要填写查找内容");
+    $("batchFindInput").focus();
+    return;
+  }
+
+  setStatus("正在批量替换文本...");
+  const result = await api("/api/overlay/batch-replace-text", {
+    profileId,
+    query,
+    find,
+    replace: $("batchReplaceInput").value,
+    take: 80
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(`批量替换完成：${result.changed}/${result.matched}`);
+  refreshOverlayList();
+}
+
+async function exportTranslationCsv() {
+  const profileId = selectedProfileId();
+  const query = $("searchInput").value.trim();
+  if (!profileId || !query) {
+    setStatus("导出翻译需要先输入搜索条件");
+    return;
+  }
+
+  setStatus("正在导出翻译 CSV...");
+  const result = await api("/api/translation/export-csv", {
+    profileId,
+    query,
+    take: 200
+  });
+  $("translationCsvText").value = result.csv;
+  writeLog($("actionOutput"), {
+    matched: result.matched,
+    exported: result.exported,
+    warnings: result.warnings
+  });
+  setStatus(`翻译 CSV 已导出：${result.exported}/${result.matched}`);
+}
+
+async function importTranslationCsv() {
+  const profileId = selectedProfileId();
+  const csv = $("translationCsvText").value;
+  if (!profileId || !csv.trim()) {
+    setStatus("导入翻译需要先粘贴 CSV");
+    return;
+  }
+
+  setStatus("正在导入翻译并生成覆盖...");
+  const result = await api("/api/translation/import-csv", {
+    profileId,
+    csv
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(`翻译已应用：${result.applied}/${result.imported}`);
   refreshOverlayList();
 }
 
@@ -345,6 +417,9 @@ function bind() {
   });
   $("saveOverlayBtn").addEventListener("click", saveOverlay);
   $("batchOverlayBtn").addEventListener("click", batchOverlay);
+  $("batchReplaceBtn").addEventListener("click", batchReplaceText);
+  $("exportTranslationBtn").addEventListener("click", exportTranslationCsv);
+  $("importTranslationBtn").addEventListener("click", importTranslationCsv);
   $("patchDryRunBtn").addEventListener("click", patchDryRun);
   $("patchBuildBtn").addEventListener("click", patchBuild);
   $("refreshBuildsBtn").addEventListener("click", refreshBuildHistory);
