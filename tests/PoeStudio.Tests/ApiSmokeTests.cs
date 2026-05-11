@@ -326,8 +326,43 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(HttpStatusCode.OK, history.StatusCode);
         var item = Assert.Single(payload?.Data?.Items ?? []);
         Assert.True(File.Exists(item.ZipPath));
+        Assert.False(string.IsNullOrWhiteSpace(item.DownloadUrl));
         Assert.True(File.Exists(item.ManifestPath));
         Assert.True(item.ZipSize > 0);
+    }
+
+    [Fact]
+    public async Task Patch_build_zip_can_be_downloaded_by_build_id()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "text"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "text", "sample.txt"), "base");
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "_.index.bin"), [1, 2, 3]);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+        await client.PostAsJsonAsync("/api/overlay/save-text", new SaveTextOverlayRequest(created.Data.Id, "text/sample.txt", "overlay"));
+        await client.PostAsJsonAsync("/api/patch/build", new PatchBuildRequest(created.Data.Id, PatchZipTemplate.WeGame));
+        var history = await client.PostAsJsonAsync("/api/patch/build-history", new PatchBuildHistoryRequest(created.Data.Id));
+        var payload = await history.Content.ReadFromJsonAsync<ApiResponse<PatchBuildHistoryResponse>>();
+        var build = Assert.Single(payload?.Data?.Items ?? []);
+
+        var download = await client.GetAsync(build.DownloadUrl);
+
+        Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+        Assert.Equal("application/zip", download.Content.Headers.ContentType?.MediaType);
+        Assert.True((await download.Content.ReadAsByteArrayAsync()).Length > 0);
     }
 
     [Fact]

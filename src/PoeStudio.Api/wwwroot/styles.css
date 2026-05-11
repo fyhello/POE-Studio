@@ -203,7 +203,8 @@ textarea:focus {
   background: #0f1318;
 }
 
-.build-list {
+.build-list,
+.overlay-list {
   max-height: 148px;
   overflow: auto;
   border: 1px solid #252d36;
@@ -211,7 +212,8 @@ textarea:focus {
   background: #0f1318;
 }
 
-.build-item {
+.build-item,
+.overlay-item {
   display: grid;
   gap: 4px;
   min-height: 52px;
@@ -219,12 +221,32 @@ textarea:focus {
   padding: 8px 10px;
 }
 
-.build-path {
+.build-path,
+.overlay-path {
   overflow: hidden;
   color: #edf3f8;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.build-line,
+.overlay-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.download-link,
+.revert-link {
+  border: 0;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  color: #7db5ff;
+  font-size: 12px;
+  text-decoration: none;
 }
 
 .build-meta {

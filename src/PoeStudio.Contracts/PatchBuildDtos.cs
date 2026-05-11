@@ -95,6 +95,7 @@ public sealed record PatchBuildHistoryItemDto(
     string BuildId,
     string OutputDirectory,
     string? ZipPath,
+    string? DownloadUrl,
     string? ManifestPath,
     string? RollbackManifestPath,
     DateTimeOffset CreatedAt,

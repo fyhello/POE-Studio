@@ -46,8 +46,10 @@ async function refreshProfiles() {
   $("patchDryRunBtn").disabled = !state.selectedProfile;
   $("patchBuildBtn").disabled = !state.selectedProfile;
   $("refreshBuildsBtn").disabled = !state.selectedProfile;
+  $("refreshOverlayBtn").disabled = !state.selectedProfile;
   setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
   if (state.selectedProfile) refreshBuildHistory();
+  if (state.selectedProfile) refreshOverlayList();
 }
 
 async function detectClient() {
@@ -188,6 +190,7 @@ async function saveOverlay() {
   });
   writeLog($("actionOutput"), result);
   setStatus("覆盖已保存");
+  refreshOverlayList();
 }
 
 async function patchDryRun() {
@@ -216,6 +219,7 @@ async function batchOverlay() {
   });
   writeLog($("actionOutput"), result);
   setStatus(`批量覆盖完成：${result.saved}/${result.matched}`);
+  refreshOverlayList();
 }
 
 async function patchBuild() {
@@ -240,7 +244,10 @@ async function refreshBuildHistory() {
     const row = document.createElement("div");
     row.className = "build-item";
     row.innerHTML = `
-      <div class="build-path">${item.zipPath || item.outputDirectory}</div>
+      <div class="build-line">
+        <span class="build-path">${item.zipPath || item.outputDirectory}</span>
+        ${item.downloadUrl ? `<a class="download-link" href="${item.downloadUrl}">下载</a>` : ""}
+      </div>
       <div class="build-meta">${item.buildId} · ${Math.max(1, Math.round(item.zipSize / 1024))} KB</div>
     `;
     list.appendChild(row);
@@ -248,6 +255,39 @@ async function refreshBuildHistory() {
   if (result.items.length === 0) {
     list.innerHTML = '<div class="build-item"><div class="build-meta">暂无补丁输出</div></div>';
   }
+}
+
+async function refreshOverlayList() {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  const result = await api("/api/overlay/list", { profileId });
+  const list = $("overlayList");
+  list.innerHTML = "";
+  for (const item of result.items) {
+    const row = document.createElement("div");
+    row.className = "overlay-item";
+    row.innerHTML = `
+      <div class="overlay-line">
+        <span class="overlay-path">${item.virtualPath}</span>
+        <button class="revert-link" type="button">回滚</button>
+      </div>
+      <div class="build-meta">${Math.max(1, Math.round(item.overlaySize / 1024))} KB</div>
+    `;
+    row.querySelector("button").addEventListener("click", () => revertOverlay(item.virtualPath));
+    list.appendChild(row);
+  }
+  if (result.items.length === 0) {
+    list.innerHTML = '<div class="overlay-item"><div class="build-meta">暂无修改</div></div>';
+  }
+}
+
+async function revertOverlay(virtualPath) {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  const result = await api("/api/overlay/revert", { profileId, virtualPath });
+  writeLog($("actionOutput"), result);
+  setStatus(result.removed ? "修改已回滚" : "没有可回滚的修改");
+  refreshOverlayList();
 }
 
 function bind() {
@@ -263,12 +303,14 @@ function bind() {
     state.selectedProfile = state.profiles.find((item) => item.id === $("profileSelect").value) || null;
     searchResources();
     refreshBuildHistory();
+    refreshOverlayList();
   });
   $("saveOverlayBtn").addEventListener("click", saveOverlay);
   $("batchOverlayBtn").addEventListener("click", batchOverlay);
   $("patchDryRunBtn").addEventListener("click", patchDryRun);
   $("patchBuildBtn").addEventListener("click", patchBuild);
   $("refreshBuildsBtn").addEventListener("click", refreshBuildHistory);
+  $("refreshOverlayBtn").addEventListener("click", refreshOverlayList);
 }
 
 bind();

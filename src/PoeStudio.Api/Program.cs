@@ -346,6 +346,7 @@ app.MapPost("/api/patch/build-history", async (
                 buildId,
                 outputDirectory,
                 zip.FullName,
+                $"/api/patch/download/{request.ProfileId}/{buildId}",
                 File.Exists(manifestPath) ? manifestPath : null,
                 File.Exists(rollbackPath) ? rollbackPath : null,
                 zip.CreationTimeUtc <= DateTime.MinValue ? DateTimeOffset.UtcNow : new DateTimeOffset(zip.CreationTimeUtc, TimeSpan.Zero),
@@ -356,6 +357,34 @@ app.MapPost("/api/patch/build-history", async (
         .ToArray();
 
     return Results.Ok(ApiResponse<PatchBuildHistoryResponse>.Success(new PatchBuildHistoryResponse(request.ProfileId, items)));
+});
+
+app.MapGet("/api/patch/download/{profileId}/{buildId}", (
+    string profileId,
+    string buildId,
+    IConfiguration config) =>
+{
+    if (buildId.Any(ch => !char.IsDigit(ch)))
+    {
+        return Results.BadRequest(ApiResponse<object>.Failure("invalid_build_id", "构建编号不合法。"));
+    }
+
+    var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
+    var layout = WorkspaceLayout.ForProfile(workspaceRoot, profileId);
+    if (!Directory.Exists(layout.BuildsRoot))
+    {
+        return Results.NotFound(ApiResponse<object>.Failure("build_not_found", "未找到补丁输出。"));
+    }
+
+    var zipPath = Directory.EnumerateFiles(layout.BuildsRoot, $"{buildId}-*-patch.zip", SearchOption.TopDirectoryOnly)
+        .FirstOrDefault();
+    if (zipPath is null || !File.Exists(zipPath))
+    {
+        return Results.NotFound(ApiResponse<object>.Failure("build_not_found", "未找到补丁 zip。"));
+    }
+
+    return Results.File(zipPath, "application/zip", Path.GetFileName(zipPath));
 });
 
 app.MapPost("/api/native/bundles2/probe-index", async (
