@@ -364,6 +364,68 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Table_inspect_returns_structured_preview_for_text_table()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "metadata", "items"));
+        await File.WriteAllTextAsync(Path.Combine(bundles, "metadata", "items", "sample.ot"), "Id\tName\r\n1\tSword\r\n2\tShield");
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var inspect = await client.PostAsJsonAsync("/api/tables/inspect", new TableInspectRequest(created.Data.Id, "metadata/items/sample.ot"));
+        var payload = await inspect.Content.ReadFromJsonAsync<ApiResponse<TableInspectResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, inspect.StatusCode);
+        Assert.True(payload?.Data?.Structured);
+        Assert.Equal("\\t", payload?.Data?.Delimiter);
+        Assert.Equal(3, payload?.Data?.PreviewRowCount);
+        Assert.Equal(["1", "Sword"], payload!.Data!.Rows[1].Cells);
+    }
+
+    [Fact]
+    public async Task Table_inspect_returns_hex_preview_for_binary_dat()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(Path.Combine(bundles, "metadata"));
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "metadata", "sample.datc64"), [0, 1, 2, 255]);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(created!.Data!.Id));
+
+        var inspect = await client.PostAsJsonAsync("/api/tables/inspect", new TableInspectRequest(created.Data.Id, "metadata/sample.datc64"));
+        var payload = await inspect.Content.ReadFromJsonAsync<ApiResponse<TableInspectResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, inspect.StatusCode);
+        Assert.False(payload?.Data?.Structured);
+        Assert.Equal("datc64", payload?.Data?.Format);
+        Assert.Equal("00 01 02 FF", payload?.Data?.HexPreview);
+        Assert.Contains(payload?.Data?.Warnings ?? [], item => item.Contains("二进制", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task Patch_dry_run_and_build_return_manifest_and_zip_paths()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

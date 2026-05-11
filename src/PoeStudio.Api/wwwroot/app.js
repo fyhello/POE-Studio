@@ -212,6 +212,7 @@ async function previewResource(resource, button) {
   $("saveOverlayBtn").disabled = preview.kind !== 1;
   $("exportResourceBtn").disabled = false;
   $("replaceResourceBtn").disabled = false;
+  $("inspectTableBtn").disabled = resource.kind !== 2;
   $("batchOverlayBtn").disabled = preview.kind !== 1;
   $("batchReplaceBtn").disabled = preview.kind !== 1;
   setStatus("预览已加载");
@@ -269,6 +270,18 @@ async function replaceResourceWithFile(file) {
   writeLog($("actionOutput"), result);
   setStatus(`替换已保存：${file.name}`);
   refreshOverlayList();
+}
+
+async function inspectTable() {
+  if (!state.selectedResource) return;
+  setStatus("正在检查表格...");
+  const result = await api("/api/tables/inspect", {
+    profileId: state.selectedResource.profileId,
+    virtualPath: state.selectedResource.virtualPath,
+    oodlePath: $("oodlePathInput").value.trim() || null
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(result.structured ? `表格预览：${result.previewRowCount} 行` : "表格二进制预览已生成");
 }
 
 function readFileAsBase64(file) {
@@ -502,6 +515,7 @@ function bind() {
   $("saveOverlayBtn").addEventListener("click", saveOverlay);
   $("exportResourceBtn").addEventListener("click", exportResource);
   $("replaceResourceBtn").addEventListener("click", chooseReplacementFile);
+  $("inspectTableBtn").addEventListener("click", inspectTable);
   $("replaceResourceInput").addEventListener("change", (event) => replaceResourceWithFile(event.target.files[0]));
   $("batchOverlayBtn").addEventListener("click", batchOverlay);
   $("batchReplaceBtn").addEventListener("click", batchReplaceText);
