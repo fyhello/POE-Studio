@@ -158,6 +158,42 @@ public sealed class PatchBuildServiceTests
     }
 
     [Fact]
+    public async Task BuildAsync_native_bundles2_zip_contains_only_installable_bundles_files()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root) with { OodleStatus = OodleStatus.Found };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "patched"), CancellationToken.None);
+        var hash = NativeIndexPathResolver.MurmurHash64A(Encoding.UTF8.GetBytes("text/sample.txt"));
+        var layout = WorkspaceLayout.ForProfile(root, profile.Id);
+        var indexCachePath = Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexCachePath)!);
+        await WriteDecompressedIndexAsync(indexCachePath, hash);
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 8,
+            PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource));
+
+        var result = await service.BuildAsync(
+            new PatchBuildRequest(profile.Id, PatchZipTemplate.WeGame, "PoeStudio.NativePatch.bundle.bin", PatchPackageWriterKind.NativeBundles2, "__copy__"),
+            profile,
+            CancellationToken.None);
+
+        using var zip = ZipFile.OpenRead(result.ZipPath);
+        Assert.Contains(zip.Entries, entry => entry.FullName == "Bundles2/_.index.bin");
+        Assert.Contains(zip.Entries, entry => entry.FullName == "Bundles2/PoeStudio.NativePatch.bundle.bin");
+        Assert.DoesNotContain(zip.Entries, entry => entry.FullName.Contains("rewritten", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task CheckReadinessAsync_reports_native_writer_and_oodle_blockers()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
