@@ -67,12 +67,20 @@ public sealed class NativeBundles2PackageWriter : IPatchPackageWriter
             var indexPath = Path.Combine(context.BundlesDirectory, "_.index.bin");
             await new NativeIndexBundleWriter().WriteAsync(rewrittenPath, indexPath, activeCodec, cancellationToken);
             File.Delete(rewrittenPath);
+            var verification = await new PatchPackageVerifier(activeCodec).VerifyNativeAsync(
+                context.BundlesDirectory,
+                context.Request.BundleName,
+                cancellationToken);
+            if (!verification.Ok)
+            {
+                throw new PatchBuildException("native_package_verify_failed", string.Join(Environment.NewLine, verification.Warnings));
+            }
 
             return new PatchPackageWriteResult(
                 indexPath,
                 payload.BundlePath,
                 PatchBuildMode.NativeBundles2,
-                ["已生成 Native Bundles2 补丁包；安装前仍建议备份原客户端 Bundles2。"]);
+                [$"已生成并验证 Native Bundles2 补丁包：{verification.PatchedFileRecords} 条 index 记录指向 patch bundle。", "安装前仍建议备份原客户端 Bundles2。"]);
         }
         finally
         {
