@@ -75,6 +75,7 @@ async function refreshProfiles() {
   $("buildNativeIndexBtn").disabled = !state.selectedProfile;
   $("patchDryRunBtn").disabled = !state.selectedProfile;
   $("patchReadinessBtn").disabled = !state.selectedProfile;
+  $("nativePlanBtn").disabled = !state.selectedProfile;
   $("patchBuildBtn").disabled = !state.selectedProfile;
   $("refreshBuildsBtn").disabled = !state.selectedProfile;
   $("refreshOverlayBtn").disabled = !state.selectedProfile;
@@ -538,6 +539,15 @@ async function patchReadiness() {
   setStatus(result.ready ? "正式写包条件已满足" : `正式写包阻塞：${result.blockers.length}`);
 }
 
+async function nativePatchPlan() {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  setStatus("正在生成写包计划...");
+  const result = await api("/api/patch/native-plan", { profileId });
+  writeLog($("actionOutput"), result);
+  setStatus(result.ready ? `写包计划：${result.totalItems} 项` : `写包计划阻塞：${result.blockers.length}`);
+}
+
 async function batchOverlay() {
   const profileId = selectedProfileId();
   const query = $("searchInput").value.trim();
@@ -814,6 +824,7 @@ function bind() {
   $("applyScriptBtn").addEventListener("click", () => runBatchScript(true));
   $("patchDryRunBtn").addEventListener("click", patchDryRun);
   $("patchReadinessBtn").addEventListener("click", patchReadiness);
+  $("nativePlanBtn").addEventListener("click", nativePatchPlan);
   $("patchBuildBtn").addEventListener("click", patchBuild);
   $("refreshBuildsBtn").addEventListener("click", refreshBuildHistory);
   $("refreshOverlayBtn").addEventListener("click", refreshOverlayList);

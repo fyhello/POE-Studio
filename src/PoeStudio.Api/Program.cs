@@ -1087,6 +1087,22 @@ app.MapPost("/api/patch/readiness", async (
     return Results.Ok(ApiResponse<PatchReadinessResponse>.Success(response));
 });
 
+app.MapPost("/api/patch/native-plan", async (
+    NativePatchPlanRequest request,
+    ProfileStore profiles,
+    PatchBuildService patchBuild,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<NativePatchPlanResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    var response = await patchBuild.PlanNativePatchAsync(request, cancellationToken);
+    return Results.Ok(ApiResponse<NativePatchPlanResponse>.Success(response));
+});
+
 app.MapPost("/api/patch/build", async (
     PatchBuildRequest request,
     ProfileStore profiles,

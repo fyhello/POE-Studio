@@ -86,6 +86,45 @@ public sealed class PatchBuildService
             dryRun.Warnings);
     }
 
+    public async Task<NativePatchPlanResponse> PlanNativePatchAsync(
+        NativePatchPlanRequest request,
+        CancellationToken cancellationToken)
+    {
+        var entries = await overlayStore.GetEntriesAsync(request.ProfileId, cancellationToken);
+        var items = new List<NativePatchPlanItemDto>(entries.Count);
+        var blockers = new List<string>();
+        long offset = 0;
+
+        foreach (var entry in entries.OrderBy(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var blocker = File.Exists(entry.OverlayPath) ? null : "overlay 文件不存在。";
+            if (blocker is not null)
+            {
+                blockers.Add($"{entry.VirtualPath}: {blocker}");
+            }
+
+            items.Add(new NativePatchPlanItemDto(
+                entry.VirtualPath,
+                request.BundleName,
+                offset,
+                entry.OverlaySize,
+                entry.OverlayHash,
+                RequiresIndexUpdate: true,
+                blocker));
+            offset += entry.OverlaySize;
+        }
+
+        return new NativePatchPlanResponse(
+            request.ProfileId,
+            request.BundleName,
+            Ready: blockers.Count == 0 && items.Count > 0,
+            items.Count,
+            items,
+            blockers,
+            ["该计划仅描述 Native Bundles2 写入输入；实际 bundle 压缩和 _.index.bin 重写仍需 Native writer 执行。"]);
+    }
+
     public async Task<PatchBuildResponse> BuildAsync(
         PatchBuildRequest request,
         ClientProfileDto profile,

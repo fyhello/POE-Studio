@@ -65,6 +65,28 @@ public sealed record PatchReadinessResponse(
     IReadOnlyList<string> Blockers,
     IReadOnlyList<string> Warnings);
 
+public sealed record NativePatchPlanRequest(
+    string ProfileId,
+    string BundleName = "PoeStudio.NativePatch.bundle.bin");
+
+public sealed record NativePatchPlanItemDto(
+    string VirtualPath,
+    string BundleName,
+    long Offset,
+    long Size,
+    string OverlayHash,
+    bool RequiresIndexUpdate,
+    string? Blocker);
+
+public sealed record NativePatchPlanResponse(
+    string ProfileId,
+    string BundleName,
+    bool Ready,
+    int TotalItems,
+    IReadOnlyList<NativePatchPlanItemDto> Items,
+    IReadOnlyList<string> Blockers,
+    IReadOnlyList<string> Warnings);
+
 public sealed record PatchBuildResponse(
     string ProfileId,
     PatchBuildMode BuildMode,

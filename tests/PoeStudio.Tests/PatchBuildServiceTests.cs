@@ -125,6 +125,25 @@ public sealed class PatchBuildServiceTests
     }
 
     [Fact]
+    public async Task PlanNativePatchAsync_marks_items_requiring_index_updates()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root);
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay);
+
+        var result = await service.PlanNativePatchAsync(new NativePatchPlanRequest(profile.Id), CancellationToken.None);
+
+        Assert.True(result.Ready);
+        var item = Assert.Single(result.Items);
+        Assert.Equal("text/sample.txt", item.VirtualPath);
+        Assert.True(item.RequiresIndexUpdate);
+        Assert.Equal(0, item.Offset);
+        Assert.Equal("PoeStudio.NativePatch.bundle.bin", item.BundleName);
+    }
+
+    [Fact]
     public async Task InstallAsync_previews_and_applies_patch_files_under_client_bundles()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
