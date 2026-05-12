@@ -535,7 +535,8 @@ async function patchReadiness() {
   setStatus("正在检查正式写包条件...");
   const result = await api("/api/patch/readiness", {
     profileId,
-    writerKind: 1
+    writerKind: 1,
+    oodlePath: $("oodlePathInput").value.trim() || null
   });
   writeLog($("actionOutput"), result);
   setStatus(result.ready ? "正式写包条件已满足" : `正式写包阻塞：${result.blockers.length}`);

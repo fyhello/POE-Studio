@@ -56,7 +56,8 @@ public sealed record PatchDryRunResponse(
 
 public sealed record PatchReadinessRequest(
     string ProfileId,
-    PatchPackageWriterKind WriterKind = PatchPackageWriterKind.NativeBundles2);
+    PatchPackageWriterKind WriterKind = PatchPackageWriterKind.NativeBundles2,
+    string? OodlePath = null);
 
 public sealed record PatchReadinessResponse(
     string ProfileId,

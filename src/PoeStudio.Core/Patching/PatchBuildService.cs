@@ -89,9 +89,38 @@ public sealed class PatchBuildService
             blockers.Add($"{FormatWriterKind(request.WriterKind)} 写入器尚未接入。");
         }
 
-        if (request.WriterKind == PatchPackageWriterKind.NativeBundles2 && profile.OodleStatus != OodleStatus.Found)
+        if (request.WriterKind == PatchPackageWriterKind.NativeBundles2
+            && profile.OodleStatus != OodleStatus.Found
+            && string.IsNullOrWhiteSpace(request.OodlePath))
         {
             blockers.Add("Oodle 不可用，无法进行正式 Bundles2 压缩写入。");
+        }
+
+        if (request.WriterKind == PatchPackageWriterKind.NativeBundles2
+            && !string.IsNullOrWhiteSpace(request.OodlePath)
+            && !File.Exists(request.OodlePath))
+        {
+            blockers.Add($"指定的 oo2core.dll 不存在：{request.OodlePath}");
+        }
+
+        if (request.WriterKind == PatchPackageWriterKind.NativeBundles2)
+        {
+            var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+            var sourceIndexPath = Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
+            if (!File.Exists(sourceIndexPath))
+            {
+                blockers.Add("缺少解压后的真实索引 cache，请先建立真实索引。");
+            }
+
+            if (resourceLookup is null)
+            {
+                blockers.Add("资源索引不可用，无法定位 Native Bundles2 原始记录。");
+            }
+            else if (dryRun.TotalChanges > 0)
+            {
+                var indexPlan = await PlanNativeIndexRewriteAsync(new NativeIndexRewritePlanRequest(request.ProfileId), cancellationToken);
+                blockers.AddRange(indexPlan.Blockers);
+            }
         }
 
         if (dryRun.TotalChanges == 0)

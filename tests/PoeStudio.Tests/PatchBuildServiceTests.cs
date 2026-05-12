@@ -211,6 +211,51 @@ public sealed class PatchBuildServiceTests
     }
 
     [Fact]
+    public async Task CheckReadinessAsync_reports_missing_native_index_cache()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root) with { OodleStatus = OodleStatus.Found };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 8,
+            PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource));
+
+        var result = await service.CheckReadinessAsync(new PatchReadinessRequest(profile.Id), profile, CancellationToken.None);
+
+        Assert.False(result.Ready);
+        Assert.Contains(result.Blockers, item => item.Contains("真实索引", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task CheckReadinessAsync_reports_missing_resource_index_match()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root) with { OodleStatus = OodleStatus.Found };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/missing.txt", "overlay"), CancellationToken.None);
+        var layout = WorkspaceLayout.ForProfile(root, profile.Id);
+        var indexCachePath = Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexCachePath)!);
+        await WriteDecompressedIndexAsync(indexCachePath, 123UL);
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup());
+
+        var result = await service.CheckReadinessAsync(new PatchReadinessRequest(profile.Id), profile, CancellationToken.None);
+
+        Assert.False(result.Ready);
+        Assert.Contains(result.Blockers, item => item.Contains("资源索引", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task PlanNativePatchAsync_marks_items_requiring_index_updates()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
