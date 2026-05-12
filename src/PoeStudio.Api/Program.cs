@@ -60,7 +60,8 @@ builder.Services.AddSingleton(sp =>
     var workspaceRoot = config["PoeStudio:WorkspaceRoot"]
         ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PoeStudio");
     var overlay = sp.GetRequiredService<OverlayStore>();
-    return new PatchBuildService(workspaceRoot, overlay);
+    var resourceIndex = sp.GetRequiredService<ResourceIndexStore>();
+    return new PatchBuildService(workspaceRoot, overlay, resourceIndex);
 });
 
 var app = builder.Build();

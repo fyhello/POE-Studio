@@ -183,6 +183,53 @@ public sealed class PatchBuildServiceTests
     }
 
     [Fact]
+    public async Task PlanNativeIndexRewriteAsync_attaches_native_resource_location_when_indexed()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root);
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 12,
+            PhysicalPath: "native-bundles2://Metadata/Text.bundle.bin#offset=32&size=12",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource));
+
+        var result = await service.PlanNativeIndexRewriteAsync(new NativeIndexRewritePlanRequest(profile.Id), CancellationToken.None);
+
+        Assert.True(result.Ready);
+        var item = Assert.Single(result.Items);
+        Assert.Null(item.Blocker);
+        Assert.Equal("Metadata/Text.bundle.bin", item.OriginalBundleName);
+        Assert.Equal(32, item.OriginalOffset);
+        Assert.Equal(12, item.OriginalSize);
+        Assert.False(string.IsNullOrWhiteSpace(item.PathHash));
+    }
+
+    [Fact]
+    public async Task PlanNativeIndexRewriteAsync_blocks_when_indexed_resource_is_missing()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root);
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/missing.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup());
+
+        var result = await service.PlanNativeIndexRewriteAsync(new NativeIndexRewritePlanRequest(profile.Id), CancellationToken.None);
+
+        Assert.False(result.Ready);
+        Assert.Contains(result.Blockers, blocker => blocker.Contains("资源索引中不存在", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("资源索引中不存在该路径。", Assert.Single(result.Items).Blocker);
+    }
+
+    [Fact]
     public async Task InstallAsync_previews_and_applies_patch_files_under_client_bundles()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
@@ -305,6 +352,16 @@ public sealed class PatchBuildServiceTests
             await File.WriteAllBytesAsync(indexPath, [1], cancellationToken);
             await File.WriteAllBytesAsync(bundlePath, [2], cancellationToken);
             return new PatchPackageWriteResult(indexPath, bundlePath, PatchBuildMode.OverlayBundleMvp, ["captured"]);
+        }
+    }
+
+    private sealed class StaticPatchResourceLookup(params ResourceSummaryDto[] resources) : IPatchResourceLookup
+    {
+        public Task<ResourceSummaryDto?> GetByPathAsync(string profileId, string virtualPath, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(resources.FirstOrDefault(resource =>
+                string.Equals(resource.ProfileId, profileId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(resource.NormalizedPath, virtualPath, StringComparison.OrdinalIgnoreCase)));
         }
     }
 }

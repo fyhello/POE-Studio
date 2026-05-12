@@ -12,6 +12,11 @@ public interface IPatchOverlayReader
     Task<IReadOnlyList<OverlayEntryDto>> GetEntriesAsync(string profileId, CancellationToken cancellationToken);
 }
 
+public interface IPatchResourceLookup
+{
+    Task<ResourceSummaryDto?> GetByPathAsync(string profileId, string virtualPath, CancellationToken cancellationToken);
+}
+
 public sealed class PatchBuildService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -21,22 +26,38 @@ public sealed class PatchBuildService
 
     private readonly string workspaceRoot;
     private readonly IPatchOverlayReader overlayStore;
+    private readonly IPatchResourceLookup? resourceLookup;
     private readonly IReadOnlyDictionary<PatchPackageWriterKind, IPatchPackageWriter> packageWriters;
 
     public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore)
-        : this(workspaceRoot, overlayStore, [new MvpPatchPackageWriter(), CreateNativeUnavailableWriter(), CreateLibGgpkUnavailableWriter()])
+        : this(workspaceRoot, overlayStore, null, [new MvpPatchPackageWriter(), CreateNativeUnavailableWriter(), CreateLibGgpkUnavailableWriter()])
     {
     }
 
     public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IPatchPackageWriter packageWriter)
-        : this(workspaceRoot, overlayStore, [packageWriter])
+        : this(workspaceRoot, overlayStore, null, [packageWriter])
+    {
+    }
+
+    public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IPatchResourceLookup resourceLookup)
+        : this(workspaceRoot, overlayStore, resourceLookup, [new MvpPatchPackageWriter(), CreateNativeUnavailableWriter(), CreateLibGgpkUnavailableWriter()])
     {
     }
 
     public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IEnumerable<IPatchPackageWriter> packageWriters)
+        : this(workspaceRoot, overlayStore, null, packageWriters)
+    {
+    }
+
+    public PatchBuildService(
+        string workspaceRoot,
+        IPatchOverlayReader overlayStore,
+        IPatchResourceLookup? resourceLookup,
+        IEnumerable<IPatchPackageWriter> packageWriters)
     {
         this.workspaceRoot = Path.GetFullPath(workspaceRoot);
         this.overlayStore = overlayStore;
+        this.resourceLookup = resourceLookup;
         this.packageWriters = packageWriters.ToDictionary(writer => writer.Kind);
     }
 
@@ -169,22 +190,61 @@ public sealed class PatchBuildService
         CancellationToken cancellationToken)
     {
         var plan = await PlanNativePatchAsync(new NativePatchPlanRequest(request.ProfileId, request.BundleName), cancellationToken);
-        var items = plan.Items
-            .Where(item => item.Blocker is null)
-            .Select(item => new NativeIndexRewriteItemDto(
+        var items = new List<NativeIndexRewriteItemDto>(plan.Items.Count);
+        var blockers = new List<string>(plan.Blockers);
+        foreach (var item in plan.Items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var blocker = item.Blocker;
+            string? pathHash = null;
+            string? originalBundleName = null;
+            long? originalOffset = null;
+            long? originalSize = null;
+
+            if (blocker is null && resourceLookup is not null)
+            {
+                var resource = await resourceLookup.GetByPathAsync(request.ProfileId, item.VirtualPath, cancellationToken);
+                if (resource is null)
+                {
+                    blocker = "资源索引中不存在该路径。";
+                }
+                else if (!NativeBundleLocationParser.TryParse(resource.PhysicalPath, out var location))
+                {
+                    blocker = "资源索引不是 Native Bundles2 位置。";
+                }
+                else
+                {
+                    pathHash = $"0x{NativeIndexPathResolver.MurmurHash64A(System.Text.Encoding.UTF8.GetBytes(resource.NormalizedPath)):x16}";
+                    originalBundleName = location.BundleName;
+                    originalOffset = location.Offset;
+                    originalSize = location.Size;
+                }
+            }
+
+            if (blocker is not null)
+            {
+                blockers.Add($"{item.VirtualPath}: {blocker}");
+            }
+
+            items.Add(new NativeIndexRewriteItemDto(
                 item.VirtualPath,
                 item.BundleName,
                 item.Offset,
                 item.Size,
-                item.OverlayHash))
-            .ToArray();
+                item.OverlayHash,
+                pathHash,
+                originalBundleName,
+                originalOffset,
+                originalSize,
+                blocker));
+        }
 
         return new NativeIndexRewritePlanResponse(
             request.ProfileId,
-            plan.Ready,
-            items.Length,
+            plan.Ready && blockers.Count == 0,
+            items.Count,
             items,
-            plan.Blockers,
+            blockers,
             plan.Warnings.Concat(["该计划尚未写入 _.index.bin；真实重写器接入后会更新 bundle/file records。"]).ToArray());
     }
 

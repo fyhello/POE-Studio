@@ -113,7 +113,12 @@ public sealed record NativeIndexRewriteItemDto(
     string BundleName,
     long Offset,
     long Size,
-    string OverlayHash);
+    string OverlayHash,
+    string? PathHash = null,
+    string? OriginalBundleName = null,
+    long? OriginalOffset = null,
+    long? OriginalSize = null,
+    string? Blocker = null);
 
 public sealed record NativeIndexRewritePlanResponse(
     string ProfileId,

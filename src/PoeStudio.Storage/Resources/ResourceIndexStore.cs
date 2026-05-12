@@ -1,10 +1,11 @@
 using System.Text.Json;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Patching;
 using PoeStudio.Core.Workspace;
 
 namespace PoeStudio.Storage.Resources;
 
-public sealed class ResourceIndexStore
+public sealed class ResourceIndexStore : IPatchResourceLookup
 {
     private const int ShardCount = 128;
 

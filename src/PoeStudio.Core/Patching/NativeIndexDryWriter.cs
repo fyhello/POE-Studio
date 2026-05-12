@@ -43,6 +43,11 @@ public sealed class NativeIndexDryWriter
             writer.Write(item.Offset);
             writer.Write(item.Size);
             WriteString(writer, item.OverlayHash);
+            WriteString(writer, item.PathHash ?? string.Empty);
+            WriteString(writer, item.OriginalBundleName ?? string.Empty);
+            writer.Write(item.OriginalOffset ?? -1);
+            writer.Write(item.OriginalSize ?? -1);
+            WriteString(writer, item.Blocker ?? string.Empty);
         }
     }
 
@@ -68,7 +73,12 @@ public sealed class NativeIndexDryWriter
                 ReadString(reader),
                 reader.ReadInt64(),
                 reader.ReadInt64(),
-                ReadString(reader)));
+                ReadString(reader),
+                EmptyToNull(ReadString(reader)),
+                EmptyToNull(ReadString(reader)),
+                NegativeToNull(reader.ReadInt64()),
+                NegativeToNull(reader.ReadInt64()),
+                EmptyToNull(ReadString(reader))));
         }
 
         if (stream.Position != stream.Length)
@@ -101,5 +111,15 @@ public sealed class NativeIndexDryWriter
         }
 
         return Encoding.UTF8.GetString(bytes);
+    }
+
+    private static string? EmptyToNull(string value)
+    {
+        return value.Length == 0 ? null : value;
+    }
+
+    private static long? NegativeToNull(long value)
+    {
+        return value < 0 ? null : value;
     }
 }
