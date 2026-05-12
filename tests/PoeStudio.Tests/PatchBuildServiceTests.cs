@@ -1,6 +1,9 @@
 using System.IO.Compression;
+using System.Text;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
 using PoeStudio.Core.Patching;
+using PoeStudio.Core.Workspace;
 using PoeStudio.Storage.Overlay;
 
 namespace PoeStudio.Tests;
@@ -158,9 +161,44 @@ public sealed class PatchBuildServiceTests
         Assert.True(File.Exists(result.ManifestPath));
         Assert.True(File.Exists(result.IndexPlanPath));
         Assert.True(File.Exists(result.NativeIndexDryPath));
+        Assert.Null(result.NativeIndexRewriteDryPath);
         Assert.True(result.Size > 0);
         Assert.Single(result.Plan.Items);
         Assert.Single(result.IndexPlan.Items);
+    }
+
+    [Fact]
+    public async Task BuildNativeDryBundleAsync_writes_index_rewrite_dry_run_when_cache_exists()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root);
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var hash = NativeIndexPathResolver.MurmurHash64A(Encoding.UTF8.GetBytes("text/sample.txt"));
+        var layout = WorkspaceLayout.ForProfile(root, profile.Id);
+        var indexCachePath = Path.Combine(layout.CacheRoot, "raw", "native", "bundles2", "index.decompressed.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexCachePath)!);
+        await WriteDecompressedIndexAsync(indexCachePath, hash);
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 8,
+            PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource));
+
+        var result = await service.BuildNativeDryBundleAsync(new NativeDryBundleBuildRequest(profile.Id), CancellationToken.None);
+
+        Assert.True(File.Exists(result.NativeIndexRewriteDryPath));
+        var parsed = await new NativeIndexRecordParser().ParseAsync(result.NativeIndexRewriteDryPath!, CancellationToken.None);
+        Assert.True(parsed.Ok);
+        Assert.Equal("PoeStudio.NativePatch", parsed.Bundles[1].Path);
+        Assert.Equal(1, parsed.Files[0].BundleIndex);
     }
 
     [Fact]
@@ -335,6 +373,23 @@ public sealed class PatchBuildServiceTests
             ClientFingerprint: "fingerprint",
             CreatedAt: DateTimeOffset.UtcNow,
             UpdatedAt: DateTimeOffset.UtcNow);
+    }
+
+    private static async Task WriteDecompressedIndexAsync(string path, ulong pathHash)
+    {
+        await using var stream = File.Create(path);
+        await using var writer = new BinaryWriter(stream);
+        writer.Write(1);
+        var bundleBytes = Encoding.UTF8.GetBytes("Base");
+        writer.Write(bundleBytes.Length);
+        writer.Write(bundleBytes);
+        writer.Write(4096);
+        writer.Write(1);
+        writer.Write(pathHash);
+        writer.Write(0);
+        writer.Write(16);
+        writer.Write(8);
+        writer.Write(0);
     }
 
     private sealed class CapturingPatchPackageWriter : IPatchPackageWriter

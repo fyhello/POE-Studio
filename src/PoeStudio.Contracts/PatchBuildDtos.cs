@@ -99,6 +99,7 @@ public sealed record NativeDryBundleBuildResponse(
     string ManifestPath,
     string IndexPlanPath,
     string NativeIndexDryPath,
+    string? NativeIndexRewriteDryPath,
     long Size,
     NativePatchPlanResponse Plan,
     NativeIndexRewritePlanResponse IndexPlan,

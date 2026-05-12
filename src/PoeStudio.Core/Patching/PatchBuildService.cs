@@ -169,8 +169,10 @@ public sealed class PatchBuildService
         await WriteJsonAsync(indexPlanPath, indexPlan, cancellationToken);
         var nativeIndexDryPath = Path.Combine(outputDirectory, "native_index_dry.bin");
         await new NativeIndexDryWriter().WriteAsync(nativeIndexDryPath, indexPlan, cancellationToken);
+        var rewriteDryPath = await TryWriteIndexRewriteDryRunAsync(request.ProfileId, outputDirectory, indexPlan, cancellationToken);
         var warnings = plan.Warnings
             .Concat(oodleCodec is null ? [$"使用 Copy codec 生成 dry bundle：{oodleWarning}"] : ["已使用 Oodle 压缩 codec 生成 dry bundle。"])
+            .Concat(rewriteDryPath is null ? ["未找到解压后的 native index cache，已跳过 index rewrite dry-run。"] : ["已生成 native index rewrite dry-run 产物。"])
             .ToArray();
         return new NativeDryBundleBuildResponse(
             request.ProfileId,
@@ -179,6 +181,7 @@ public sealed class PatchBuildService
             result.ManifestPath,
             indexPlanPath,
             nativeIndexDryPath,
+            rewriteDryPath,
             result.Size,
             plan,
             indexPlan,
@@ -246,6 +249,29 @@ public sealed class PatchBuildService
             items,
             blockers,
             plan.Warnings.Concat(["该计划尚未写入 _.index.bin；真实重写器接入后会更新 bundle/file records。"]).ToArray());
+    }
+
+    private async Task<string?> TryWriteIndexRewriteDryRunAsync(
+        string profileId,
+        string outputDirectory,
+        NativeIndexRewritePlanResponse indexPlan,
+        CancellationToken cancellationToken)
+    {
+        if (!indexPlan.Ready)
+        {
+            return null;
+        }
+
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, profileId);
+        var sourcePath = Path.Combine(layout.CacheRoot, "raw", "native", "bundles2", "index.decompressed.bin");
+        if (!File.Exists(sourcePath))
+        {
+            return null;
+        }
+
+        var outputPath = Path.Combine(outputDirectory, "native_index_rewritten.dry.bin");
+        var result = await new NativeIndexRewriteDryRun().RewriteAsync(sourcePath, outputPath, indexPlan, cancellationToken);
+        return result.Ok ? outputPath : null;
     }
 
     public async Task<PatchBuildResponse> BuildAsync(
