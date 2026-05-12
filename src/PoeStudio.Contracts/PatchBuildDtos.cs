@@ -94,6 +94,7 @@ public sealed record NativeDryBundleBuildRequest(
 public sealed record NativeDryBundleBuildResponse(
     string ProfileId,
     string BundlePath,
+    string ContainerBundlePath,
     string ManifestPath,
     long Size,
     NativePatchPlanResponse Plan);

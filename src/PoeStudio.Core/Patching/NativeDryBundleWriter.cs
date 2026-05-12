@@ -1,11 +1,13 @@
 using System.Text;
 using System.Text.Json;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
 
 namespace PoeStudio.Core.Patching;
 
 public sealed record NativeDryBundleWriteResult(
     string BundlePath,
+    string ContainerBundlePath,
     string ManifestPath,
     long Size);
 
@@ -31,6 +33,7 @@ public sealed class NativeDryBundleWriter
 
         Directory.CreateDirectory(outputDirectory);
         var bundlePath = Path.Combine(outputDirectory, plan.BundleName);
+        var containerBundlePath = Path.Combine(outputDirectory, $"{Path.GetFileNameWithoutExtension(plan.BundleName)}.container.bundle.bin");
         var manifestPath = Path.Combine(outputDirectory, "native_patch_plan.json");
         var byPath = entries.ToDictionary(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase);
 
@@ -61,11 +64,17 @@ public sealed class NativeDryBundleWriter
             }
         }
 
+        var payload = await File.ReadAllBytesAsync(bundlePath, cancellationToken);
+        await File.WriteAllBytesAsync(
+            containerBundlePath,
+            new NativeBundleCompressor(new CopyNativeBundleCodec()).Compress(payload),
+            cancellationToken);
+
         await using (var manifest = File.Create(manifestPath))
         {
             await JsonSerializer.SerializeAsync(manifest, plan, JsonOptions, cancellationToken);
         }
 
-        return new NativeDryBundleWriteResult(bundlePath, manifestPath, new FileInfo(bundlePath).Length);
+        return new NativeDryBundleWriteResult(bundlePath, containerBundlePath, manifestPath, new FileInfo(containerBundlePath).Length);
     }
 }

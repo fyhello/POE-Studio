@@ -143,6 +143,7 @@ public sealed class PatchBuildService
         return new NativeDryBundleBuildResponse(
             request.ProfileId,
             result.BundlePath,
+            result.ContainerBundlePath,
             result.ManifestPath,
             result.Size,
             plan);
