@@ -55,6 +55,37 @@ public sealed class PatchBuildService
             warnings);
     }
 
+    public async Task<PatchReadinessResponse> CheckReadinessAsync(
+        PatchReadinessRequest request,
+        ClientProfileDto profile,
+        CancellationToken cancellationToken)
+    {
+        var dryRun = await DryRunAsync(new PatchDryRunRequest(request.ProfileId), profile, cancellationToken);
+        var blockers = new List<string>();
+        if (!packageWriters.TryGetValue(request.WriterKind, out var writer) || writer is UnavailablePatchPackageWriter)
+        {
+            blockers.Add($"{FormatWriterKind(request.WriterKind)} 写入器尚未接入。");
+        }
+
+        if (request.WriterKind == PatchPackageWriterKind.NativeBundles2 && profile.OodleStatus != OodleStatus.Found)
+        {
+            blockers.Add("Oodle 不可用，无法进行正式 Bundles2 压缩写入。");
+        }
+
+        if (dryRun.TotalChanges == 0)
+        {
+            blockers.Add("当前没有 overlay 改动可构建。");
+        }
+
+        return new PatchReadinessResponse(
+            request.ProfileId,
+            request.WriterKind,
+            blockers.Count == 0,
+            dryRun.TotalChanges,
+            blockers,
+            dryRun.Warnings);
+    }
+
     public async Task<PatchBuildResponse> BuildAsync(
         PatchBuildRequest request,
         ClientProfileDto profile,
@@ -348,4 +379,14 @@ public sealed class PatchBuildService
         DateTimeOffset InstalledAt,
         string BackupRoot,
         IReadOnlyList<PatchInstallFileDto> Files);
+
+    private static string FormatWriterKind(PatchPackageWriterKind kind)
+    {
+        return kind switch
+        {
+            PatchPackageWriterKind.NativeBundles2 => "Native Bundles2",
+            PatchPackageWriterKind.LibGgpk3Adapter => "LibGGPK3 Adapter",
+            _ => kind.ToString()
+        };
+    }
 }

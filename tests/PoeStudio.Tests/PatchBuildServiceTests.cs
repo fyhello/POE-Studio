@@ -108,6 +108,23 @@ public sealed class PatchBuildServiceTests
     }
 
     [Fact]
+    public async Task CheckReadinessAsync_reports_native_writer_and_oodle_blockers()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root);
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay);
+
+        var result = await service.CheckReadinessAsync(new PatchReadinessRequest(profile.Id), profile, CancellationToken.None);
+
+        Assert.False(result.Ready);
+        Assert.Equal(1, result.TotalChanges);
+        Assert.Contains(result.Blockers, item => item.Contains("Native Bundles2 写入器", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Blockers, item => item.Contains("Oodle", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task InstallAsync_previews_and_applies_patch_files_under_client_bundles()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));

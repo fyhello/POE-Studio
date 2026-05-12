@@ -1071,6 +1071,22 @@ app.MapPost("/api/patch/dry-run", async (
     return Results.Ok(ApiResponse<PatchDryRunResponse>.Success(response));
 });
 
+app.MapPost("/api/patch/readiness", async (
+    PatchReadinessRequest request,
+    ProfileStore profiles,
+    PatchBuildService patchBuild,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<PatchReadinessResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    var response = await patchBuild.CheckReadinessAsync(request, profile, cancellationToken);
+    return Results.Ok(ApiResponse<PatchReadinessResponse>.Success(response));
+});
+
 app.MapPost("/api/patch/build", async (
     PatchBuildRequest request,
     ProfileStore profiles,

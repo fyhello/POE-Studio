@@ -74,6 +74,7 @@ async function refreshProfiles() {
   }
   $("buildNativeIndexBtn").disabled = !state.selectedProfile;
   $("patchDryRunBtn").disabled = !state.selectedProfile;
+  $("patchReadinessBtn").disabled = !state.selectedProfile;
   $("patchBuildBtn").disabled = !state.selectedProfile;
   $("refreshBuildsBtn").disabled = !state.selectedProfile;
   $("refreshOverlayBtn").disabled = !state.selectedProfile;
@@ -525,6 +526,18 @@ async function patchDryRun() {
   setStatus(`补丁预检完成：${result.totalChanges} 个改动`);
 }
 
+async function patchReadiness() {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  setStatus("正在检查正式写包条件...");
+  const result = await api("/api/patch/readiness", {
+    profileId,
+    writerKind: 1
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(result.ready ? "正式写包条件已满足" : `正式写包阻塞：${result.blockers.length}`);
+}
+
 async function batchOverlay() {
   const profileId = selectedProfileId();
   const query = $("searchInput").value.trim();
@@ -800,6 +813,7 @@ function bind() {
   $("previewScriptBtn").addEventListener("click", () => runBatchScript(false));
   $("applyScriptBtn").addEventListener("click", () => runBatchScript(true));
   $("patchDryRunBtn").addEventListener("click", patchDryRun);
+  $("patchReadinessBtn").addEventListener("click", patchReadiness);
   $("patchBuildBtn").addEventListener("click", patchBuild);
   $("refreshBuildsBtn").addEventListener("click", refreshBuildHistory);
   $("refreshOverlayBtn").addEventListener("click", refreshOverlayList);

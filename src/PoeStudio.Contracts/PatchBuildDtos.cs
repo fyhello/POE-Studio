@@ -53,6 +53,18 @@ public sealed record PatchDryRunResponse(
     IReadOnlyDictionary<PatchRiskLevel, int> RiskCounts,
     IReadOnlyList<string> Warnings);
 
+public sealed record PatchReadinessRequest(
+    string ProfileId,
+    PatchPackageWriterKind WriterKind = PatchPackageWriterKind.NativeBundles2);
+
+public sealed record PatchReadinessResponse(
+    string ProfileId,
+    PatchPackageWriterKind WriterKind,
+    bool Ready,
+    int TotalChanges,
+    IReadOnlyList<string> Blockers,
+    IReadOnlyList<string> Warnings);
+
 public sealed record PatchBuildResponse(
     string ProfileId,
     PatchBuildMode BuildMode,
