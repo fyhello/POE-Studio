@@ -125,6 +125,29 @@ public sealed class PatchBuildService
             ["该计划仅描述 Native Bundles2 写入输入；实际 bundle 压缩和 _.index.bin 重写仍需 Native writer 执行。"]);
     }
 
+    public async Task<NativeDryBundleBuildResponse> BuildNativeDryBundleAsync(
+        NativeDryBundleBuildRequest request,
+        CancellationToken cancellationToken)
+    {
+        var plan = await PlanNativePatchAsync(new NativePatchPlanRequest(request.ProfileId, request.BundleName), cancellationToken);
+        if (!plan.Ready)
+        {
+            throw new PatchBuildException("native_plan_not_ready", string.Join(Environment.NewLine, plan.Blockers));
+        }
+
+        var entries = await overlayStore.GetEntriesAsync(request.ProfileId, cancellationToken);
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        layout.EnsureDirectories();
+        var outputDirectory = Path.Combine(layout.BuildsRoot, $"native-dry-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}");
+        var result = await new NativeDryBundleWriter().WriteAsync(outputDirectory, plan, entries, cancellationToken);
+        return new NativeDryBundleBuildResponse(
+            request.ProfileId,
+            result.BundlePath,
+            result.ManifestPath,
+            result.Size,
+            plan);
+    }
+
     public async Task<PatchBuildResponse> BuildAsync(
         PatchBuildRequest request,
         ClientProfileDto profile,

@@ -76,6 +76,7 @@ async function refreshProfiles() {
   $("patchDryRunBtn").disabled = !state.selectedProfile;
   $("patchReadinessBtn").disabled = !state.selectedProfile;
   $("nativePlanBtn").disabled = !state.selectedProfile;
+  $("nativeDryBundleBtn").disabled = !state.selectedProfile;
   $("patchBuildBtn").disabled = !state.selectedProfile;
   $("refreshBuildsBtn").disabled = !state.selectedProfile;
   $("refreshOverlayBtn").disabled = !state.selectedProfile;
@@ -548,6 +549,15 @@ async function nativePatchPlan() {
   setStatus(result.ready ? `写包计划：${result.totalItems} 项` : `写包计划阻塞：${result.blockers.length}`);
 }
 
+async function nativeDryBundle() {
+  const profileId = selectedProfileId();
+  if (!profileId) return;
+  setStatus("正在生成 dry bundle...");
+  const result = await api("/api/patch/native-dry-bundle", { profileId });
+  writeLog($("actionOutput"), result);
+  setStatus(`Dry bundle 已生成：${Math.max(1, Math.round(result.size / 1024))} KB`);
+}
+
 async function batchOverlay() {
   const profileId = selectedProfileId();
   const query = $("searchInput").value.trim();
@@ -825,6 +835,7 @@ function bind() {
   $("patchDryRunBtn").addEventListener("click", patchDryRun);
   $("patchReadinessBtn").addEventListener("click", patchReadiness);
   $("nativePlanBtn").addEventListener("click", nativePatchPlan);
+  $("nativeDryBundleBtn").addEventListener("click", nativeDryBundle);
   $("patchBuildBtn").addEventListener("click", patchBuild);
   $("refreshBuildsBtn").addEventListener("click", refreshBuildHistory);
   $("refreshOverlayBtn").addEventListener("click", refreshOverlayList);

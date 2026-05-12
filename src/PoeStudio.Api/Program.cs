@@ -1103,6 +1103,29 @@ app.MapPost("/api/patch/native-plan", async (
     return Results.Ok(ApiResponse<NativePatchPlanResponse>.Success(response));
 });
 
+app.MapPost("/api/patch/native-dry-bundle", async (
+    NativeDryBundleBuildRequest request,
+    ProfileStore profiles,
+    PatchBuildService patchBuild,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<NativeDryBundleBuildResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    try
+    {
+        var response = await patchBuild.BuildNativeDryBundleAsync(request, cancellationToken);
+        return Results.Ok(ApiResponse<NativeDryBundleBuildResponse>.Success(response));
+    }
+    catch (PatchBuildException ex)
+    {
+        return Results.BadRequest(ApiResponse<NativeDryBundleBuildResponse>.Failure(ex.ErrorCode, ex.Message));
+    }
+});
+
 app.MapPost("/api/patch/build", async (
     PatchBuildRequest request,
     ProfileStore profiles,

@@ -87,6 +87,17 @@ public sealed record NativePatchPlanResponse(
     IReadOnlyList<string> Blockers,
     IReadOnlyList<string> Warnings);
 
+public sealed record NativeDryBundleBuildRequest(
+    string ProfileId,
+    string BundleName = "PoeStudio.NativePatch.bundle.bin");
+
+public sealed record NativeDryBundleBuildResponse(
+    string ProfileId,
+    string BundlePath,
+    string ManifestPath,
+    long Size,
+    NativePatchPlanResponse Plan);
+
 public sealed record PatchBuildResponse(
     string ProfileId,
     PatchBuildMode BuildMode,

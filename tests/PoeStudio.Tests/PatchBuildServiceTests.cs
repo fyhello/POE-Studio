@@ -144,6 +144,23 @@ public sealed class PatchBuildServiceTests
     }
 
     [Fact]
+    public async Task BuildNativeDryBundleAsync_writes_bundle_and_plan_manifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root);
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay);
+
+        var result = await service.BuildNativeDryBundleAsync(new NativeDryBundleBuildRequest(profile.Id), CancellationToken.None);
+
+        Assert.True(File.Exists(result.BundlePath));
+        Assert.True(File.Exists(result.ManifestPath));
+        Assert.True(result.Size > 0);
+        Assert.Single(result.Plan.Items);
+    }
+
+    [Fact]
     public async Task InstallAsync_previews_and_applies_patch_files_under_client_bundles()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
