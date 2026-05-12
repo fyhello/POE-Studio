@@ -371,6 +371,55 @@ public sealed class PatchBuildService
             warnings);
     }
 
+    public async Task<PatchVerifyResponse> VerifyBuildAsync(
+        PatchVerifyRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.BuildId.Any(ch => !char.IsDigit(ch)))
+        {
+            throw new PatchBuildException("invalid_build_id", "构建编号不合法。");
+        }
+
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        var buildDirectory = Path.Combine(layout.BuildsRoot, request.BuildId);
+        if (!Directory.Exists(buildDirectory))
+        {
+            throw new PatchBuildException("build_not_found", "未找到补丁输出。");
+        }
+
+        var bundlesDirectory = FindBundlesDirectory(buildDirectory);
+        if (bundlesDirectory is null)
+        {
+            throw new PatchBuildException("build_bundles_missing", "构建输出中未找到 Bundles2 目录。");
+        }
+
+        var bundleName = await ResolveBuildBundleNameAsync(buildDirectory, request.BundleName, cancellationToken);
+        var codec = CreateVerifyCodec(request.OodlePath);
+        try
+        {
+            var verification = await new PatchPackageVerifier(codec).VerifyNativeAsync(
+                bundlesDirectory,
+                bundleName,
+                cancellationToken);
+            return new PatchVerifyResponse(
+                request.ProfileId,
+                request.BuildId,
+                verification.Ok,
+                verification.BundlesDirectory,
+                verification.IndexPath,
+                verification.BundlePath,
+                verification.PatchedFileRecords,
+                verification.Warnings);
+        }
+        finally
+        {
+            if (codec is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+        }
+    }
+
     public async Task<PatchInstallResponse> InstallAsync(
         PatchInstallRequest request,
         ClientProfileDto profile,
@@ -547,6 +596,33 @@ public sealed class PatchBuildService
             .FirstOrDefault();
     }
 
+    private static async Task<string> ResolveBuildBundleNameAsync(
+        string buildDirectory,
+        string fallbackBundleName,
+        CancellationToken cancellationToken)
+    {
+        var manifestPath = Path.Combine(buildDirectory, "patch_manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            return fallbackBundleName;
+        }
+
+        await using var stream = File.OpenRead(manifestPath);
+        var manifest = await JsonSerializer.DeserializeAsync<PatchManifestDto>(stream, JsonOptions, cancellationToken);
+        return string.IsNullOrWhiteSpace(manifest?.BundleName) ? fallbackBundleName : manifest.BundleName;
+    }
+
+    private static INativeBundleCodec CreateVerifyCodec(string? oodlePath)
+    {
+        if (string.Equals(oodlePath, "__copy__", StringComparison.Ordinal))
+        {
+            return new CopyNativeBundleCodec();
+        }
+
+        var codec = NativeOodleCompressCodec.TryCreate(oodlePath, out _);
+        return codec is null ? new UnavailableNativeBundleCodec() : codec;
+    }
+
     private static string SafeCombine(string root, string relativePath)
     {
         var fullRoot = Path.GetFullPath(root);
@@ -596,6 +672,23 @@ public sealed class PatchBuildService
         DateTimeOffset InstalledAt,
         string BackupRoot,
         IReadOnlyList<PatchInstallFileDto> Files);
+
+    private sealed class UnavailableNativeBundleCodec : INativeBundleCodec
+    {
+        public bool IsAvailable => false;
+
+        public int CompressorId => 0;
+
+        public byte[] Compress(ReadOnlySpan<byte> input)
+        {
+            throw new NotSupportedException("Native bundle codec is not available.");
+        }
+
+        public int Decompress(ReadOnlySpan<byte> compressed, Span<byte> output, int compressor)
+        {
+            throw new NotSupportedException("Native bundle codec is not available.");
+        }
+    }
 
     private static string FormatWriterKind(PatchPackageWriterKind kind)
     {

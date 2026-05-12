@@ -729,6 +729,7 @@ async function refreshBuildHistory() {
       </div>
       <div class="build-meta">${item.buildId} · ${Math.max(1, Math.round(item.zipSize / 1024))} KB</div>
       <div class="build-actions">
+        <button type="button" data-action="verify">验证</button>
         <button type="button" data-action="install-preview">预检安装</button>
         <button type="button" data-action="install">安装</button>
         <button type="button" data-action="uninstall-preview">预检卸载</button>
@@ -736,13 +737,32 @@ async function refreshBuildHistory() {
       </div>
     `;
     for (const button of row.querySelectorAll("button")) {
-      button.addEventListener("click", () => runPatchInstallAction(item.buildId, button.dataset.action));
+      button.addEventListener("click", () => {
+        if (button.dataset.action === "verify") {
+          runPatchVerifyAction(item.buildId);
+          return;
+        }
+        runPatchInstallAction(item.buildId, button.dataset.action);
+      });
     }
     list.appendChild(row);
   }
   if (result.items.length === 0) {
     list.innerHTML = '<div class="build-item"><div class="build-meta">暂无补丁输出</div></div>';
   }
+}
+
+async function runPatchVerifyAction(buildId) {
+  const profileId = selectedProfileId();
+  if (!profileId || !buildId) return;
+  setStatus("正在验证补丁...");
+  const result = await api("/api/patch/verify", {
+    profileId,
+    buildId,
+    oodlePath: $("oodlePathInput").value.trim() || null
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(result.ok ? `验证通过：${result.patchedFileRecords}` : `验证警告：${result.warnings.length}`);
 }
 
 async function runPatchInstallAction(buildId, action) {

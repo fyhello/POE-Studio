@@ -1211,6 +1211,29 @@ app.MapPost("/api/patch/build-history", async (
     return Results.Ok(ApiResponse<PatchBuildHistoryResponse>.Success(new PatchBuildHistoryResponse(request.ProfileId, items)));
 });
 
+app.MapPost("/api/patch/verify", async (
+    PatchVerifyRequest request,
+    ProfileStore profiles,
+    PatchBuildService patchBuild,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<PatchVerifyResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    try
+    {
+        var response = await patchBuild.VerifyBuildAsync(request, cancellationToken);
+        return Results.Ok(ApiResponse<PatchVerifyResponse>.Success(response));
+    }
+    catch (PatchBuildException ex)
+    {
+        return Results.BadRequest(ApiResponse<PatchVerifyResponse>.Failure(ex.ErrorCode, ex.Message));
+    }
+});
+
 app.MapPost("/api/patch/install", async (
     PatchInstallRequest request,
     ProfileStore profiles,

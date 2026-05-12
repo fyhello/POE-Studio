@@ -165,6 +165,22 @@ public sealed record PatchRollbackItemDto(
 
 public sealed record PatchBuildHistoryRequest(string ProfileId);
 
+public sealed record PatchVerifyRequest(
+    string ProfileId,
+    string BuildId,
+    string BundleName = "PoeStudio.NativePatch.bundle.bin",
+    string? OodlePath = null);
+
+public sealed record PatchVerifyResponse(
+    string ProfileId,
+    string BuildId,
+    bool Ok,
+    string BundlesDirectory,
+    string IndexPath,
+    string BundlePath,
+    int PatchedFileRecords,
+    IReadOnlyList<string> Warnings);
+
 public sealed record PatchBuildHistoryResponse(
     string ProfileId,
     IReadOnlyList<PatchBuildHistoryItemDto> Items);

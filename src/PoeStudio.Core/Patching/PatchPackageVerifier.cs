@@ -42,13 +42,20 @@ public sealed class PatchPackageVerifier
             return Result(false, bundlesDirectory, indexPath, bundlePath, 0, warnings);
         }
 
-        var patchBundle = new NativeBundleDecompressor(codec).Decompress(await File.ReadAllBytesAsync(bundlePath, cancellationToken));
+        if (!codec.IsAvailable)
+        {
+            warnings.Add("Native bundle codec 不可用，无法验证压缩后的补丁包。");
+            return Result(false, bundlesDirectory, indexPath, bundlePath, 0, warnings);
+        }
+
+        var decompressor = new NativeBundleDecompressor(codec);
+        var patchBundle = decompressor.Decompress(await File.ReadAllBytesAsync(bundlePath, cancellationToken));
         if (!patchBundle.Ok)
         {
             warnings.AddRange(patchBundle.Warnings);
         }
 
-        var indexBundle = new NativeBundleDecompressor(codec).Decompress(await File.ReadAllBytesAsync(indexPath, cancellationToken));
+        var indexBundle = decompressor.Decompress(await File.ReadAllBytesAsync(indexPath, cancellationToken));
         if (!indexBundle.Ok)
         {
             warnings.AddRange(indexBundle.Warnings);

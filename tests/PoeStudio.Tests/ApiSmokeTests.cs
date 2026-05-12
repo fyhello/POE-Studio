@@ -854,6 +854,34 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Patch_verify_returns_clear_failure_for_missing_build()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "_.index.bin"), [1, 2, 3]);
+        var client = factory.CreateClient();
+        var create = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "WeGame",
+            RootPath: root,
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: bundles,
+            IndexPath: Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "fingerprint"));
+        var created = await create.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+
+        var verify = await client.PostAsJsonAsync("/api/patch/verify", new PatchVerifyRequest(created!.Data!.Id, "404"));
+        var payload = await verify.Content.ReadFromJsonAsync<ApiResponse<PatchVerifyResponse>>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, verify.StatusCode);
+        Assert.False(payload?.Ok);
+        Assert.Equal("build_not_found", payload?.ErrorCode);
+    }
+
+    [Fact]
     public async Task Patch_build_native_mode_returns_clear_failure_when_codec_is_missing()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));

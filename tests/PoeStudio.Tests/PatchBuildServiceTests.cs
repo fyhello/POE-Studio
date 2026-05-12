@@ -194,6 +194,47 @@ public sealed class PatchBuildServiceTests
     }
 
     [Fact]
+    public async Task VerifyBuildAsync_validates_native_bundles2_output_by_build_id()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root) with { OodleStatus = OodleStatus.Found };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "patched"), CancellationToken.None);
+        var hash = NativeIndexPathResolver.MurmurHash64A(Encoding.UTF8.GetBytes("text/sample.txt"));
+        var layout = WorkspaceLayout.ForProfile(root, profile.Id);
+        var indexCachePath = Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexCachePath)!);
+        await WriteDecompressedIndexAsync(indexCachePath, hash);
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 8,
+            PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource));
+        var build = await service.BuildAsync(
+            new PatchBuildRequest(profile.Id, PatchZipTemplate.WeGame, "PoeStudio.NativePatch.bundle.bin", PatchPackageWriterKind.NativeBundles2, "__copy__"),
+            profile,
+            CancellationToken.None);
+        var buildId = new DirectoryInfo(build.OutputDirectory).Name;
+
+        var result = await service.VerifyBuildAsync(
+            new PatchVerifyRequest(profile.Id, buildId, OodlePath: "__copy__"),
+            CancellationToken.None);
+
+        Assert.True(result.Ok);
+        Assert.Equal(buildId, result.BuildId);
+        Assert.Equal(1, result.PatchedFileRecords);
+        Assert.True(File.Exists(result.IndexPath));
+        Assert.True(File.Exists(result.BundlePath));
+    }
+
+    [Fact]
     public async Task CheckReadinessAsync_reports_native_writer_and_oodle_blockers()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
