@@ -89,7 +89,8 @@ public sealed record NativePatchPlanResponse(
 
 public sealed record NativeDryBundleBuildRequest(
     string ProfileId,
-    string BundleName = "PoeStudio.NativePatch.bundle.bin");
+    string BundleName = "PoeStudio.NativePatch.bundle.bin",
+    string? OodlePath = null);
 
 public sealed record NativeDryBundleBuildResponse(
     string ProfileId,
@@ -97,7 +98,27 @@ public sealed record NativeDryBundleBuildResponse(
     string ContainerBundlePath,
     string ManifestPath,
     long Size,
-    NativePatchPlanResponse Plan);
+    NativePatchPlanResponse Plan,
+    IReadOnlyList<string> Warnings);
+
+public sealed record NativeIndexRewritePlanRequest(
+    string ProfileId,
+    string BundleName = "PoeStudio.NativePatch.bundle.bin");
+
+public sealed record NativeIndexRewriteItemDto(
+    string VirtualPath,
+    string BundleName,
+    long Offset,
+    long Size,
+    string OverlayHash);
+
+public sealed record NativeIndexRewritePlanResponse(
+    string ProfileId,
+    bool Ready,
+    int TotalItems,
+    IReadOnlyList<NativeIndexRewriteItemDto> Items,
+    IReadOnlyList<string> Blockers,
+    IReadOnlyList<string> Warnings);
 
 public sealed record PatchBuildResponse(
     string ProfileId,

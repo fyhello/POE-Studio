@@ -1126,6 +1126,22 @@ app.MapPost("/api/patch/native-dry-bundle", async (
     }
 });
 
+app.MapPost("/api/patch/native-index-plan", async (
+    NativeIndexRewritePlanRequest request,
+    ProfileStore profiles,
+    PatchBuildService patchBuild,
+    CancellationToken cancellationToken) =>
+{
+    var profile = await profiles.GetAsync(request.ProfileId, cancellationToken);
+    if (profile is null)
+    {
+        return Results.NotFound(ApiResponse<NativeIndexRewritePlanResponse>.Failure("profile_not_found", "未找到客户端配置。"));
+    }
+
+    var response = await patchBuild.PlanNativeIndexRewriteAsync(request, cancellationToken);
+    return Results.Ok(ApiResponse<NativeIndexRewritePlanResponse>.Success(response));
+});
+
 app.MapPost("/api/patch/build", async (
     PatchBuildRequest request,
     ProfileStore profiles,

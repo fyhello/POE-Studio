@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text.Json;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
 using PoeStudio.Core.Resources;
 using PoeStudio.Core.Workspace;
 
@@ -139,14 +140,44 @@ public sealed class PatchBuildService
         var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
         layout.EnsureDirectories();
         var outputDirectory = Path.Combine(layout.BuildsRoot, $"native-dry-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}");
-        var result = await new NativeDryBundleWriter().WriteAsync(outputDirectory, plan, entries, cancellationToken);
+        using var oodleCodec = NativeOodleCompressCodec.TryCreate(request.OodlePath, out var oodleWarning);
+        INativeBundleCodec codec = oodleCodec is not null ? oodleCodec : new CopyNativeBundleCodec();
+        var result = await new NativeDryBundleWriter().WriteAsync(outputDirectory, plan, entries, codec, cancellationToken);
+        var warnings = plan.Warnings
+            .Concat(oodleCodec is null ? [$"使用 Copy codec 生成 dry bundle：{oodleWarning}"] : ["已使用 Oodle 压缩 codec 生成 dry bundle。"])
+            .ToArray();
         return new NativeDryBundleBuildResponse(
             request.ProfileId,
             result.BundlePath,
             result.ContainerBundlePath,
             result.ManifestPath,
             result.Size,
-            plan);
+            plan,
+            warnings);
+    }
+
+    public async Task<NativeIndexRewritePlanResponse> PlanNativeIndexRewriteAsync(
+        NativeIndexRewritePlanRequest request,
+        CancellationToken cancellationToken)
+    {
+        var plan = await PlanNativePatchAsync(new NativePatchPlanRequest(request.ProfileId, request.BundleName), cancellationToken);
+        var items = plan.Items
+            .Where(item => item.Blocker is null)
+            .Select(item => new NativeIndexRewriteItemDto(
+                item.VirtualPath,
+                item.BundleName,
+                item.Offset,
+                item.Size,
+                item.OverlayHash))
+            .ToArray();
+
+        return new NativeIndexRewritePlanResponse(
+            request.ProfileId,
+            plan.Ready,
+            items.Length,
+            items,
+            plan.Blockers,
+            plan.Warnings.Concat(["该计划尚未写入 _.index.bin；真实重写器接入后会更新 bundle/file records。"]).ToArray());
     }
 
     public async Task<PatchBuildResponse> BuildAsync(

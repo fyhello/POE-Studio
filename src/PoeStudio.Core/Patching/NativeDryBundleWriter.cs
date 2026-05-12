@@ -24,6 +24,7 @@ public sealed class NativeDryBundleWriter
         string outputDirectory,
         NativePatchPlanResponse plan,
         IReadOnlyList<OverlayEntryDto> entries,
+        INativeBundleCodec codec,
         CancellationToken cancellationToken)
     {
         if (!plan.Ready)
@@ -67,7 +68,7 @@ public sealed class NativeDryBundleWriter
         var payload = await File.ReadAllBytesAsync(bundlePath, cancellationToken);
         await File.WriteAllBytesAsync(
             containerBundlePath,
-            new NativeBundleCompressor(new CopyNativeBundleCodec()).Compress(payload),
+            new NativeBundleCompressor(codec).Compress(payload),
             cancellationToken);
 
         await using (var manifest = File.Create(manifestPath))

@@ -42,7 +42,7 @@ public sealed class NativeDryBundleWriterTests
             Blockers: [],
             Warnings: []);
 
-        var result = await new NativeDryBundleWriter().WriteAsync(root, plan, [entry], CancellationToken.None);
+        var result = await new NativeDryBundleWriter().WriteAsync(root, plan, [entry], new CopyNativeBundleCodec(), CancellationToken.None);
 
         Assert.True(File.Exists(result.BundlePath));
         Assert.True(File.Exists(result.ContainerBundlePath));

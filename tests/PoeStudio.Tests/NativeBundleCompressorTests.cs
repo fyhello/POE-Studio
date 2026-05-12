@@ -16,4 +16,13 @@ public sealed class NativeBundleCompressorTests
         Assert.True(result.Ok);
         Assert.Equal(payload, result.Data);
     }
+
+    [Fact]
+    public void TryCreateOodleCompressCodec_reports_missing_library_without_throwing()
+    {
+        var codec = NativeOodleCompressCodec.TryCreate("Z:\\missing\\oo2core.dll", out var warning);
+
+        Assert.Null(codec);
+        Assert.Contains("不存在", warning);
+    }
 }
