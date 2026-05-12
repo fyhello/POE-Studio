@@ -558,7 +558,18 @@ async function nativeDryBundle() {
     profileId,
     oodlePath: $("oodlePathInput").value.trim() || null
   });
-  writeLog($("actionOutput"), result);
+  writeLog($("actionOutput"), {
+    bundlePath: result.bundlePath,
+    containerBundlePath: result.containerBundlePath,
+    manifestPath: result.manifestPath,
+    indexPlanPath: result.indexPlanPath,
+    nativeIndexDryPath: result.nativeIndexDryPath,
+    nativeIndexRewriteDryPath: result.nativeIndexRewriteDryPath,
+    size: result.size,
+    totalItems: result.plan?.totalItems,
+    indexItems: result.indexPlan?.totalItems,
+    warnings: result.warnings
+  });
   setStatus(`Dry bundle 已生成：${Math.max(1, Math.round(result.size / 1024))} KB`);
 }
 
