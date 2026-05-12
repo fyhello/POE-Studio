@@ -47,6 +47,37 @@ public sealed record ResourceBulkSignatureResponse(
     IReadOnlyList<ResourceSignatureResponse> Items,
     IReadOnlyList<string> Warnings);
 
+public sealed record ResourceMatchRequest(
+    string SourceProfileId,
+    string TargetProfileId,
+    string Query,
+    ResourceKind? Kind = null,
+    string? Extension = null,
+    int Take = 200,
+    string? SourceOodlePath = null,
+    string? TargetOodlePath = null);
+
+public sealed record ResourceMatchItemDto(
+    string SourcePath,
+    string TargetPath,
+    int Score,
+    bool PathMatched,
+    bool HashMatched,
+    bool SizeMatched,
+    string SourceSha256,
+    string TargetSha256,
+    long SourceSize,
+    long TargetSize);
+
+public sealed record ResourceMatchResponse(
+    string SourceProfileId,
+    string TargetProfileId,
+    int SourceMatched,
+    int TargetMatched,
+    int Matched,
+    IReadOnlyList<ResourceMatchItemDto> Items,
+    IReadOnlyList<string> Warnings);
+
 public sealed record ResourceBulkExportRequest(
     string ProfileId,
     string Query,

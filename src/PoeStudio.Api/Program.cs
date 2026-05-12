@@ -354,6 +354,76 @@ app.MapPost("/api/resources/bulk-signature", async (
     return Results.Ok(ApiResponse<ResourceBulkSignatureResponse>.Success(response));
 });
 
+app.MapPost("/api/resources/match", async (
+    ResourceMatchRequest request,
+    ProfileStore profiles,
+    ResourceIndexStore resourceIndex,
+    NativeBundleResourceContentResolver nativeContentResolver,
+    CancellationToken cancellationToken) =>
+{
+    var source = await BuildSignatureSetAsync(
+        request.SourceProfileId,
+        request.Query,
+        request.Kind,
+        request.Extension,
+        request.Take,
+        request.SourceOodlePath,
+        profiles,
+        resourceIndex,
+        nativeContentResolver,
+        cancellationToken);
+    var target = await BuildSignatureSetAsync(
+        request.TargetProfileId,
+        request.Query,
+        request.Kind,
+        request.Extension,
+        request.Take,
+        request.TargetOodlePath,
+        profiles,
+        resourceIndex,
+        nativeContentResolver,
+        cancellationToken);
+
+    var targetByPath = target.Items.ToDictionary(item => item.VirtualPath, StringComparer.OrdinalIgnoreCase);
+    var targetByHash = target.Items.GroupBy(item => item.Sha256, StringComparer.OrdinalIgnoreCase).ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
+    var matches = new List<ResourceMatchItemDto>();
+
+    foreach (var sourceItem in source.Items)
+    {
+        var candidates = new List<ResourceSignatureResponse>();
+        if (targetByPath.TryGetValue(sourceItem.VirtualPath, out var pathMatch))
+        {
+            candidates.Add(pathMatch);
+        }
+
+        if (targetByHash.TryGetValue(sourceItem.Sha256, out var hashMatches))
+        {
+            candidates.AddRange(hashMatches);
+        }
+
+        var best = candidates
+            .DistinctBy(item => item.VirtualPath, StringComparer.OrdinalIgnoreCase)
+            .Select(targetItem => BuildResourceMatch(sourceItem, targetItem))
+            .OrderByDescending(item => item.Score)
+            .ThenBy(item => item.TargetPath, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        if (best is not null)
+        {
+            matches.Add(best);
+        }
+    }
+
+    var response = new ResourceMatchResponse(
+        request.SourceProfileId,
+        request.TargetProfileId,
+        source.Matched,
+        target.Matched,
+        matches.Count,
+        matches.OrderByDescending(item => item.Score).ThenBy(item => item.SourcePath, StringComparer.OrdinalIgnoreCase).ToArray(),
+        source.Warnings.Concat(target.Warnings).ToArray());
+    return Results.Ok(ApiResponse<ResourceMatchResponse>.Success(response));
+});
+
 app.MapPost("/api/resources/bulk-export", async (
     ResourceBulkExportRequest request,
     ProfileStore profiles,
@@ -1575,6 +1645,61 @@ static ResourceSignatureResponse BuildSignatureResponse(
         resource.SourceLayer.ToString(),
         BuildMatchHints(resource, data.LongLength, hash),
         warnings);
+}
+
+static async Task<ResourceBulkSignatureResponse> BuildSignatureSetAsync(
+    string profileId,
+    string query,
+    ResourceKind? kind,
+    string? extension,
+    int take,
+    string? oodlePath,
+    ProfileStore profiles,
+    ResourceIndexStore resourceIndex,
+    NativeBundleResourceContentResolver nativeContentResolver,
+    CancellationToken cancellationToken)
+{
+    var search = await resourceIndex.SearchAsync(new ResourceSearchRequest(
+        profileId,
+        Query: query,
+        Kind: kind,
+        Extension: extension,
+        Skip: 0,
+        Take: Math.Clamp(take, 1, 500)), cancellationToken);
+    var items = new List<ResourceSignatureResponse>();
+    var warnings = new List<string>();
+    foreach (var resource in search.Items)
+    {
+        var read = await ReadResourceBytesAsync(profileId, oodlePath, resource, profiles, nativeContentResolver, cancellationToken);
+        if (!read.Ok)
+        {
+            warnings.Add($"{resource.VirtualPath}: {read.Message}");
+            continue;
+        }
+
+        items.Add(BuildSignatureResponse(profileId, resource, read.Data, []));
+    }
+
+    return new ResourceBulkSignatureResponse(profileId, search.Total, items.Count, items, warnings);
+}
+
+static ResourceMatchItemDto BuildResourceMatch(ResourceSignatureResponse source, ResourceSignatureResponse target)
+{
+    var pathMatched = string.Equals(source.VirtualPath, target.VirtualPath, StringComparison.OrdinalIgnoreCase);
+    var hashMatched = string.Equals(source.Sha256, target.Sha256, StringComparison.OrdinalIgnoreCase);
+    var sizeMatched = source.Size == target.Size;
+    var score = (hashMatched ? 70 : 0) + (pathMatched ? 20 : 0) + (sizeMatched ? 10 : 0);
+    return new ResourceMatchItemDto(
+        source.VirtualPath,
+        target.VirtualPath,
+        score,
+        pathMatched,
+        hashMatched,
+        sizeMatched,
+        source.Sha256,
+        target.Sha256,
+        source.Size,
+        target.Size);
 }
 
 static string SafeExportPath(string root, string virtualPath)

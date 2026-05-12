@@ -32,6 +32,7 @@ const writeLog = (target, value) => {
 };
 
 const selectedProfileId = () => $("profileSelect").value || state.selectedProfile?.id;
+const targetProfileId = () => $("targetProfileSelect").value || selectedProfileId();
 
 const formatLocalTime = (value) => new Date(value).toLocaleString("zh-CN", {
   month: "2-digit",
@@ -59,13 +60,18 @@ async function refreshProfiles() {
   state.profiles = await api("/api/profiles");
   $("profileCount").textContent = String(state.profiles.length);
   $("profileSelect").innerHTML = "";
+  $("targetProfileSelect").innerHTML = "";
   for (const profile of state.profiles) {
     const option = document.createElement("option");
     option.value = profile.id;
     option.textContent = `${profile.displayName} (${profile.platform})`;
     $("profileSelect").appendChild(option);
+    $("targetProfileSelect").appendChild(option.cloneNode(true));
   }
   state.selectedProfile = state.profiles[0] || null;
+  if (state.profiles.length > 1) {
+    $("targetProfileSelect").value = state.profiles[1].id;
+  }
   $("buildNativeIndexBtn").disabled = !state.selectedProfile;
   $("patchDryRunBtn").disabled = !state.selectedProfile;
   $("patchBuildBtn").disabled = !state.selectedProfile;
@@ -77,6 +83,7 @@ async function refreshProfiles() {
   $("applyScriptBtn").disabled = !state.selectedProfile;
   $("bulkExportBtn").disabled = !state.selectedProfile;
   $("bulkSignatureBtn").disabled = !state.selectedProfile;
+  $("matchResourcesBtn").disabled = !state.selectedProfile;
   $("bulkImportBtn").disabled = !state.selectedProfile;
   setStatus(state.selectedProfile ? "已加载客户端配置" : "没有客户端配置");
   if (state.selectedProfile) refreshBuildHistory();
@@ -240,6 +247,28 @@ async function bulkSignatureResources() {
   });
   writeLog($("actionOutput"), result);
   setStatus(`批量特征完成：${result.signed}/${result.matched}`);
+}
+
+async function matchResources() {
+  const sourceProfileId = selectedProfileId();
+  const targetId = targetProfileId();
+  const query = $("searchInput").value.trim();
+  if (!sourceProfileId || !targetId || !query) {
+    setStatus("匹配资源需要当前配置、目标配置和搜索条件");
+    return;
+  }
+
+  setStatus("正在匹配资源...");
+  const result = await api("/api/resources/match", {
+    sourceProfileId,
+    targetProfileId: targetId,
+    query,
+    take: 200,
+    sourceOodlePath: $("oodlePathInput").value.trim() || null,
+    targetOodlePath: $("oodlePathInput").value.trim() || null
+  });
+  writeLog($("actionOutput"), result);
+  setStatus(`匹配完成：${result.matched}/${result.sourceMatched}`);
 }
 
 async function bulkImportOverlay() {
@@ -746,6 +775,7 @@ function bind() {
   $("searchBtn").addEventListener("click", searchResources);
   $("bulkExportBtn").addEventListener("click", bulkExportResources);
   $("bulkSignatureBtn").addEventListener("click", bulkSignatureResources);
+  $("matchResourcesBtn").addEventListener("click", matchResources);
   $("bulkImportBtn").addEventListener("click", bulkImportOverlay);
   $("searchInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter") searchResources();

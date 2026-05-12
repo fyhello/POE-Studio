@@ -246,6 +246,60 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
+    public async Task Resource_match_compares_signatures_between_profiles()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
+        var sourceBundles = Path.Combine(root, "source", "Bundles2");
+        var targetBundles = Path.Combine(root, "target", "Bundles2");
+        Directory.CreateDirectory(Path.Combine(sourceBundles, "config"));
+        Directory.CreateDirectory(Path.Combine(targetBundles, "config"));
+        await File.WriteAllTextAsync(Path.Combine(sourceBundles, "config", "one.json"), "{\"same\":true}");
+        await File.WriteAllTextAsync(Path.Combine(sourceBundles, "config", "two.json"), "{\"source\":true}");
+        await File.WriteAllTextAsync(Path.Combine(targetBundles, "config", "one.json"), "{\"same\":true}");
+        await File.WriteAllTextAsync(Path.Combine(targetBundles, "config", "two.json"), "{\"target\":true}");
+        var client = factory.CreateClient();
+        var source = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "Source",
+            RootPath: Path.Combine(root, "source"),
+            Platform: ClientPlatform.Official,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: sourceBundles,
+            IndexPath: Path.Combine(sourceBundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "source"));
+        var target = await client.PostAsJsonAsync("/api/profiles", new CreateProfileRequest(
+            DisplayName: "Target",
+            RootPath: Path.Combine(root, "target"),
+            Platform: ClientPlatform.WeGame,
+            EntryKind: ClientEntryKind.Bundles2,
+            ContentGgpkPath: null,
+            Bundles2Path: targetBundles,
+            IndexPath: Path.Combine(targetBundles, "_.index.bin"),
+            OodleStatus: OodleStatus.Missing,
+            ClientFingerprint: "target"));
+        var sourceProfile = await source.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        var targetProfile = await target.Content.ReadFromJsonAsync<ApiResponse<ClientProfileDto>>();
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(sourceProfile!.Data!.Id));
+        await client.PostAsJsonAsync("/api/index/build", new ResourceIndexBuildRequest(targetProfile!.Data!.Id));
+
+        var match = await client.PostAsJsonAsync("/api/resources/match", new ResourceMatchRequest(
+            sourceProfile.Data.Id,
+            targetProfile.Data.Id,
+            "config",
+            Kind: ResourceKind.Text,
+            Extension: ".json"));
+        var payload = await match.Content.ReadFromJsonAsync<ApiResponse<ResourceMatchResponse>>();
+
+        Assert.Equal(HttpStatusCode.OK, match.StatusCode);
+        Assert.True(payload?.Data?.Matched >= 2);
+        var exact = Assert.Single(payload!.Data!.Items.Where(item => item.SourcePath == "config/one.json"));
+        Assert.True(exact.PathMatched);
+        Assert.True(exact.HashMatched);
+        Assert.Equal(100, exact.Score);
+    }
+
+    [Fact]
     public async Task Overlay_save_list_diff_and_revert_work()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
