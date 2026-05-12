@@ -98,6 +98,7 @@ public sealed record NativeDryBundleBuildResponse(
     string ContainerBundlePath,
     string ManifestPath,
     string IndexPlanPath,
+    string NativeIndexDryPath,
     long Size,
     NativePatchPlanResponse Plan,
     NativeIndexRewritePlanResponse IndexPlan,
