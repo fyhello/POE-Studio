@@ -44,7 +44,42 @@ public sealed class NativeIndexRewriteDryRunTests
         Assert.Equal(1, updated.BundleIndex);
         Assert.Equal(2048, updated.Offset);
         Assert.Equal(32, updated.Size);
+        Assert.Equal(3, parsed.DirectoryBundleDataSize);
         Assert.Contains(parsed.Bundles, bundle => bundle.Path == "PoeStudio.NativePatch");
+    }
+
+    [Fact]
+    public async Task RewriteAsync_preserves_directory_bundle_data_tail()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-native-index-rewrite-tests", Guid.NewGuid().ToString("N"));
+        var sourcePath = Path.Combine(root, "index.decompressed.bin");
+        var outputPath = Path.Combine(root, "index.rewritten.bin");
+        Directory.CreateDirectory(root);
+        await WriteIndexAsync(sourcePath);
+        var plan = new NativeIndexRewritePlanResponse(
+            ProfileId: "profile",
+            Ready: true,
+            TotalItems: 1,
+            Items:
+            [
+                new NativeIndexRewriteItemDto(
+                    "text/sample.txt",
+                    "PoeStudio.NativePatch.bundle.bin",
+                    Offset: 64,
+                    Size: 16,
+                    OverlayHash: "hash",
+                    PathHash: "0x000000000000007b",
+                    OriginalBundleName: "Base.bundle.bin",
+                    OriginalOffset: 16,
+                    OriginalSize: 8)
+            ],
+            Blockers: [],
+            Warnings: []);
+
+        await new NativeIndexRewriteDryRun().RewriteAsync(sourcePath, outputPath, plan, CancellationToken.None);
+
+        var outputBytes = await File.ReadAllBytesAsync(outputPath);
+        Assert.Equal([7, 8, 9], outputBytes[^3..]);
     }
 
     [Fact]
@@ -95,6 +130,7 @@ public sealed class NativeIndexRewriteDryRunTests
         writer.Write(16);
         writer.Write(8);
         writer.Write(0);
+        writer.Write([7, 8, 9]);
     }
 
     private static void WriteBundle(BinaryWriter writer, string path, int uncompressedSize)

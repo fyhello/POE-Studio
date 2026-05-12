@@ -117,6 +117,12 @@ public sealed class NativeIndexRewriteDryRun
             writer.Write(directory.RecursiveSize);
         }
 
+        await using (var source = File.OpenRead(sourceDecompressedIndexPath))
+        {
+            source.Position = parsed.DirectoryBundleDataOffset;
+            await source.CopyToAsync(stream, cancellationToken);
+        }
+
         return new NativeIndexRewriteDryRunResult(true, sourceDecompressedIndexPath, outputDecompressedIndexPath, updated, []);
     }
 
