@@ -34,7 +34,8 @@ public sealed record PatchBuildRequest(
     string ProfileId,
     PatchZipTemplate Template = PatchZipTemplate.Official,
     string BundleName = "Tiny.V0.1.bundle.bin",
-    PatchPackageWriterKind WriterKind = PatchPackageWriterKind.Mvp);
+    PatchPackageWriterKind WriterKind = PatchPackageWriterKind.Mvp,
+    string? OodlePath = null);
 
 public sealed record PatchChangeDto(
     string VirtualPath,

@@ -705,7 +705,9 @@ async function patchBuild() {
   const job = await api("/api/jobs/patch/build", {
     profileId,
     template: 3,
-    writerKind: 0
+    bundleName: "PoeStudio.NativePatch.bundle.bin",
+    writerKind: 1,
+    oodlePath: $("oodlePathInput").value.trim() || null
   });
   trackJob(job.id);
 }

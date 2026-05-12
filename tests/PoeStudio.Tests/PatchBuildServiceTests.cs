@@ -93,21 +93,68 @@ public sealed class PatchBuildServiceTests
     }
 
     [Fact]
-    public async Task BuildAsync_native_bundles2_mode_fails_until_writer_is_available()
+    public async Task BuildAsync_native_bundles2_mode_reports_missing_index_cache_when_writer_is_available()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
-        var profile = Profile(root);
+        var profile = Profile(root) with { OodleStatus = OodleStatus.Found };
         var overlay = new OverlayStore(root);
         await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
-        var service = new PatchBuildService(root, overlay);
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 8,
+            PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource), [new NativeBundles2PackageWriter(root, new StaticPatchResourceLookup(resource), new CopyNativeBundleCodec())]);
 
         var ex = await Assert.ThrowsAsync<PatchBuildException>(() => service.BuildAsync(
             new PatchBuildRequest(profile.Id, WriterKind: PatchPackageWriterKind.NativeBundles2),
             profile,
             CancellationToken.None));
 
-        Assert.Equal("native_writer_unavailable", ex.ErrorCode);
-        Assert.Contains("Native Bundles2", ex.Message, StringComparison.Ordinal);
+        Assert.Equal("native_index_cache_missing", ex.ErrorCode);
+        Assert.Contains("真实索引", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task BuildAsync_native_bundles2_mode_uses_request_oodle_path_for_codec()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root) with { OodleStatus = OodleStatus.Found };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "patched"), CancellationToken.None);
+        var hash = NativeIndexPathResolver.MurmurHash64A(Encoding.UTF8.GetBytes("text/sample.txt"));
+        var layout = WorkspaceLayout.ForProfile(root, profile.Id);
+        var indexCachePath = Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexCachePath)!);
+        await WriteDecompressedIndexAsync(indexCachePath, hash);
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 8,
+            PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var lookup = new StaticPatchResourceLookup(resource);
+        var service = new PatchBuildService(root, overlay, lookup);
+
+        var result = await service.BuildAsync(
+            new PatchBuildRequest(profile.Id, BundleName: "PoeStudio.NativePatch.bundle.bin", WriterKind: PatchPackageWriterKind.NativeBundles2, OodlePath: "__copy__"),
+            profile,
+            CancellationToken.None);
+
+        Assert.Equal(PatchBuildMode.NativeBundles2, result.BuildMode);
+        Assert.True(File.Exists(result.IndexPath));
+        Assert.True(File.Exists(result.BundlePath));
     }
 
     [Fact]

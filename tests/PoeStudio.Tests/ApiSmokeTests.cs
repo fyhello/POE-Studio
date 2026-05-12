@@ -854,7 +854,7 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     [Fact]
-    public async Task Patch_build_native_mode_returns_clear_failure_until_writer_is_available()
+    public async Task Patch_build_native_mode_returns_clear_failure_when_codec_is_missing()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-api-tests", Guid.NewGuid().ToString("N"));
         var bundles = Path.Combine(root, "Bundles2");
@@ -880,7 +880,7 @@ public sealed class ApiSmokeTests : IClassFixture<WebApplicationFactory<Program>
 
         Assert.Equal(HttpStatusCode.BadRequest, build.StatusCode);
         Assert.False(payload?.Ok);
-        Assert.Equal("native_writer_unavailable", payload?.ErrorCode);
+        Assert.Equal("native_codec_unavailable", payload?.ErrorCode);
     }
 
     [Fact]

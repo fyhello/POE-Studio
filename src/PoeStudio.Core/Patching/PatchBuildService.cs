@@ -40,7 +40,7 @@ public sealed class PatchBuildService
     }
 
     public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IPatchResourceLookup resourceLookup)
-        : this(workspaceRoot, overlayStore, resourceLookup, [new MvpPatchPackageWriter(), CreateNativeUnavailableWriter(), CreateLibGgpkUnavailableWriter()])
+        : this(workspaceRoot, overlayStore, resourceLookup, [new MvpPatchPackageWriter(), new NativeBundles2PackageWriter(workspaceRoot, resourceLookup), CreateLibGgpkUnavailableWriter()])
     {
     }
 
