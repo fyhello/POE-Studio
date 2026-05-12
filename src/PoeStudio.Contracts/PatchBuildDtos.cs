@@ -97,8 +97,10 @@ public sealed record NativeDryBundleBuildResponse(
     string BundlePath,
     string ContainerBundlePath,
     string ManifestPath,
+    string IndexPlanPath,
     long Size,
     NativePatchPlanResponse Plan,
+    NativeIndexRewritePlanResponse IndexPlan,
     IReadOnlyList<string> Warnings);
 
 public sealed record NativeIndexRewritePlanRequest(

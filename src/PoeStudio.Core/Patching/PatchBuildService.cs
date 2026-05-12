@@ -143,6 +143,9 @@ public sealed class PatchBuildService
         using var oodleCodec = NativeOodleCompressCodec.TryCreate(request.OodlePath, out var oodleWarning);
         INativeBundleCodec codec = oodleCodec is not null ? oodleCodec : new CopyNativeBundleCodec();
         var result = await new NativeDryBundleWriter().WriteAsync(outputDirectory, plan, entries, codec, cancellationToken);
+        var indexPlan = await PlanNativeIndexRewriteAsync(new NativeIndexRewritePlanRequest(request.ProfileId, request.BundleName), cancellationToken);
+        var indexPlanPath = Path.Combine(outputDirectory, "native_index_plan.json");
+        await WriteJsonAsync(indexPlanPath, indexPlan, cancellationToken);
         var warnings = plan.Warnings
             .Concat(oodleCodec is null ? [$"使用 Copy codec 生成 dry bundle：{oodleWarning}"] : ["已使用 Oodle 压缩 codec 生成 dry bundle。"])
             .ToArray();
@@ -151,8 +154,10 @@ public sealed class PatchBuildService
             result.BundlePath,
             result.ContainerBundlePath,
             result.ManifestPath,
+            indexPlanPath,
             result.Size,
             plan,
+            indexPlan,
             warnings);
     }
 

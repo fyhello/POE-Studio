@@ -156,8 +156,10 @@ public sealed class PatchBuildServiceTests
 
         Assert.True(File.Exists(result.BundlePath));
         Assert.True(File.Exists(result.ManifestPath));
+        Assert.True(File.Exists(result.IndexPlanPath));
         Assert.True(result.Size > 0);
         Assert.Single(result.Plan.Items);
+        Assert.Single(result.IndexPlan.Items);
     }
 
     [Fact]
