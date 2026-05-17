@@ -1,11 +1,11 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$url = "http://localhost:5087"
+$url = "http://localhost:5010"
 $exePath = Join-Path $root "PoeStudio.Api.exe"
 $dllPath = Join-Path $root "PoeStudio.Api.dll"
 $projectPath = Join-Path $root "src\PoeStudio.Api\PoeStudio.Api.csproj"
-$existing = Get-NetTCPConnection -LocalPort 5087 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+$existing = Get-NetTCPConnection -LocalPort 5010 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
 
 Set-Location $root
 

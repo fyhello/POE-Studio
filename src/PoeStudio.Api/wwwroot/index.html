@@ -4,26 +4,50 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>POE Studio</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/vendor/ag-grid/ag-grid.min.css?v=35.3.0">
+  <link rel="stylesheet" href="/vendor/ag-grid/ag-theme-quartz.min.css?v=35.3.0">
+  <link rel="stylesheet" href="/styles.css?v=20260515-ag-grid-shift-cols">
+  <script src="/vendor/ag-grid/ag-grid-community.min.noStyle.js?v=35.3.0"></script>
 </head>
 <body>
   <header class="topbar">
-    <div>
+    <div class="brand-block">
       <h1>POE Studio</h1>
       <p id="statusText">准备就绪</p>
     </div>
+    <div class="project-strip">
+      <span id="workbenchProfiles">未选择客户端</span>
+      <span id="workbenchStatus">等待配置</span>
+      <span id="workbenchPlan">未选择方案</span>
+    </div>
     <div class="top-actions">
+      <button id="openConfigBtn" type="button">客户端配置</button>
+      <button id="themeToggleBtn" class="icon-action" type="button" title="切换深色/浅色">浅色</button>
       <button id="diagnosticsBtn" type="button">自检</button>
-      <button id="refreshProfilesBtn" type="button">刷新配置</button>
+      <button id="refreshProfilesBtn" type="button">刷新</button>
     </div>
   </header>
 
-  <main class="shell">
+  <dialog id="clientConfigDialog" class="config-dialog">
     <section class="panel setup-panel" aria-label="客户端连接">
       <div class="panel-title">
-        <h2>客户端</h2>
+        <h2>客户端配置</h2>
         <span id="profileCount">0</span>
       </div>
+
+      <label>
+        工作区目录
+        <input id="workspaceRootInput" type="text" value="" placeholder="例如：D:\POE-Studio-Workspace" spellcheck="false">
+      </label>
+
+      <div class="button-row">
+        <button id="saveWorkspaceBtn" type="button">保存工作区</button>
+      </div>
+
+      <label>
+        配置名称
+        <input id="profileNameInput" type="text" value="" placeholder="例如：国际服-目标 / 国服-简体来源" spellcheck="false">
+      </label>
 
       <label>
         客户端目录
@@ -44,6 +68,7 @@
         <button id="detectBtn" type="button">检测</button>
         <button id="saveProfileBtn" type="button" disabled>保存</button>
         <button id="quickConnectBtn" type="button">一键接入</button>
+        <button id="deleteProfileBtn" type="button" disabled>删除配置</button>
       </div>
 
       <label>
@@ -64,103 +89,463 @@
       </div>
 
       <pre id="detectOutput" class="log"></pre>
+      <button id="closeConfigBtn" type="button">关闭</button>
     </section>
+  </dialog>
 
-    <section class="panel resources-panel" aria-label="资源列表">
+  <main class="workbench-shell">
+    <aside class="panel resources-panel" aria-label="资源树">
       <div class="panel-title">
-        <h2>资源</h2>
+        <h2>目标资源</h2>
         <span id="resourceTotal">0</span>
       </div>
 
-      <div class="search-row">
-        <input id="searchInput" type="search" placeholder="搜索路径、文件名或扩展名" spellcheck="false">
-        <button id="searchBtn" type="button">搜索</button>
-        <button id="bulkExportBtn" type="button" disabled>批量导出</button>
-        <button id="bulkSignatureBtn" type="button" disabled>批量特征</button>
-        <button id="matchResourcesBtn" type="button" disabled>匹配资源</button>
-        <button id="bulkImportBtn" type="button" disabled>导入覆盖</button>
+      <div class="resource-toolbar">
+        <div class="resource-search">
+          <input id="searchInput" type="search" placeholder="搜索路径或格式" spellcheck="false">
+          <select id="extensionFilter" aria-label="格式筛选">
+            <option value="">全部</option>
+            <option value=".ui">UI</option>
+            <option value=".atlas">Atlas</option>
+            <option value=".dds">DDS</option>
+            <option value=".datc64">DATC64</option>
+            <option value=".dat">DAT</option>
+            <option value=".ot">OT</option>
+            <option value=".otc">OTC</option>
+            <option value=".mat">MAT</option>
+          </select>
+          <button id="searchBtn" type="button">搜</button>
+        </div>
+        <div class="search-presets" aria-label="常用资源">
+          <button id="translationFilesBtn" type="button" data-translation="true">翻译</button>
+          <button type="button" data-query="metadata/ui" data-extension=".ui">UI</button>
+          <button type="button" data-query="" data-extension=".datc64">表格</button>
+          <button type="button" data-query="" data-extension=".txt">文本</button>
+          <button type="button" data-query="" data-extension=".atlas">Atlas</button>
+          <button type="button" data-query="" data-extension=".dds">DDS</button>
+        </div>
       </div>
 
       <div id="resourceList" class="resource-list"></div>
-    </section>
+    </aside>
 
-    <section class="panel preview-panel" aria-label="预览与编辑">
-      <div class="panel-title">
-        <h2>预览</h2>
+    <section class="panel editor-panel" aria-label="资源工作区">
+      <div class="editor-tabs">
+        <button type="button" class="selected">当前资源</button>
+        <details id="tableInfoMenu" class="table-info-menu hidden">
+          <summary>表格信息</summary>
+          <div id="tableInfoMenuBody" class="table-info-menu-body"></div>
+        </details>
+      </div>
+
+      <div class="editor-head">
+        <div class="editor-title-block">
+          <h2 id="editorTitle">选择一个资源</h2>
+          <div id="selectedPath" class="selected-path">从左侧资源树打开文件</div>
+        </div>
+        <div id="tableTargetPathBlock" class="editor-title-block table-target-path hidden">
+          <h2 id="tableTargetTitle">目标文件</h2>
+          <div id="tableTargetPath" class="selected-path"></div>
+        </div>
         <span id="previewKind">未选择</span>
       </div>
 
-      <div id="selectedPath" class="selected-path">选择一个资源</div>
-      <div id="mediaPreview" class="media-preview hidden"></div>
-      <div id="tableEditor" class="table-editor hidden"></div>
-      <textarea id="previewText" spellcheck="false" placeholder="资源内容会显示在这里"></textarea>
-
-      <div class="button-row">
-        <button id="saveOverlayBtn" type="button" disabled>保存覆盖</button>
-        <button id="saveTableBtn" type="button" disabled>保存表格</button>
-        <button id="exportResourceBtn" type="button" disabled>导出资源</button>
-        <button id="signatureBtn" type="button" disabled>提取特征</button>
-        <button id="replaceResourceBtn" type="button" disabled>替换资源</button>
-        <button id="inspectTableBtn" type="button" disabled>检查表格</button>
-        <button id="batchOverlayBtn" type="button" disabled>批量覆盖</button>
-        <button id="patchDryRunBtn" type="button" disabled>补丁预检</button>
-        <button id="patchReadinessBtn" type="button" disabled>正式检查</button>
-        <button id="nativePlanBtn" type="button" disabled>写包计划</button>
-        <button id="nativeDryBundleBtn" type="button" disabled>Dry Bundle</button>
-        <button id="nativeIndexPlanBtn" type="button" disabled>Index 计划</button>
+      <div id="resourceQuickActions" class="quick-actions">
+        <button id="quickMatchBtn" type="button" disabled>匹配国服参考</button>
+        <button id="manualReferenceBtn" type="button" disabled>手动选择参考</button>
+        <button id="quickApplyReferenceBtn" type="button" disabled>应用参考文本</button>
+        <button id="quickRestoreDefaultBtn" type="button" disabled>恢复默认</button>
+        <button id="csdAdoptTraditionalBtn" type="button" disabled>简中接管繁中槽</button>
+        <button id="saveTableBtn" type="button" disabled>保存草稿</button>
+        <button id="saveOverlayBtn" type="button" disabled>保存草稿</button>
+        <button id="csdTagStatus" class="csd-tag-status hidden" type="button">CSD 标签</button>
         <button id="patchBuildBtn" type="button" disabled>生成补丁</button>
+        <label id="diffRowsOnlyControl" class="quick-check hidden">
+          <input id="diffRowsOnlyInput" type="checkbox">
+          <span>只看差异行</span>
+        </label>
+        <label id="diffColumnsOnlyControl" class="quick-check hidden">
+          <input id="diffColumnsOnlyInput" type="checkbox">
+          <span>只看差异列</span>
+        </label>
+        <details class="quick-more">
+          <summary>更多</summary>
+          <div class="quick-more-menu">
+            <button id="exportTableCsvBtn" type="button" disabled>导出CSV</button>
+            <button id="importTableCsvBtn" type="button" disabled>导入CSV</button>
+            <button id="scanTableRefsBtn" type="button" disabled>查引用</button>
+            <button id="exportResourceBtn" type="button" disabled>导出资源</button>
+            <button id="replaceResourceBtn" type="button" disabled>替换资源</button>
+            <button id="signatureBtn" type="button" disabled>特征</button>
+            <button id="patchDryRunBtn" type="button" disabled>预检</button>
+          </div>
+        </details>
       </div>
+
+      <div class="preview-layer-tabs">
+        <button id="previewOverlayBtn" type="button" class="selected" disabled>草稿层</button>
+        <button id="previewBaseBtn" type="button" disabled>原始层</button>
+      </div>
+
+      <div class="editor-surface">
+        <div id="compareWorkspace" class="compare-workspace hidden">
+          <section>
+            <div class="compare-head">
+              <strong>国服参考</strong>
+              <span id="referenceStatus">未加载</span>
+            </div>
+            <textarea id="referencePreviewText" readonly spellcheck="false" wrap="off" placeholder="点击“匹配国服参考”加载"></textarea>
+          </section>
+          <section>
+            <div class="compare-head">
+              <strong>目标草稿</strong>
+              <span id="targetStatus">当前资源</span>
+            </div>
+            <textarea id="targetPreviewText" spellcheck="false" wrap="off" placeholder="目标内容会显示在这里"></textarea>
+          </section>
+        </div>
+        <div id="inspectionPanel" class="inspection-panel hidden"></div>
+        <div id="mediaPreview" class="media-preview hidden"></div>
+        <div id="tableEditor" class="table-editor hidden"></div>
+        <div id="largeTextEditor" class="large-text-editor hidden">
+          <div class="large-text-toolbar">
+            <div class="large-text-status">
+              <strong id="largeTextTitle">整文件编辑</strong>
+              <span id="largeTextStatus">未加载</span>
+            </div>
+          </div>
+          <div class="large-text-compare">
+            <section>
+              <div class="compare-head">
+                <strong>国服参考</strong>
+                <span id="largeTextReferenceStatus">未加载</span>
+              </div>
+              <div id="largeTextReferenceEditor" class="code-editor-host"></div>
+            </section>
+            <section>
+              <div class="compare-head">
+                <strong>目标草稿</strong>
+                <span id="largeTextTargetStatus">整文件</span>
+              </div>
+              <div id="largeTextTargetEditor" class="code-editor-host"></div>
+            </section>
+          </div>
+        </div>
+        <textarea id="previewText" spellcheck="false" wrap="off" placeholder="资源内容会显示在这里"></textarea>
+      </div>
+
       <input id="replaceResourceInput" class="hidden-file" type="file">
+      <input id="importTableCsvInput" class="hidden-file" type="file" accept=".csv,text/csv">
 
-      <div class="batch-replace">
-        <label>
-          查找
-          <input id="batchFindInput" type="text" placeholder="原文片段" spellcheck="false">
-        </label>
-        <label>
-          替换为
-          <input id="batchReplaceInput" type="text" placeholder="新文本" spellcheck="false">
-        </label>
-        <button id="batchReplaceBtn" type="button" disabled>批量替换</button>
-      </div>
-
-      <div class="translation-box">
-        <div class="button-row">
-          <button id="exportTranslationBtn" type="button" disabled>导出翻译 CSV</button>
-          <button id="importTranslationBtn" type="button" disabled>导入并应用</button>
+      <details class="tool-section">
+        <summary>高级编辑</summary>
+        <div class="schema-toolbar">
+          <select id="tableSchemaSelect">
+            <option value="">临时结构</option>
+          </select>
+          <button id="inferSchemaBtn" type="button" disabled>自动结构</button>
+          <button id="saveSchemaBtn" type="button" disabled>保存结构</button>
+          <button id="deleteSchemaBtn" type="button" disabled>删除结构</button>
         </div>
-        <textarea id="translationCsvText" spellcheck="false" placeholder="翻译 CSV 会显示在这里"></textarea>
-      </div>
-
-      <div class="script-box">
-        <div class="button-row">
-          <button id="previewScriptBtn" type="button" disabled>预检脚本</button>
-          <button id="applyScriptBtn" type="button" disabled>应用脚本</button>
+        <textarea id="tableSchemaText" class="schema-input" spellcheck="false" placeholder='表结构 JSON，可选：{"recordSize":16,"headerSize":8,"fields":[{"name":"id","offset":0,"type":"u32"},{"name":"name","offset":4,"type":"ascii","length":8}]}'></textarea>
+        <div class="preview-actions">
+          <button id="inspectTableBtn" type="button" disabled>检查表格</button>
+          <button id="inspectStructuredBtn" type="button" disabled>结构检查</button>
+          <button id="saveStructuredBtn" type="button" disabled>保存结构</button>
+          <button id="batchOverlayBtn" type="button" disabled>批量覆盖</button>
         </div>
-        <textarea id="batchScriptText" spellcheck="false" placeholder='[{"name":"规则名","query":"text","find":"exile","replace":"流放者","kind":1,"extension":".txt","take":100}]'></textarea>
-      </div>
+      </details>
 
-      <pre id="actionOutput" class="log"></pre>
-
-      <div class="panel-title compact-title">
-        <h2>已修改</h2>
-        <button id="refreshOverlayBtn" type="button" disabled>刷新</button>
-      </div>
-      <div id="overlayList" class="overlay-list"></div>
-
-      <div class="panel-title compact-title">
-        <h2>最近操作</h2>
-      </div>
-      <div id="overlayAuditList" class="audit-list"></div>
-
-      <div class="panel-title compact-title">
-        <h2>最近补丁</h2>
-        <button id="refreshBuildsBtn" type="button" disabled>刷新</button>
-      </div>
-      <div id="buildList" class="build-list"></div>
+      <details class="tool-section">
+        <summary>替换与翻译</summary>
+        <div class="batch-replace">
+          <label>
+            查找
+            <input id="batchFindInput" type="text" placeholder="原文片段" spellcheck="false">
+          </label>
+          <label>
+            替换为
+            <input id="batchReplaceInput" type="text" placeholder="新文本" spellcheck="false">
+          </label>
+          <button id="batchReplaceBtn" type="button" disabled>批量替换</button>
+        </div>
+        <div class="translation-box">
+          <div class="preview-actions">
+            <button id="exportTranslationBtn" type="button" disabled>导出翻译 CSV</button>
+            <button id="applyGlossaryBtn" type="button" disabled>应用术语</button>
+            <button id="importTranslationBtn" type="button" disabled>导入并应用</button>
+          </div>
+          <textarea id="glossaryText" spellcheck="false" placeholder="术语表：exile,流放者"></textarea>
+          <textarea id="translationCsvText" spellcheck="false" placeholder="翻译 CSV 会显示在这里"></textarea>
+        </div>
+      </details>
     </section>
+
+    <aside class="panel context-panel" aria-label="资源信息">
+      <div class="panel-title">
+        <h2>信息</h2>
+        <span>上下文</span>
+      </div>
+
+      <div id="resourceInfo" class="resource-info">
+        <strong>未选择资源</strong>
+        <span>从左侧资源树选择一个文件。</span>
+      </div>
+
+      <div class="side-tabs" role="tablist" aria-label="右侧功能区">
+        <button type="button" class="selected" data-side-tab="status">状态</button>
+        <button type="button" data-side-tab="drafts">草稿</button>
+        <button type="button" data-side-tab="batch">批处理</button>
+        <button type="button" data-side-tab="output">输出</button>
+        <button type="button" data-side-tab="tools">工具</button>
+      </div>
+
+      <div class="side-tab-panels">
+        <section id="sideTabStatus" class="side-tab-panel active" data-side-panel="status">
+          <div id="indexCoveragePanel" class="coverage-panel muted-card">
+            <div class="context-head">
+              <strong>索引覆盖</strong>
+              <span id="coverageStatus">等待索引</span>
+            </div>
+            <div class="coverage-grid">
+              <div><strong id="coverageResolved">-</strong><span>可读取</span></div>
+              <div><strong id="coverageTotal">-</strong><span>路径</span></div>
+              <div><strong id="coverageMissing">-</strong><span>缺失</span></div>
+            </div>
+            <div id="coverageNote" class="context-note">建立真实索引后显示 GGPK/Bundles2 覆盖情况。</div>
+          </div>
+
+          <div class="workflow-guide muted-card">
+            <div class="context-head">
+              <strong>汉化流程</strong>
+              <span id="workflowStatus">从配置开始</span>
+            </div>
+            <div class="workflow-steps">
+              <button id="flowConfigBtn" type="button">配置</button>
+              <button id="flowIndexBtn" type="button">索引</button>
+              <button id="flowSearchUiBtn" type="button">找UI</button>
+              <button id="flowSearchTableBtn" type="button">找表</button>
+              <button id="flowMatchBtn" type="button">匹配</button>
+              <button id="flowDraftBtn" type="button">草稿</button>
+              <button id="flowPatchBtn" type="button">补丁</button>
+            </div>
+          </div>
+
+          <div class="recent-panel muted-card">
+            <div class="context-head">
+              <strong>最近打开</strong>
+              <span id="recentCount">0</span>
+            </div>
+            <div id="recentResourceList" class="recent-list">
+              <div class="recent-empty">还没有打开资源</div>
+            </div>
+          </div>
+
+          <div id="projectWorkbench" class="project-workbench compact-workbench">
+            <div class="context-head">
+              <strong>项目工作台</strong>
+              <span>补丁输出</span>
+            </div>
+            <div class="workbench-flow">
+              <div class="workbench-step">
+                <strong>校验</strong>
+                <span id="workbenchValidation">未校验</span>
+              </div>
+              <div class="workbench-step">
+                <strong>草稿</strong>
+                <span id="workbenchOverlay">未写入</span>
+              </div>
+              <div class="workbench-step">
+                <strong>补丁</strong>
+                <span id="workbenchBuild">未生成</span>
+              </div>
+              <div class="workbench-step">
+                <strong>沙盒</strong>
+                <span id="workbenchSandbox">未验证</span>
+              </div>
+            </div>
+            <div class="workbench-actions">
+              <button id="workbenchScanBtn" type="button" disabled>扫描</button>
+              <button id="workbenchPlanBtn" type="button" disabled>方案</button>
+              <button id="workbenchValidateBtn" type="button" disabled>校验</button>
+              <button id="syncExternalOverlayQuickBtn" type="button" disabled>重建清单</button>
+              <button id="runWorkbenchPipelineBtn" type="button" disabled>一键补丁</button>
+              <button id="openWorkbenchOutputBtn" type="button" disabled>打开输出</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="sideTabDrafts" class="side-tab-panel" data-side-panel="drafts">
+          <div class="side-card">
+            <div class="context-head">
+              <strong>草稿管理</strong>
+              <span id="draftPanelSummary">等待加载</span>
+            </div>
+            <div id="overlayPathHint" class="overlay-path-hint">草稿目录：未加载</div>
+            <div class="side-action-grid">
+              <button id="syncExternalOverlayBtn" type="button" disabled>重建草稿清单</button>
+              <button id="refreshOverlayBtn" type="button" disabled>刷新</button>
+              <button id="reviewOverlayBtn" type="button" disabled>审查</button>
+              <button id="reviewHighRiskBtn" type="button" disabled>高危</button>
+              <button id="reviewTextBtn" type="button" disabled>文本</button>
+              <button id="reviewUiBtn" type="button" disabled>UI</button>
+              <button id="revertHighRiskBtn" type="button" disabled>回滚高危</button>
+            </div>
+          </div>
+          <div id="overlayList" class="overlay-list"></div>
+        </section>
+
+        <section id="sideTabBatch" class="side-tab-panel" data-side-panel="batch">
+          <div class="side-card">
+            <div class="context-head">
+              <strong>批量任务</strong>
+              <span>资源与迁移</span>
+            </div>
+            <div class="side-action-grid">
+              <button id="matchResourcesBtn" type="button" disabled>匹配资源</button>
+              <button id="migrationPlanBtn" type="button" disabled>迁移建议</button>
+              <button id="migrationDraftBtn" type="button" disabled>生成草稿</button>
+              <button id="formatScanBtn" type="button" disabled>格式扫描</button>
+              <button id="bulkExportBtn" type="button" disabled>批量导出</button>
+              <button id="bulkSignatureBtn" type="button" disabled>批量特征</button>
+              <button id="bulkImportBtn" type="button" disabled>导入覆盖</button>
+            </div>
+          </div>
+
+          <div id="formatScanPanel" class="format-scan hidden">
+            <div class="migration-head">
+              <strong>格式能力</strong>
+              <span id="formatScanSummary">暂无报告</span>
+            </div>
+            <div id="formatScanList" class="format-scan-list"></div>
+          </div>
+
+          <div id="migrationReview" class="migration-review hidden">
+            <div class="migration-head">
+              <strong>迁移审核</strong>
+              <span id="migrationSummary">暂无结果</span>
+            </div>
+            <div class="migration-plan-toolbar">
+              <select id="migrationPlanSelect">
+                <option value="">未保存方案</option>
+              </select>
+              <button id="saveMigrationPlanBtn" type="button" disabled>保存</button>
+              <button id="loadMigrationPlanBtn" type="button" disabled>加载</button>
+              <button id="validateMigrationPlanBtn" type="button" disabled>校验</button>
+              <button id="applyMigrationPlanBtn" type="button" disabled>应用</button>
+              <button id="applyCandidatesPlanBtn" type="button" disabled>候选</button>
+              <button id="runPatchPipelineBtn" type="button" disabled>补丁</button>
+              <button id="deleteMigrationPlanBtn" type="button" disabled>删除</button>
+            </div>
+            <div class="migration-tabs" role="tablist" aria-label="迁移结果筛选">
+              <button id="migrationAllTab" type="button" class="selected" data-filter="all">全部</button>
+              <button id="migrationDraftedTab" type="button" data-filter="drafted">已写入</button>
+              <button id="migrationSkippedTab" type="button" data-filter="skipped">跳过</button>
+              <button id="migrationRiskTab" type="button" data-filter="risk">高风险</button>
+              <button id="migrationCandidateTab" type="button" data-filter="candidate">候选</button>
+            </div>
+            <div id="migrationList" class="migration-list"></div>
+          </div>
+
+          <div class="side-card script-card">
+            <div class="context-head">
+              <strong>脚本</strong>
+              <span>预检后应用</span>
+            </div>
+            <div class="schema-toolbar">
+              <select id="batchTemplateSelect">
+                <option value="">临时脚本</option>
+              </select>
+              <button id="saveBatchTemplateBtn" type="button" disabled>保存</button>
+              <button id="deleteBatchTemplateBtn" type="button" disabled>删除</button>
+            </div>
+            <div class="side-action-grid">
+              <button id="previewScriptBtn" type="button" disabled>预检脚本</button>
+              <button id="applyScriptBtn" type="button" disabled>应用脚本</button>
+              <button id="previewTemplateBtn" type="button" disabled>预检模板</button>
+              <button id="applyTemplateBtn" type="button" disabled>应用模板</button>
+            </div>
+            <textarea id="batchScriptText" spellcheck="false" placeholder='[{"name":"规则名","query":"text","find":"exile","replace":"流放者","kind":1,"extension":".txt","take":100}]'></textarea>
+          </div>
+        </section>
+
+        <section id="sideTabOutput" class="side-tab-panel" data-side-panel="output">
+          <div class="side-card">
+            <div class="context-head">
+              <strong>操作输出</strong>
+              <span>最近结果</span>
+            </div>
+            <pre id="actionOutput" class="log"></pre>
+          </div>
+          <div class="side-card">
+            <div class="context-head">
+              <strong>审计记录</strong>
+              <span>草稿操作</span>
+            </div>
+            <div id="overlayAuditList" class="audit-list"></div>
+          </div>
+          <div class="side-card">
+            <div class="context-head">
+              <strong>最近补丁</strong>
+              <button id="refreshBuildsBtn" type="button" disabled>刷新</button>
+            </div>
+            <div id="buildList" class="build-list"></div>
+          </div>
+        </section>
+
+        <section id="sideTabTools" class="side-tab-panel" data-side-panel="tools">
+          <div class="side-card">
+            <div class="context-head">
+              <strong>写包工具</strong>
+              <span>高级检查</span>
+            </div>
+            <div class="side-action-grid">
+              <button id="patchReadinessBtn" type="button" disabled>正式检查</button>
+              <button id="nativePlanBtn" type="button" disabled>写包计划</button>
+              <button id="nativeDryBundleBtn" type="button" disabled>Dry Bundle</button>
+              <button id="nativeIndexPlanBtn" type="button" disabled>Index 计划</button>
+            </div>
+          </div>
+          <div class="external-patch-box side-card">
+            <label>
+              外部补丁
+              <input id="externalPatchZipInput" type="text" value="E:\新建文件夹\0.4.0k(4.4.0.13)_[Poe2][官版]国际服汉化+功能补丁_[方正准圆]双切简体(查价)_v1.0.zip" spellcheck="false">
+            </label>
+            <div class="external-patch-actions">
+              <button id="analyzePatchZipBtn" type="button">分析</button>
+              <button id="previewPatchZipBtn" type="button">影响</button>
+              <button id="importPatchZipBtn" type="button">导入</button>
+            </div>
+          </div>
+          <div class="side-card">
+            <label>
+              沙盒目录
+              <input id="sandboxPathInput" type="text" value="C:\Users\25147\Documents\New project\POE-Studio-Sandbox" spellcheck="false">
+            </label>
+          </div>
+        </section>
+      </div>
+    </aside>
   </main>
 
-  <script src="/app.js"></script>
+  <dialog id="manualReferenceDialog" class="manual-reference-dialog">
+    <section class="panel">
+      <div class="panel-title">
+        <h2>手动选择参考</h2>
+        <span id="manualReferenceStatus">未搜索</span>
+      </div>
+      <div class="manual-reference-search">
+        <input id="manualReferenceSearchInput" type="search" placeholder="搜索国服参考路径" spellcheck="false">
+        <button id="manualReferenceSearchBtn" type="button">搜索</button>
+      </div>
+      <div id="manualReferenceResults" class="manual-reference-results"></div>
+      <div class="button-row">
+        <button id="clearManualReferenceBtn" type="button">清除手动选择</button>
+        <button id="closeManualReferenceBtn" type="button">关闭</button>
+      </div>
+    </section>
+  </dialog>
+
+  <script src="/app.js?v=20260515-ag-grid-quoted-clipboard"></script>
 </body>
 </html>

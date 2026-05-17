@@ -10,6 +10,9 @@ public sealed record WorkspaceLayout(
     string CacheRoot,
     string RawCacheRoot,
     string PreviewCacheRoot,
+    string TableSchemaRoot,
+    string BatchScriptRoot,
+    string MigrationPlanRoot,
     string OverlayRoot,
     string OverlayFilesRoot,
     string BuildsRoot,
@@ -39,6 +42,9 @@ public sealed record WorkspaceLayout(
             CacheRoot: Path.Combine(profileRoot, "cache"),
             RawCacheRoot: Path.Combine(profileRoot, "cache", "raw"),
             PreviewCacheRoot: Path.Combine(profileRoot, "cache", "preview"),
+            TableSchemaRoot: Path.Combine(profileRoot, "cache", "table-schemas"),
+            BatchScriptRoot: Path.Combine(profileRoot, "cache", "batch-scripts"),
+            MigrationPlanRoot: Path.Combine(profileRoot, "cache", "migration-plans"),
             OverlayRoot: Path.Combine(profileRoot, "overlay"),
             OverlayFilesRoot: Path.Combine(profileRoot, "overlay", "files"),
             BuildsRoot: Path.Combine(profileRoot, "builds"),
@@ -51,6 +57,9 @@ public sealed record WorkspaceLayout(
         Directory.CreateDirectory(CacheRoot);
         Directory.CreateDirectory(RawCacheRoot);
         Directory.CreateDirectory(PreviewCacheRoot);
+        Directory.CreateDirectory(TableSchemaRoot);
+        Directory.CreateDirectory(BatchScriptRoot);
+        Directory.CreateDirectory(MigrationPlanRoot);
         Directory.CreateDirectory(OverlayRoot);
         Directory.CreateDirectory(OverlayFilesRoot);
         Directory.CreateDirectory(BuildsRoot);

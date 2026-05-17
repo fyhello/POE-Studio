@@ -42,7 +42,7 @@ public sealed class PatchBuildServiceTests
     }
 
     [Fact]
-    public async Task BuildAsync_writes_double_files_manifest_rollback_and_zip()
+    public async Task BuildAsync_keeps_internal_manifests_but_publishes_bundles_only_zip()
     {
         var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
         var clientRoot = Path.Combine(root, "client");
@@ -68,8 +68,11 @@ public sealed class PatchBuildServiceTests
         Assert.True(File.Exists(result.RollbackManifestPath));
         Assert.True(File.Exists(result.ZipPath));
         using var zip = ZipFile.OpenRead(result.ZipPath);
-        Assert.Contains(zip.Entries, entry => entry.FullName == "PathOfExile2/Bundles2/_.index.bin");
-        Assert.Contains(zip.Entries, entry => entry.FullName == "PathOfExile2/Bundles2/Tiny.V0.1.bundle.bin");
+        Assert.Equal(2, zip.Entries.Count);
+        Assert.Contains(zip.Entries, entry => entry.FullName == "Bundles2/_.index.bin");
+        Assert.Contains(zip.Entries, entry => entry.FullName == "Bundles2/Tiny.V0.1.bundle.bin");
+        Assert.DoesNotContain(zip.Entries, entry => entry.FullName.EndsWith("patch_manifest.json", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(zip.Entries, entry => entry.FullName.EndsWith("rollback_manifest.json", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -180,7 +183,14 @@ public sealed class PatchBuildServiceTests
             PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
             SourceLayer: ResourceSourceLayer.Base,
             IndexedAt: DateTimeOffset.UtcNow);
-        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource));
+        var tinyResource = resource with
+        {
+            Id = "tiny-resource",
+            VirtualPath = "tiny/existing.bin",
+            NormalizedPath = "tiny/existing.bin",
+            PhysicalPath = "native-bundles2://Tiny.V0.1.bundle.bin#offset=0&size=3"
+        };
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource, tinyResource));
 
         var result = await service.BuildAsync(
             new PatchBuildRequest(profile.Id, PatchZipTemplate.WeGame, "PoeStudio.NativePatch.bundle.bin", PatchPackageWriterKind.NativeBundles2, "__copy__"),
@@ -191,6 +201,167 @@ public sealed class PatchBuildServiceTests
         Assert.Contains(zip.Entries, entry => entry.FullName == "Bundles2/_.index.bin");
         Assert.Contains(zip.Entries, entry => entry.FullName == "Bundles2/PoeStudio.NativePatch.bundle.bin");
         Assert.DoesNotContain(zip.Entries, entry => entry.FullName.Contains("rewritten", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task BuildAsync_native_bundles2_preserves_existing_bundle_when_reusing_name()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root) with { OodleStatus = OodleStatus.Found };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "patched"), CancellationToken.None);
+        var hash = NativeIndexPathResolver.MurmurHash64A(Encoding.UTF8.GetBytes("text/sample.txt"));
+        var layout = WorkspaceLayout.ForProfile(root, profile.Id);
+        var indexCachePath = Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexCachePath)!);
+        await WriteDecompressedIndexAsync(indexCachePath, hash, "Tiny.V0.1", extraBundleSize: 3);
+        var bundles = Path.Combine(profile.RootPath, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        await File.WriteAllBytesAsync(
+            Path.Combine(bundles, "Tiny.V0.1.bundle.bin"),
+            new NativeBundleCompressor(new CopyNativeBundleCodec()).Compress([1, 2, 3]));
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 8,
+            PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var tinyResource = resource with
+        {
+            Id = "tiny-resource",
+            VirtualPath = "tiny/existing.bin",
+            NormalizedPath = "tiny/existing.bin",
+            PhysicalPath = "native-bundles2://Tiny.V0.1.bundle.bin#offset=0&size=3"
+        };
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource, tinyResource));
+
+        var result = await service.BuildAsync(
+            new PatchBuildRequest(profile.Id, PatchZipTemplate.WeGame, "Tiny.V0.1.bundle.bin", PatchPackageWriterKind.NativeBundles2, "__copy__"),
+            profile,
+            CancellationToken.None);
+
+        var compressed = await File.ReadAllBytesAsync(result.BundlePath);
+        var decompressed = new NativeBundleDecompressor(new CopyNativeBundleCodec()).Decompress(compressed);
+        Assert.True(decompressed.Ok);
+        Assert.Equal([1, 2, 3, 112, 97, 116, 99, 104, 101, 100], decompressed.Data);
+        var verification = await new PatchPackageVerifier(new CopyNativeBundleCodec()).VerifyNativeAsync(
+            Path.GetDirectoryName(result.BundlePath)!,
+            "Tiny.V0.1.bundle.bin",
+            CancellationToken.None);
+        Assert.Equal(1, verification.PatchedFileRecords);
+    }
+
+    [Fact]
+    public async Task BuildAsync_native_bundles2_preserves_existing_ggpk_bundle_when_reusing_name()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root) with
+        {
+            OodleStatus = OodleStatus.Found,
+            Bundles2Path = null
+        };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "patched"), CancellationToken.None);
+        var hash = NativeIndexPathResolver.MurmurHash64A(Encoding.UTF8.GetBytes("text/sample.txt"));
+        var layout = WorkspaceLayout.ForProfile(root, profile.Id);
+        var indexCachePath = Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexCachePath)!);
+        await WriteDecompressedIndexAsync(indexCachePath, hash, "Tiny.V0.1", extraBundleSize: 3);
+        var ggpkPath = Path.Combine(profile.RootPath, "Content.ggpk");
+        Directory.CreateDirectory(profile.RootPath);
+        var originalCompressed = new NativeBundleCompressor(new CopyNativeBundleCodec()).Compress([1, 2, 3]);
+        await File.WriteAllBytesAsync(ggpkPath, [0xaa, 0xbb, .. originalCompressed, 0xcc]);
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 8,
+            PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var tinyResource = resource with
+        {
+            Id = "tiny-resource",
+            VirtualPath = "bundles2/tiny.v0.1.bundle.bin",
+            NormalizedPath = "bundles2/tiny.v0.1.bundle.bin",
+            Extension = ".bin",
+            Kind = ResourceKind.Binary,
+            Size = originalCompressed.Length,
+            PhysicalPath = $"ggpk://{ggpkPath}#offset=2&size={originalCompressed.Length}"
+        };
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource, tinyResource));
+
+        var result = await service.BuildAsync(
+            new PatchBuildRequest(profile.Id, PatchZipTemplate.WeGame, "Tiny.V0.1.bundle.bin", PatchPackageWriterKind.NativeBundles2, "__copy__"),
+            profile,
+            CancellationToken.None);
+
+        var compressed = await File.ReadAllBytesAsync(result.BundlePath);
+        var decompressed = new NativeBundleDecompressor(new CopyNativeBundleCodec()).Decompress(compressed);
+        Assert.True(decompressed.Ok);
+        Assert.Equal([1, 2, 3, 112, 97, 116, 99, 104, 101, 100], decompressed.Data);
+        var verification = await new PatchPackageVerifier(new CopyNativeBundleCodec()).VerifyNativeAsync(
+            Path.GetDirectoryName(result.BundlePath)!,
+            "Tiny.V0.1.bundle.bin",
+            CancellationToken.None);
+        Assert.True(verification.Ok);
+    }
+
+    [Fact]
+    public async Task BuildAsync_native_bundles2_uses_current_overlay_file_size_when_manifest_is_stale()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root) with { OodleStatus = OodleStatus.Found };
+        var overlay = new OverlayStore(root);
+        var entry = await overlay.SaveBytesAsync(profile.Id, "text/sample.txt", [1, 2, 3], null, false, CancellationToken.None);
+        await File.WriteAllBytesAsync(entry.OverlayPath, [1, 2, 3, 4, 5]);
+        var hash = NativeIndexPathResolver.MurmurHash64A(Encoding.UTF8.GetBytes("text/sample.txt"));
+        var layout = WorkspaceLayout.ForProfile(root, profile.Id);
+        var indexCachePath = Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(indexCachePath)!);
+        await WriteDecompressedIndexAsync(indexCachePath, hash, "Tiny.V0.1", extraBundleSize: 1);
+        var bundles = Path.Combine(profile.RootPath, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        await File.WriteAllBytesAsync(
+            Path.Combine(bundles, "Tiny.V0.1.bundle.bin"),
+            new NativeBundleCompressor(new CopyNativeBundleCodec()).Compress([9]));
+        var resource = new ResourceSummaryDto(
+            Id: "resource",
+            ProfileId: profile.Id,
+            VirtualPath: "text/sample.txt",
+            NormalizedPath: "text/sample.txt",
+            Extension: ".txt",
+            Kind: ResourceKind.Text,
+            Size: 8,
+            PhysicalPath: "native-bundles2://Base.bundle.bin#offset=16&size=8",
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
+        var tinyResource = resource with
+        {
+            Id = "tiny-resource",
+            VirtualPath = "tiny/existing.bin",
+            NormalizedPath = "tiny/existing.bin",
+            PhysicalPath = "native-bundles2://Tiny.V0.1.bundle.bin#offset=0&size=1"
+        };
+        var service = new PatchBuildService(root, overlay, new StaticPatchResourceLookup(resource, tinyResource));
+
+        var result = await service.BuildAsync(
+            new PatchBuildRequest(profile.Id, PatchZipTemplate.WeGame, "Tiny.V0.1.bundle.bin", PatchPackageWriterKind.NativeBundles2, "__copy__"),
+            profile,
+            CancellationToken.None);
+
+        var compressed = await File.ReadAllBytesAsync(result.BundlePath);
+        var decompressed = new NativeBundleDecompressor(new CopyNativeBundleCodec()).Decompress(compressed);
+        Assert.True(decompressed.Ok);
+        Assert.Equal([9, 1, 2, 3, 4, 5], decompressed.Data);
     }
 
     [Fact]
@@ -232,6 +403,29 @@ public sealed class PatchBuildServiceTests
         Assert.Equal(1, result.PatchedFileRecords);
         Assert.True(File.Exists(result.IndexPath));
         Assert.True(File.Exists(result.BundlePath));
+    }
+
+    [Fact]
+    public async Task VerifyBuildAsync_uses_patch_bundle_from_imported_build_without_manifest()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var profile = Profile(root);
+        var layout = WorkspaceLayout.ForProfile(root, profile.Id);
+        var buildId = "20260512121212";
+        var bundles = Path.Combine(layout.BuildsRoot, buildId, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var hash = NativeIndexPathResolver.MurmurHash64A(Encoding.UTF8.GetBytes("text/sample.txt"));
+        var indexPayload = await BuildIndexPayloadAsync(root, hash, "Tiny.V0.1");
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "_.index.bin"), new NativeBundleCompressor(new CopyNativeBundleCodec()).Compress(indexPayload));
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "Tiny.V0.1.bundle.bin"), new NativeBundleCompressor(new CopyNativeBundleCodec()).Compress([1, 2, 3]));
+        var service = new PatchBuildService(root, new OverlayStore(root));
+
+        var result = await service.VerifyBuildAsync(
+            new PatchVerifyRequest(profile.Id, buildId, BundleName: "PoeStudio.NativePatch.bundle.bin", OodlePath: "__copy__"),
+            CancellationToken.None);
+
+        Assert.True(result.Ok);
+        Assert.EndsWith("Tiny.V0.1.bundle.bin", result.BundlePath, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -526,6 +720,68 @@ public sealed class PatchBuildServiceTests
         Assert.Equal([9, 9, 9], await File.ReadAllBytesAsync(existingBundle));
     }
 
+    [Fact]
+    public async Task ValidateInSandboxAsync_copies_build_files_to_sandbox_bundles_and_checks_sizes()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var clientRoot = Path.Combine(root, "client");
+        var bundles = Path.Combine(clientRoot, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var profile = Profile(root) with
+        {
+            RootPath = clientRoot,
+            Bundles2Path = bundles,
+            IndexPath = Path.Combine(bundles, "_.index.bin")
+        };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay);
+        var build = await service.BuildAsync(new PatchBuildRequest(profile.Id), profile, CancellationToken.None);
+        var buildId = new DirectoryInfo(build.OutputDirectory).Name;
+        var sandbox = Path.Combine(root, "sandbox-client");
+
+        var result = await service.ValidateInSandboxAsync(new PatchSandboxValidateRequest(profile.Id, buildId, sandbox), CancellationToken.None);
+
+        Assert.True(result.Ok);
+        Assert.Equal(2, result.CheckedFiles);
+        Assert.True(File.Exists(Path.Combine(sandbox, "Bundles2", "_.index.bin")));
+        Assert.True(File.Exists(Path.Combine(sandbox, "Bundles2", "Tiny.V0.1.bundle.bin")));
+    }
+
+    [Fact]
+    public async Task PrepareSandboxAsync_copies_client_shell_then_validates_build_files()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-build-tests", Guid.NewGuid().ToString("N"));
+        var clientRoot = Path.Combine(root, "client");
+        var bundles = Path.Combine(clientRoot, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        await File.WriteAllTextAsync(Path.Combine(clientRoot, "PathOfExile.exe"), "launcher");
+        await File.WriteAllTextAsync(Path.Combine(bundles, "Base.bundle.bin"), "base");
+        await File.WriteAllTextAsync(Path.Combine(bundles, "_.index.bin"), "base-index");
+        var profile = Profile(root) with
+        {
+            RootPath = clientRoot,
+            Bundles2Path = bundles,
+            IndexPath = Path.Combine(bundles, "_.index.bin")
+        };
+        var overlay = new OverlayStore(root);
+        await overlay.SaveTextAsync(new SaveTextOverlayRequest(profile.Id, "text/sample.txt", "overlay"), CancellationToken.None);
+        var service = new PatchBuildService(root, overlay);
+        var build = await service.BuildAsync(new PatchBuildRequest(profile.Id), profile, CancellationToken.None);
+        var buildId = new DirectoryInfo(build.OutputDirectory).Name;
+        var sandbox = Path.Combine(root, "sandbox-client");
+
+        var result = await service.PrepareSandboxAsync(new PatchSandboxPrepareRequest(profile.Id, buildId, sandbox), profile, CancellationToken.None);
+
+        Assert.True(result.Ok);
+        Assert.Equal(3, result.SeededFiles);
+        Assert.Equal(2, result.Validation.CheckedFiles);
+        Assert.Equal(Path.Combine(sandbox, "Bundles2"), result.SandboxBundlesPath);
+        Assert.True(File.Exists(Path.Combine(sandbox, "PathOfExile.exe")));
+        Assert.True(File.Exists(Path.Combine(sandbox, "Bundles2", "Base.bundle.bin")));
+        Assert.True(File.Exists(Path.Combine(sandbox, "Bundles2", "Tiny.V0.1.bundle.bin")));
+    }
+
     private static ClientProfileDto Profile(string root)
     {
         var id = Guid.NewGuid().ToString("N");
@@ -544,21 +800,51 @@ public sealed class PatchBuildServiceTests
             UpdatedAt: DateTimeOffset.UtcNow);
     }
 
-    private static async Task WriteDecompressedIndexAsync(string path, ulong pathHash)
+    private static async Task WriteDecompressedIndexAsync(string path, ulong pathHash, string? extraBundleName = null, int extraBundleSize = 4096)
     {
         await using var stream = File.Create(path);
         await using var writer = new BinaryWriter(stream);
-        writer.Write(1);
-        var bundleBytes = Encoding.UTF8.GetBytes("Base");
-        writer.Write(bundleBytes.Length);
-        writer.Write(bundleBytes);
-        writer.Write(4096);
+        writer.Write(extraBundleName is null ? 1 : 2);
+        WriteBundle(writer, "Base", 4096);
+        if (extraBundleName is not null)
+        {
+            WriteBundle(writer, extraBundleName, extraBundleSize);
+        }
+
         writer.Write(1);
         writer.Write(pathHash);
         writer.Write(0);
         writer.Write(16);
         writer.Write(8);
         writer.Write(0);
+    }
+
+    private static async Task<byte[]> BuildIndexPayloadAsync(string root, ulong pathHash, string bundleName)
+    {
+        var path = Path.Combine(root, $"index-{Guid.NewGuid():N}.payload.bin");
+        await using (var stream = File.Create(path))
+        await using (var writer = new BinaryWriter(stream))
+        {
+            writer.Write(2);
+            WriteBundle(writer, "Base", 4096);
+            WriteBundle(writer, bundleName, 3);
+            writer.Write(1);
+            writer.Write(pathHash);
+            writer.Write(1);
+            writer.Write(0);
+            writer.Write(3);
+            writer.Write(0);
+        }
+
+        return await File.ReadAllBytesAsync(path);
+    }
+
+    private static void WriteBundle(BinaryWriter writer, string path, int uncompressedSize)
+    {
+        var bytes = Encoding.UTF8.GetBytes(path);
+        writer.Write(bytes.Length);
+        writer.Write(bytes);
+        writer.Write(uncompressedSize);
     }
 
     private sealed class CapturingPatchPackageWriter : IPatchPackageWriter
@@ -579,13 +865,56 @@ public sealed class PatchBuildServiceTests
         }
     }
 
-    private sealed class StaticPatchResourceLookup(params ResourceSummaryDto[] resources) : IPatchResourceLookup
+    private sealed class StaticPatchResourceLookup(params ResourceSummaryDto[] resources) : IPatchBundleResourceLookup
     {
         public Task<ResourceSummaryDto?> GetByPathAsync(string profileId, string virtualPath, CancellationToken cancellationToken)
         {
             return Task.FromResult(resources.FirstOrDefault(resource =>
                 string.Equals(resource.ProfileId, profileId, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(resource.NormalizedPath, virtualPath, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        public Task<ResourceSummaryDto?> FindByBundleNameAsync(string profileId, string bundleName, CancellationToken cancellationToken)
+        {
+            var normalized = NormalizeBundleName(bundleName);
+            return Task.FromResult(resources.FirstOrDefault(resource =>
+                string.Equals(resource.ProfileId, profileId, StringComparison.OrdinalIgnoreCase)
+                && (string.Equals(NormalizeBundleName(resource.NormalizedPath), normalized, StringComparison.OrdinalIgnoreCase)
+                    || PhysicalPathContainsBundle(resource.PhysicalPath, normalized))));
+        }
+
+        private static bool PhysicalPathContainsBundle(string? physicalPath, string normalizedBundle)
+        {
+            if (string.IsNullOrWhiteSpace(physicalPath))
+            {
+                return false;
+            }
+
+            if (physicalPath.StartsWith("native-bundles2://", StringComparison.OrdinalIgnoreCase))
+            {
+                var rest = physicalPath["native-bundles2://".Length..];
+                var hashIndex = rest.IndexOf('#');
+                var bundle = hashIndex > 0 ? rest[..hashIndex] : rest;
+                return string.Equals(NormalizeBundleName(Uri.UnescapeDataString(bundle)), normalizedBundle, StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (physicalPath.StartsWith("ggpk://", StringComparison.OrdinalIgnoreCase))
+            {
+                var rest = physicalPath["ggpk://".Length..];
+                var hashIndex = rest.IndexOf('#');
+                var path = hashIndex > 0 ? rest[..hashIndex] : rest;
+                return string.Equals(NormalizeBundleName(path), normalizedBundle, StringComparison.OrdinalIgnoreCase);
+            }
+
+            return false;
+        }
+
+        private static string NormalizeBundleName(string bundleName)
+        {
+            var normalized = bundleName.Replace('\\', '/').TrimStart('/');
+            return normalized.StartsWith("bundles2/", StringComparison.OrdinalIgnoreCase)
+                ? normalized["bundles2/".Length..]
+                : normalized;
         }
     }
 }

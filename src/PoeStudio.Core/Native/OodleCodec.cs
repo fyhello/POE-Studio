@@ -98,25 +98,38 @@ public sealed class NativeOodleCodec : IOodleCodec, IDisposable
 
 public sealed class NativeOodleCompressCodec : INativeBundleCodec, IDisposable
 {
+    public const int KrakenCompressorId = 8;
+    public const int MermaidCompressorId = 9;
+
     private readonly NativeOodleCodec decompressCodec;
     private readonly nint libraryHandle;
     private readonly OodleLzCompress compress;
-    private readonly OodleLzGetCompressedBufferSize getCompressedBufferSize;
+    private readonly OodleLzGetCompressedBufferSize? getCompressedBufferSize;
+    private readonly int compressorId;
     private bool disposed;
 
-    private NativeOodleCompressCodec(string libraryPath)
+    private NativeOodleCompressCodec(string libraryPath, int compressorId)
     {
+        this.compressorId = compressorId;
         decompressCodec = new NativeOodleCodec(libraryPath);
         libraryHandle = NativeLibrary.Load(libraryPath);
         compress = Marshal.GetDelegateForFunctionPointer<OodleLzCompress>(NativeLibrary.GetExport(libraryHandle, "OodleLZ_Compress"));
-        getCompressedBufferSize = Marshal.GetDelegateForFunctionPointer<OodleLzGetCompressedBufferSize>(NativeLibrary.GetExport(libraryHandle, "OodleLZ_GetCompressedBufferSize"));
+        if (NativeLibrary.TryGetExport(libraryHandle, "OodleLZ_GetCompressedBufferSize", out var bufferSizeSymbol))
+        {
+            getCompressedBufferSize = Marshal.GetDelegateForFunctionPointer<OodleLzGetCompressedBufferSize>(bufferSizeSymbol);
+        }
     }
 
     public bool IsAvailable => !disposed && decompressCodec.IsAvailable;
 
-    public int CompressorId => 13;
+    public int CompressorId => compressorId;
 
     public static NativeOodleCompressCodec? TryCreate(string? libraryPath, out string warning)
+    {
+        return TryCreate(libraryPath, MermaidCompressorId, out warning);
+    }
+
+    public static NativeOodleCompressCodec? TryCreate(string? libraryPath, int compressorId, out string warning)
     {
         warning = string.Empty;
         if (string.IsNullOrWhiteSpace(libraryPath) || !File.Exists(libraryPath))
@@ -127,7 +140,7 @@ public sealed class NativeOodleCompressCodec : INativeBundleCodec, IDisposable
 
         try
         {
-            return new NativeOodleCompressCodec(libraryPath);
+            return new NativeOodleCompressCodec(libraryPath, compressorId);
         }
         catch (Exception ex) when (ex is FileNotFoundException or EntryPointNotFoundException or BadImageFormatException or DllNotFoundException)
         {
@@ -141,7 +154,7 @@ public sealed class NativeOodleCompressCodec : INativeBundleCodec, IDisposable
         ObjectDisposedException.ThrowIf(disposed, this);
         unsafe
         {
-            var maxSize = checked((int)getCompressedBufferSize(input.Length));
+            var maxSize = checked((int)GetCompressedBufferSize(input.Length));
             var output = new byte[maxSize];
             fixed (byte* inputPtr = input)
             fixed (byte* outputPtr = output)
@@ -166,6 +179,16 @@ public sealed class NativeOodleCompressCodec : INativeBundleCodec, IDisposable
                 return output;
             }
         }
+    }
+
+    private nint GetCompressedBufferSize(int rawSize)
+    {
+        if (getCompressedBufferSize is not null)
+        {
+            return getCompressedBufferSize(rawSize);
+        }
+
+        return checked((nint)(rawSize + 274 * ((rawSize + 0x3FFFF) / 0x40000)));
     }
 
     public int Decompress(ReadOnlySpan<byte> compressed, Span<byte> output, int compressor)

@@ -5,7 +5,9 @@ public sealed record SaveTextOverlayRequest(
     string VirtualPath,
     string Text,
     string? BasePhysicalPath = null,
-    bool HasBasePhysicalPath = false);
+    bool HasBasePhysicalPath = false,
+    string? OodlePath = null,
+    string? TextEncoding = null);
 
 public sealed record SaveBinaryOverlayRequest(
     string ProfileId,
@@ -16,9 +18,24 @@ public sealed record SaveBinaryOverlayRequest(
 
 public sealed record OverlayListRequest(string ProfileId);
 
+public sealed record OverlaySyncExternalRequest(string ProfileId);
+
+public sealed record OverlaySyncExternalResponse(
+    string ProfileId,
+    string Mode,
+    int Discovered,
+    int Imported,
+    int Skipped,
+    string OverlayFilesRoot,
+    string ManifestPath,
+    IReadOnlyList<OverlayEntryDto> Items,
+    IReadOnlyList<string> Warnings);
+
 public sealed record OverlayListResponse(
     string ProfileId,
     int Total,
+    string OverlayFilesRoot,
+    string ManifestPath,
     IReadOnlyList<OverlayEntryDto> Items);
 
 public sealed record OverlayEntryDto(
@@ -46,12 +63,57 @@ public sealed record OverlayDiffResponse(
     bool TextChanged,
     string? Message);
 
+public sealed record OverlayReviewRequest(
+    string ProfileId,
+    int Take = 200,
+    int PreviewChars = 240,
+    PatchRiskLevel? RiskLevel = null,
+    ResourceKind? Kind = null);
+
+public sealed record OverlayReviewItemDto(
+    string VirtualPath,
+    ResourceKind Kind,
+    PatchRiskLevel RiskLevel,
+    long OverlaySize,
+    long? BaseSize,
+    string OverlayHash,
+    string? BaseHash,
+    bool TextChanged,
+    string? BasePreview,
+    string? OverlayPreview,
+    int ChangedLines,
+    IReadOnlyList<string> BaseChangedLines,
+    IReadOnlyList<string> OverlayChangedLines,
+    string? TextDiff,
+    IReadOnlyList<string> Warnings);
+
+public sealed record OverlayReviewResponse(
+    string ProfileId,
+    int Total,
+    int Reviewed,
+    IReadOnlyDictionary<PatchRiskLevel, int> RiskCounts,
+    IReadOnlyDictionary<ResourceKind, int> KindCounts,
+    IReadOnlyList<OverlayReviewItemDto> Items,
+    IReadOnlyList<string> Warnings);
+
 public sealed record RevertOverlayRequest(string ProfileId, string VirtualPath);
 
 public sealed record RevertOverlayResponse(
     string ProfileId,
     string VirtualPath,
     bool Removed);
+
+public sealed record OverlayBulkRevertRequest(
+    string ProfileId,
+    PatchRiskLevel? RiskLevel = null,
+    int Take = 500);
+
+public sealed record OverlayBulkRevertResponse(
+    string ProfileId,
+    int Matched,
+    int Removed,
+    IReadOnlyList<string> RemovedPaths,
+    IReadOnlyList<string> Warnings);
 
 public sealed record OverlayAuditRequest(
     string ProfileId,

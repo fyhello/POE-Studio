@@ -26,16 +26,20 @@ public sealed class NativeBundles2PackageWriter : IPatchPackageWriter
 
     public async Task<PatchPackageWriteResult> WriteAsync(PatchPackageWriterContext context, CancellationToken cancellationToken)
     {
-        var requestCodec = CreateRequestCodec(context.Request.OodlePath);
+        var requestCodec = CreateRequestCodec(context.Request.OodlePath, NativeOodleCompressCodec.MermaidCompressorId);
+        var indexRequestCodec = CreateRequestCodec(context.Request.OodlePath, NativeOodleCompressCodec.KrakenCompressorId);
         try
         {
-            var activeCodec = requestCodec ?? codec;
-            if (activeCodec is null || !activeCodec.IsAvailable)
+            var payloadCodec = requestCodec ?? codec;
+            if (payloadCodec is null || !payloadCodec.IsAvailable)
             {
                 throw new PatchBuildException("native_codec_unavailable", "Native bundle codec 不可用；正式 Bundles2 补丁需要用户提供可用的 oo2core.dll 压缩接口。");
             }
 
-            var patchPlan = await BuildPatchPlanAsync(context, cancellationToken);
+            var indexCodec = indexRequestCodec ?? payloadCodec;
+
+            var existingBundle = await TryReadExistingTargetBundleAsync(context, payloadCodec, cancellationToken);
+            var patchPlan = await BuildPatchPlanAsync(context, existingBundle?.Data.LongLength ?? 0, cancellationToken);
             var indexPlan = await BuildIndexPlanAsync(context.Request.ProfileId, patchPlan, cancellationToken);
             if (!indexPlan.Ready)
             {
@@ -54,7 +58,8 @@ public sealed class NativeBundles2PackageWriter : IPatchPackageWriter
                 context.BundlesDirectory,
                 patchPlan,
                 context.OverlayEntries,
-                activeCodec,
+                payloadCodec,
+                existingBundle?.Data,
                 cancellationToken);
 
             var rewrittenPath = Path.Combine(context.BundlesDirectory, "_.index.rewritten.bin");
@@ -65,9 +70,9 @@ public sealed class NativeBundles2PackageWriter : IPatchPackageWriter
             }
 
             var indexPath = Path.Combine(context.BundlesDirectory, "_.index.bin");
-            await new NativeIndexBundleWriter().WriteAsync(rewrittenPath, indexPath, activeCodec, cancellationToken);
+            await new NativeIndexBundleWriter().WriteAsync(rewrittenPath, indexPath, indexCodec, cancellationToken);
             File.Delete(rewrittenPath);
-            var verification = await new PatchPackageVerifier(activeCodec).VerifyNativeAsync(
+            var verification = await new PatchPackageVerifier(payloadCodec).VerifyNativeAsync(
                 context.BundlesDirectory,
                 context.Request.BundleName,
                 cancellationToken);
@@ -88,14 +93,22 @@ public sealed class NativeBundles2PackageWriter : IPatchPackageWriter
             {
                 disposable.Dispose();
             }
+
+            if (indexRequestCodec is IDisposable indexDisposable)
+            {
+                indexDisposable.Dispose();
+            }
         }
     }
 
-    private static Task<NativePatchPlanResponse> BuildPatchPlanAsync(PatchPackageWriterContext context, CancellationToken cancellationToken)
+    private static Task<NativePatchPlanResponse> BuildPatchPlanAsync(
+        PatchPackageWriterContext context,
+        long baseOffset,
+        CancellationToken cancellationToken)
     {
         var items = new List<NativePatchPlanItemDto>(context.OverlayEntries.Count);
         var blockers = new List<string>();
-        long offset = 0;
+        long offset = baseOffset;
         foreach (var entry in context.OverlayEntries.OrderBy(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -125,6 +138,203 @@ public sealed class NativeBundles2PackageWriter : IPatchPackageWriter
             blockers,
             []));
     }
+
+    private async Task<ExistingNativeBundlePayload?> TryReadExistingTargetBundleAsync(
+        PatchPackageWriterContext context,
+        INativeBundleCodec codec,
+        CancellationToken cancellationToken)
+    {
+        if (context.Changes.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var change in context.Changes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var resource = await resourceLookup.GetByPathAsync(context.Request.ProfileId, change.VirtualPath, cancellationToken);
+            if (resource is null || !NativeBundleLocationParser.TryParse(resource.PhysicalPath, out var location))
+            {
+                continue;
+            }
+
+            if (!string.Equals(NormalizeBundleName(location.BundleName), NormalizeBundleName(context.Request.BundleName), StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var compressed = await ReadPhysicalBundleBytesAsync(context.Profile, resource.PhysicalPath, location.BundleName, cancellationToken);
+            var decompressed = new NativeBundleDecompressor(codec).Decompress(compressed);
+            if (!decompressed.Ok)
+            {
+                throw new PatchBuildException("native_existing_bundle_decompress_failed", decompressed.Warnings.FirstOrDefault() ?? $"无法解压原始 bundle：{context.Request.BundleName}");
+            }
+
+            return new ExistingNativeBundlePayload(decompressed.Data);
+        }
+
+        if (resourceLookup is IPatchBundleResourceLookup bundleLookup)
+        {
+            var bundleResource = await bundleLookup.FindByBundleNameAsync(context.Request.ProfileId, context.Request.BundleName, cancellationToken);
+            if (bundleResource is not null)
+            {
+                var compressed = await ReadPhysicalBundleBytesAsync(context.Profile, bundleResource.PhysicalPath, context.Request.BundleName, cancellationToken);
+                var decompressed = new NativeBundleDecompressor(codec).Decompress(compressed);
+                if (!decompressed.Ok)
+                {
+                    throw new PatchBuildException("native_existing_bundle_decompress_failed", decompressed.Warnings.FirstOrDefault() ?? $"无法解压原始 bundle：{context.Request.BundleName}");
+                }
+
+                return new ExistingNativeBundlePayload(decompressed.Data);
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<byte[]> ReadPhysicalBundleBytesAsync(
+        ClientProfileDto profile,
+        string? physicalPath,
+        string bundleName,
+        CancellationToken cancellationToken)
+    {
+        if (TryParseGgpkFileSlice(physicalPath, out var ggpkFilePath, out var fileOffset, out var fileSize))
+        {
+            return await ReadFileSliceAsync(ggpkFilePath, fileOffset, fileSize, bundleName, cancellationToken);
+        }
+
+        if (TryParseGgpkBundleSlice(physicalPath, out var ggpkPath, out var bundleOffset, out var bundleSize))
+        {
+            return await ReadFileSliceAsync(ggpkPath, bundleOffset, bundleSize, bundleName, cancellationToken);
+        }
+
+        if (string.IsNullOrWhiteSpace(profile.Bundles2Path))
+        {
+            throw new PatchBuildException("native_existing_bundle_missing", $"目标 bundle 已存在于 index，但客户端缺少 Bundles2 路径：{bundleName}");
+        }
+
+        var localBundlePath = Path.Combine(profile.Bundles2Path, bundleName.Replace('/', Path.DirectorySeparatorChar));
+        if (!File.Exists(localBundlePath))
+        {
+            throw new PatchBuildException("native_existing_bundle_missing", $"找不到原始 bundle：{localBundlePath}");
+        }
+
+        return await File.ReadAllBytesAsync(localBundlePath, cancellationToken);
+    }
+
+    private static async Task<byte[]> ReadFileSliceAsync(
+        string filePath,
+        long offset,
+        int size,
+        string bundleName,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(filePath))
+        {
+            throw new PatchBuildException("native_existing_bundle_missing", $"找不到原始 bundle 所在文件：{filePath}");
+        }
+
+        var data = new byte[size];
+        await using var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        stream.Position = offset;
+        var read = 0;
+        while (read < data.Length)
+        {
+            var count = await stream.ReadAsync(data.AsMemory(read), cancellationToken);
+            if (count == 0)
+            {
+                break;
+            }
+
+            read += count;
+        }
+
+        if (read != data.Length)
+        {
+            throw new PatchBuildException("native_existing_bundle_read_failed", $"原始 bundle 读取不完整：{bundleName}");
+        }
+
+        return data;
+    }
+
+    private static bool TryParseGgpkFileSlice(string? physicalPath, out string ggpkPath, out long offset, out int size)
+    {
+        ggpkPath = string.Empty;
+        offset = 0;
+        size = 0;
+        const string scheme = "ggpk://";
+        if (string.IsNullOrWhiteSpace(physicalPath) || !physicalPath.StartsWith(scheme, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var rest = physicalPath[scheme.Length..];
+        var hashIndex = rest.IndexOf('#');
+        if (hashIndex <= 0 || hashIndex == rest.Length - 1)
+        {
+            return false;
+        }
+
+        ggpkPath = rest[..hashIndex];
+        var query = rest[(hashIndex + 1)..]
+            .Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(part => part.Split('=', 2))
+            .Where(parts => parts.Length == 2)
+            .ToDictionary(parts => parts[0], parts => parts[1], StringComparer.OrdinalIgnoreCase);
+
+        return query.TryGetValue("offset", out var offsetText)
+            && query.TryGetValue("size", out var sizeText)
+            && long.TryParse(offsetText, out offset)
+            && int.TryParse(sizeText, out size)
+            && offset >= 0
+            && size >= 0
+            && !string.IsNullOrWhiteSpace(ggpkPath);
+    }
+
+    private static bool TryParseGgpkBundleSlice(string? physicalPath, out string ggpkPath, out long bundleOffset, out int bundleSize)
+    {
+        ggpkPath = string.Empty;
+        bundleOffset = 0;
+        bundleSize = 0;
+        const string scheme = "ggpk-bundles2://";
+        if (string.IsNullOrWhiteSpace(physicalPath) || !physicalPath.StartsWith(scheme, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var rest = physicalPath[scheme.Length..];
+        var hashIndex = rest.IndexOf('#');
+        if (hashIndex <= 0 || hashIndex == rest.Length - 1)
+        {
+            return false;
+        }
+
+        ggpkPath = rest[..hashIndex];
+        var query = rest[(hashIndex + 1)..]
+            .Split('&', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(part => part.Split('=', 2))
+            .Where(parts => parts.Length == 2)
+            .ToDictionary(parts => parts[0], parts => parts[1], StringComparer.OrdinalIgnoreCase);
+
+        return query.TryGetValue("bundleOffset", out var offsetText)
+            && query.TryGetValue("bundleSize", out var sizeText)
+            && long.TryParse(offsetText, out bundleOffset)
+            && int.TryParse(sizeText, out bundleSize)
+            && bundleOffset >= 0
+            && bundleSize >= 0
+            && !string.IsNullOrWhiteSpace(ggpkPath);
+    }
+
+    private static string NormalizeBundleName(string bundleName)
+    {
+        return bundleName.Replace('\\', '/')
+            .TrimStart('/')
+            .StartsWith("bundles2/", StringComparison.OrdinalIgnoreCase)
+            ? bundleName.Replace('\\', '/').TrimStart('/')["bundles2/".Length..]
+            : bundleName.Replace('\\', '/').TrimStart('/');
+    }
+
+    private sealed record ExistingNativeBundlePayload(byte[] Data);
 
     private async Task<NativeIndexRewritePlanResponse> BuildIndexPlanAsync(
         string profileId,
@@ -182,7 +392,7 @@ public sealed class NativeBundles2PackageWriter : IPatchPackageWriter
         return new NativeIndexRewritePlanResponse(profileId, patchPlan.Ready && blockers.Count == 0, items.Count, items, blockers, []);
     }
 
-    private static INativeBundleCodec? CreateRequestCodec(string? oodlePath)
+    private static INativeBundleCodec? CreateRequestCodec(string? oodlePath, int compressorId)
     {
         if (string.IsNullOrWhiteSpace(oodlePath))
         {
@@ -194,7 +404,7 @@ public sealed class NativeBundles2PackageWriter : IPatchPackageWriter
             return new CopyNativeBundleCodec();
         }
 
-        var codec = NativeOodleCompressCodec.TryCreate(oodlePath, out var warning);
+        var codec = NativeOodleCompressCodec.TryCreate(oodlePath, compressorId, out var warning);
         if (codec is null)
         {
             throw new PatchBuildException("native_codec_unavailable", warning);

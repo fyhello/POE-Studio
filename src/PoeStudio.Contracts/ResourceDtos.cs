@@ -47,6 +47,7 @@ public sealed record ResourceSearchRequest(
     string? Query = null,
     ResourceKind? Kind = null,
     string? Extension = null,
+    bool TranslationOnly = false,
     int Skip = 0,
     int Take = 100);
 
@@ -56,3 +57,31 @@ public sealed record ResourceSearchResponse(
     int Skip,
     int Take,
     IReadOnlyList<ResourceSummaryDto> Items);
+
+public sealed record ResourcePathLookupRequest(
+    string ProfileId,
+    string VirtualPath);
+
+public sealed record ResourceFormatScanRequest(
+    string ProfileId,
+    int Take = 20000);
+
+public sealed record ResourceFormatScanItemDto(
+    string Extension,
+    ResourceKind Kind,
+    int Total,
+    int Previewable,
+    int Editable,
+    int ExportOnly,
+    int MissingFiles,
+    long TotalSize,
+    IReadOnlyList<string> SamplePaths,
+    IReadOnlyList<string> Warnings);
+
+public sealed record ResourceFormatScanResponse(
+    string ProfileId,
+    int Total,
+    int Scanned,
+    int ExtensionCount,
+    IReadOnlyList<ResourceFormatScanItemDto> Items,
+    IReadOnlyList<string> Warnings);

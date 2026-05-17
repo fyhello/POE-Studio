@@ -21,6 +21,8 @@ public sealed class NativeIndexBundleWriterTests
         Assert.Equal(payload.Length, result.UncompressedSize);
         Assert.True(result.CompressedSize > 0);
         var bundle = await File.ReadAllBytesAsync(output);
+        Assert.Equal(0, BitConverter.ToInt32(bundle, 12));
+        Assert.Equal(1, BitConverter.ToInt32(bundle, 16));
         var decompressed = new NativeBundleDecompressor(new CopyNativeBundleCodec()).Decompress(bundle);
         Assert.True(decompressed.Ok);
         Assert.Equal(payload, decompressed.Data);

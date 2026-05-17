@@ -9,6 +9,11 @@ public sealed record TranslationImportRequest(
     string ProfileId,
     string Csv);
 
+public sealed record TranslationApplyGlossaryRequest(
+    string ProfileId,
+    string Csv,
+    string Glossary);
+
 public sealed record TranslationEntryDto(
     string VirtualPath,
     string SourceText,
@@ -27,4 +32,12 @@ public sealed record TranslationImportResponse(
     int Imported,
     int Applied,
     IReadOnlyList<string> AppliedPaths,
+    IReadOnlyList<string> Warnings);
+
+public sealed record TranslationApplyGlossaryResponse(
+    string ProfileId,
+    int Entries,
+    int Terms,
+    int Changed,
+    string Csv,
     IReadOnlyList<string> Warnings);

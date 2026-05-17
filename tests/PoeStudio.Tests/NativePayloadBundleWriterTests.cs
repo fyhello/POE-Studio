@@ -39,9 +39,43 @@ public sealed class NativePayloadBundleWriterTests
         Assert.Equal(5, result.UncompressedSize);
         Assert.True(File.Exists(result.BundlePath));
         var compressed = await File.ReadAllBytesAsync(result.BundlePath);
+        Assert.Equal(0, BitConverter.ToInt32(compressed, 12));
+        Assert.Equal(1, BitConverter.ToInt32(compressed, 16));
         var decompressed = new NativeBundleDecompressor(new CopyNativeBundleCodec()).Decompress(compressed);
         Assert.True(decompressed.Ok);
         Assert.Equal([1, 2, 3, 4, 5], decompressed.Data);
+    }
+
+    [Fact]
+    public async Task WriteAsync_preserves_existing_payload_prefix_when_appending_patch_data()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "poe-studio-native-payload-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var patchPath = Path.Combine(root, "patch.bin");
+        await File.WriteAllBytesAsync(patchPath, [9, 8]);
+        var entries = new[]
+        {
+            Entry("profile", "a.txt", patchPath, 2, "hash-a")
+        };
+        var plan = new NativePatchPlanResponse(
+            "profile",
+            "Tiny.V0.1.bundle.bin",
+            Ready: true,
+            TotalItems: 1,
+            Items:
+            [
+                new NativePatchPlanItemDto("a.txt", "Tiny.V0.1.bundle.bin", 3, 2, "hash-a", true, null)
+            ],
+            Blockers: [],
+            Warnings: []);
+
+        var result = await new NativePayloadBundleWriter().WriteAsync(root, plan, entries, new CopyNativeBundleCodec(), [1, 2, 3], CancellationToken.None);
+
+        Assert.Equal(5, result.UncompressedSize);
+        var compressed = await File.ReadAllBytesAsync(result.BundlePath);
+        var decompressed = new NativeBundleDecompressor(new CopyNativeBundleCodec()).Decompress(compressed);
+        Assert.True(decompressed.Ok);
+        Assert.Equal([1, 2, 3, 9, 8], decompressed.Data);
     }
 
     private static OverlayEntryDto Entry(string profileId, string path, string overlayPath, long size, string hash)

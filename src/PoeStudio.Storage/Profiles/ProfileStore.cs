@@ -81,4 +81,17 @@ public sealed class ProfileStore
         await using var stream = File.OpenRead(layout.ProfileJsonPath);
         return await JsonSerializer.DeserializeAsync<ClientProfileDto>(stream, JsonOptions, cancellationToken);
     }
+
+    public Task<bool> DeleteAsync(string profileId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, profileId);
+        if (!Directory.Exists(layout.ProfileRoot))
+        {
+            return Task.FromResult(false);
+        }
+
+        Directory.Delete(layout.ProfileRoot, recursive: true);
+        return Task.FromResult(true);
+    }
 }

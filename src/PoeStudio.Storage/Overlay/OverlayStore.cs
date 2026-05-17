@@ -2,14 +2,17 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Overlay;
 using PoeStudio.Core.Patching;
 using PoeStudio.Core.Resources;
 using PoeStudio.Core.Workspace;
 
 namespace PoeStudio.Storage.Overlay;
 
-public sealed class OverlayStore : IPatchOverlayReader
+public sealed class OverlayStore : IPatchOverlayReader, IPatchOverlayWriter, IOverlayReviewReader
 {
+    private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         WriteIndented = true
@@ -32,7 +35,7 @@ public sealed class OverlayStore : IPatchOverlayReader
         var overlayPath = ResourcePath.ToSafePhysicalPath(layout.OverlayFilesRoot, normalized);
         Directory.CreateDirectory(Path.GetDirectoryName(overlayPath)!);
 
-        await File.WriteAllTextAsync(overlayPath, request.Text, Encoding.UTF8, cancellationToken);
+        await File.WriteAllBytesAsync(overlayPath, EncodeText(request.Text, request.TextEncoding ?? DetectBaseTextEncoding(request.BasePhysicalPath)), cancellationToken);
         return await UpsertManifestAsync(
             layout,
             request.ProfileId,
@@ -103,14 +106,127 @@ public sealed class OverlayStore : IPatchOverlayReader
     {
         var layout = WorkspaceLayout.ForProfile(workspaceRoot, profileId);
         var manifest = await LoadManifestAsync(layout, cancellationToken);
-        var items = manifest.Items.OrderBy(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase).ToArray();
-        return new OverlayListResponse(profileId, items.Length, items);
+        var refreshed = await RefreshManifestEntriesAsync(layout, manifest, cancellationToken);
+        var items = refreshed.Items.OrderBy(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase).ToArray();
+        return new OverlayListResponse(profileId, items.Length, layout.OverlayFilesRoot, GetManifestPath(layout), items);
+    }
+
+    public async Task<OverlaySyncExternalResponse> SyncExternalAsync(OverlaySyncExternalRequest request, CancellationToken cancellationToken)
+    {
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        layout.EnsureDirectories();
+
+        var listPath = Path.Combine(layout.OverlayRoot, "files.txt");
+        var useList = File.Exists(listPath);
+        var mode = useList ? "files.txt" : "scan";
+        var warnings = new List<string>();
+        var candidates = useList
+            ? await ReadExternalOverlayListAsync(listPath, cancellationToken)
+            : ScanExternalOverlayFiles(layout);
+
+        var imported = new List<OverlayEntryDto>();
+        var now = DateTimeOffset.UtcNow;
+        foreach (var candidate in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string normalized;
+            try
+            {
+                normalized = ResourcePath.Normalize(candidate);
+            }
+            catch (ArgumentException ex)
+            {
+                warnings.Add($"{candidate}: {ex.Message}");
+                continue;
+            }
+
+            var overlayPath = ResourcePath.ToSafePhysicalPath(layout.OverlayFilesRoot, normalized);
+            if (!File.Exists(overlayPath))
+            {
+                warnings.Add($"{normalized}: overlay 文件不存在。");
+                continue;
+            }
+
+            imported.Add(new OverlayEntryDto(
+                request.ProfileId,
+                normalized,
+                normalized,
+                overlayPath,
+                new FileInfo(overlayPath).Length,
+                await HashFileAsync(overlayPath, cancellationToken),
+                BaseHash: null,
+                BaseSize: null,
+                CreatedAt: now,
+                UpdatedAt: now));
+        }
+
+        var ordered = imported
+            .GroupBy(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.Last())
+            .OrderBy(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        await SaveManifestAsync(layout, new OverlayManifest(ordered), cancellationToken);
+        await AppendAuditAsync(layout, new OverlayAuditEventDto("sync-external", "*", null, ordered.Count, now), cancellationToken);
+
+        return new OverlaySyncExternalResponse(
+            request.ProfileId,
+            mode,
+            candidates.Count,
+            ordered.Count,
+            candidates.Count - ordered.Count,
+            layout.OverlayFilesRoot,
+            GetManifestPath(layout),
+            ordered,
+            warnings);
     }
 
     public async Task<IReadOnlyList<OverlayEntryDto>> GetEntriesAsync(string profileId, CancellationToken cancellationToken)
     {
         var list = await ListAsync(profileId, cancellationToken);
         return list.Items;
+    }
+
+    private async Task<OverlayManifest> RefreshManifestEntriesAsync(
+        WorkspaceLayout layout,
+        OverlayManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        var changed = false;
+        var refreshed = new List<OverlayEntryDto>(manifest.Items.Count);
+        foreach (var item in manifest.Items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!File.Exists(item.OverlayPath))
+            {
+                refreshed.Add(item);
+                continue;
+            }
+
+            var size = new FileInfo(item.OverlayPath).Length;
+            var hash = await HashFileAsync(item.OverlayPath, cancellationToken);
+            if (size == item.OverlaySize && string.Equals(hash, item.OverlayHash, StringComparison.OrdinalIgnoreCase))
+            {
+                refreshed.Add(item);
+                continue;
+            }
+
+            refreshed.Add(item with
+            {
+                OverlaySize = size,
+                OverlayHash = hash,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            changed = true;
+        }
+
+        if (!changed)
+        {
+            return manifest;
+        }
+
+        var updated = new OverlayManifest(refreshed);
+        await SaveManifestAsync(layout, updated, cancellationToken);
+        return updated;
     }
 
     public async Task<OverlayDiffResponse> DiffAsync(OverlayDiffRequest request, CancellationToken cancellationToken)
@@ -208,11 +324,107 @@ public sealed class OverlayStore : IPatchOverlayReader
         return string.IsNullOrWhiteSpace(path) || !File.Exists(path) ? null : new FileInfo(path).Length;
     }
 
+    private static byte[] EncodeText(string text, string? encodingName)
+    {
+        return NormalizeEncodingName(encodingName) switch
+        {
+            "utf-16le-bom" => Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(text)).ToArray(),
+            "utf-16le" => Encoding.Unicode.GetBytes(text),
+            "utf-8-bom" => Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(text)).ToArray(),
+            _ => Utf8NoBom.GetBytes(text)
+        };
+    }
+
+    private static string? DetectBaseTextEncoding(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return null;
+        }
+
+        var sample = File.ReadAllBytes(path).AsSpan(0, (int)Math.Min(new FileInfo(path).Length, 512));
+        return DetectTextEncoding(sample);
+    }
+
+    public static string? DetectTextEncoding(ReadOnlySpan<byte> sample)
+    {
+        if (sample.Length >= 2 && sample[0] == 0xff && sample[1] == 0xfe)
+        {
+            return "utf-16le-bom";
+        }
+
+        if (sample.Length >= 3 && sample[0] == 0xef && sample[1] == 0xbb && sample[2] == 0xbf)
+        {
+            return "utf-8-bom";
+        }
+
+        if (sample.Length >= 8)
+        {
+            var pairs = Math.Min(sample.Length / 2, 256);
+            var zeroHigh = 0;
+            var useful = 0;
+            for (var index = 0; index < pairs; index++)
+            {
+                var low = sample[index * 2];
+                var high = sample[index * 2 + 1];
+                if (high == 0 && (low is >= 9 and <= 126 || low is 10 or 13))
+                {
+                    zeroHigh++;
+                    useful++;
+                }
+            }
+
+            if (useful >= pairs * 0.75 && zeroHigh >= Math.Min(4, pairs / 4))
+            {
+                return "utf-16le";
+            }
+        }
+
+        return null;
+    }
+
+    private static string? NormalizeEncodingName(string? encodingName)
+    {
+        return encodingName?.Trim().ToLowerInvariant() switch
+        {
+            "utf-16le-bom" or "utf-16 bom" or "unicode bom" => "utf-16le-bom",
+            "utf-16le" or "utf-16" or "unicode" => "utf-16le",
+            "utf-8-bom" or "utf8-bom" => "utf-8-bom",
+            "utf-8" or "utf8" => "utf-8",
+            _ => null
+        };
+    }
+
     private static async Task<string> HashFileAsync(string path, CancellationToken cancellationToken)
     {
         await using var stream = File.OpenRead(path);
         var hash = await SHA256.HashDataAsync(stream, cancellationToken);
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static async Task<IReadOnlyList<string>> ReadExternalOverlayListAsync(string listPath, CancellationToken cancellationToken)
+    {
+        var lines = await File.ReadAllLinesAsync(listPath, Utf8NoBom, cancellationToken);
+        return lines
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0 && !line.StartsWith('#'))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> ScanExternalOverlayFiles(WorkspaceLayout layout)
+    {
+        if (!Directory.Exists(layout.OverlayFilesRoot))
+        {
+            return [];
+        }
+
+        var root = Path.GetFullPath(layout.OverlayFilesRoot);
+        return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/').Replace(Path.AltDirectorySeparatorChar, '/'))
+            .Where(path => !string.Equals(path, "manifest.json", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(path, "files.txt", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private async Task<OverlayManifest> LoadManifestAsync(WorkspaceLayout layout, CancellationToken cancellationToken)

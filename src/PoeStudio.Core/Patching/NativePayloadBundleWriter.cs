@@ -15,6 +15,7 @@ public sealed class NativePayloadBundleWriter
         NativePatchPlanResponse plan,
         IReadOnlyList<OverlayEntryDto> entries,
         INativeBundleCodec codec,
+        byte[]? prefixPayload,
         CancellationToken cancellationToken)
     {
         if (!plan.Ready)
@@ -26,6 +27,10 @@ public sealed class NativePayloadBundleWriter
         var bundlePath = Path.Combine(outputDirectory, plan.BundleName);
         var byPath = entries.ToDictionary(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase);
         await using var payload = new MemoryStream();
+        if (prefixPayload is { Length: > 0 })
+        {
+            await payload.WriteAsync(prefixPayload, cancellationToken);
+        }
 
         foreach (var item in plan.Items.OrderBy(item => item.Offset))
         {
@@ -49,8 +54,18 @@ public sealed class NativePayloadBundleWriter
             await payload.WriteAsync(content, cancellationToken);
         }
 
-        var compressed = new NativeBundleCompressor(codec).Compress(payload.ToArray());
+        var compressed = new NativeBundleCompressor(codec).Compress(payload.ToArray(), headerUnknown: 1);
         await File.WriteAllBytesAsync(bundlePath, compressed, cancellationToken);
         return new NativePayloadBundleWriteResult(bundlePath, payload.Length, compressed.LongLength);
+    }
+
+    public Task<NativePayloadBundleWriteResult> WriteAsync(
+        string outputDirectory,
+        NativePatchPlanResponse plan,
+        IReadOnlyList<OverlayEntryDto> entries,
+        INativeBundleCodec codec,
+        CancellationToken cancellationToken)
+    {
+        return WriteAsync(outputDirectory, plan, entries, codec, prefixPayload: null, cancellationToken);
     }
 }

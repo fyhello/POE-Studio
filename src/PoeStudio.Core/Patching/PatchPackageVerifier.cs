@@ -79,7 +79,41 @@ public sealed class PatchPackageVerifier
                 .Where(bundle => string.Equals(bundle.Path, patchBundleRecord, StringComparison.OrdinalIgnoreCase))
                 .Select(bundle => bundle.Index)
                 .ToHashSet();
-            var patchedRecords = parsed.Files.Count(file => patchBundleIndexes.Contains(file.BundleIndex));
+            var patchBundleLength = patchBundle.Data.LongLength;
+            foreach (var bundle in parsed.Bundles.Where(bundle => patchBundleIndexes.Contains(bundle.Index)))
+            {
+                if (bundle.UncompressedSize != patchBundleLength)
+                {
+                    warnings.Add($"patch bundle record 解压长度不匹配：bundle={bundle.Path}, indexSize={bundle.UncompressedSize}, actualSize={patchBundleLength}。");
+                }
+            }
+
+            var patchedRecords = 0;
+            var invalidBounds = 0;
+            foreach (var file in parsed.Files)
+            {
+                if (!patchBundleIndexes.Contains(file.BundleIndex))
+                {
+                    continue;
+                }
+
+                patchedRecords++;
+                var end = (long)file.Offset + file.Size;
+                if (end > patchBundleLength)
+                {
+                    invalidBounds++;
+                    if (invalidBounds <= 10)
+                    {
+                        warnings.Add($"file record 0x{file.PathHash:x16} 超出 patch bundle 解压长度：offset={file.Offset}, size={file.Size}, end={end}, bundleLength={patchBundleLength}。");
+                    }
+                }
+            }
+
+            if (invalidBounds > 10)
+            {
+                warnings.Add($"另有 {invalidBounds - 10} 条 file record 超出 patch bundle 解压长度。");
+            }
+
             if (patchedRecords == 0)
             {
                 warnings.Add("index 中没有 file record 指向 patch bundle。");

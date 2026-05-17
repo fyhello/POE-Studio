@@ -1,6 +1,7 @@
 using PoeStudio.Contracts;
 using Microsoft.AspNetCore.Mvc.Testing;
 using System.Net.Http.Json;
+using PoeStudio.Core.Translation;
 
 namespace PoeStudio.Tests;
 
@@ -53,5 +54,26 @@ public sealed class TranslationWorkflowTests : IClassFixture<WebApplicationFacto
         Assert.Equal(1, importPayload?.Data?.Applied);
         Assert.Equal("text/one.txt", Assert.Single(importPayload!.Data!.AppliedPaths));
         Assert.Equal(1, listPayload?.Data?.Total);
+    }
+
+    [Fact]
+    public async Task Translation_apply_glossary_fills_target_text_for_matching_terms()
+    {
+        var client = factory.CreateClient();
+        var csv = TranslationCsv.Write([
+            new TranslationEntryDto("text/one.txt", "Hello exile", string.Empty, "new"),
+            new TranslationEntryDto("text/two.txt", "No match", string.Empty, "new")
+        ]);
+
+        var apply = await client.PostAsJsonAsync("/api/translation/apply-glossary", new TranslationApplyGlossaryRequest(
+            "profile-a",
+            csv,
+            "exile,流放者"));
+        var payload = await apply.Content.ReadFromJsonAsync<ApiResponse<TranslationApplyGlossaryResponse>>();
+
+        Assert.Equal(2, payload?.Data?.Entries);
+        Assert.Equal(1, payload?.Data?.Terms);
+        Assert.Contains("Hello 流放者", payload?.Data?.Csv);
+        Assert.Contains("glossary", payload?.Data?.Csv);
     }
 }

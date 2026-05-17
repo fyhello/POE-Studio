@@ -165,6 +165,10 @@ public sealed record PatchRollbackItemDto(
 
 public sealed record PatchBuildHistoryRequest(string ProfileId);
 
+public sealed record PatchImportManifestRequest(
+    string ProfileId,
+    string BuildId);
+
 public sealed record PatchVerifyRequest(
     string ProfileId,
     string BuildId,
@@ -181,6 +185,129 @@ public sealed record PatchVerifyResponse(
     int PatchedFileRecords,
     IReadOnlyList<string> Warnings);
 
+public sealed record PatchZipAnalyzeRequest(
+    string ZipPath,
+    string BundleName = "PoeStudio.NativePatch.bundle.bin",
+    string? OodlePath = null);
+
+public sealed record PatchZipEntryDto(
+    string FullName,
+    string RelativePath,
+    long CompressedSize,
+    long Size,
+    string Extension,
+    ResourceKind Kind,
+    PatchRiskLevel RiskLevel);
+
+public sealed record PatchZipAnalyzeResponse(
+    string ZipPath,
+    bool Ok,
+    PatchZipTemplate? Template,
+    bool HasBundlesDirectory,
+    bool HasIndex,
+    bool HasPatchBundle,
+    string? BundlesRoot,
+    string? IndexEntry,
+    string? PatchBundleEntry,
+    int EntryCount,
+    long TotalSize,
+    IReadOnlyList<PatchZipEntryDto> Entries,
+    IReadOnlyDictionary<ResourceKind, int> KindCounts,
+    IReadOnlyDictionary<PatchRiskLevel, int> RiskCounts,
+    PatchVerifyResponse? Verification,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchZipImportRequest(
+    string ProfileId,
+    string ZipPath,
+    string BundleName = "Tiny.V0.1.bundle.bin",
+    string? OodlePath = null);
+
+public sealed record PatchZipImportResponse(
+    string ProfileId,
+    string BuildId,
+    string OutputDirectory,
+    string ZipPath,
+    string ImportManifestPath,
+    PatchZipAnalyzeResponse Analysis,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchZipImportManifestDto(
+    string ProfileId,
+    string BuildId,
+    string SourceZipPath,
+    string ImportedZipPath,
+    DateTimeOffset ImportedAt,
+    PatchZipAnalyzeResponse Analysis,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchZipInstallPreviewRequest(
+    string ProfileId,
+    string ZipPath,
+    string BundleName = "Tiny.V0.1.bundle.bin",
+    string? OodlePath = null);
+
+public sealed record PatchZipInstallPreviewFileDto(
+    string RelativePath,
+    string SourceEntry,
+    string TargetPath,
+    long SourceSize,
+    bool TargetExists,
+    long? TargetSize,
+    bool SameSize,
+    bool? SameHash,
+    PatchRiskLevel RiskLevel);
+
+public sealed record PatchZipInstallPreviewResponse(
+    string ProfileId,
+    string ZipPath,
+    bool Ok,
+    int FileCount,
+    int NewFiles,
+    int ReplacedFiles,
+    int SameFiles,
+    int HighRiskFiles,
+    IReadOnlyList<PatchZipInstallPreviewFileDto> Files,
+    PatchZipAnalyzeResponse Analysis,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchOverlayDraftRequest(
+    string ProfileId,
+    string BuildId,
+    string BundleName = "Tiny.V0.1.bundle.bin",
+    string? OodlePath = null,
+    int Take = 200);
+
+public sealed record PatchOverlayDraftItemDto(
+    string VirtualPath,
+    long Offset,
+    long Size,
+    string OverlayPath,
+    string OverlayHash,
+    PatchRiskLevel RiskLevel);
+
+public sealed record PatchOverlayDraftReportDto(
+    string ProfileId,
+    string BuildId,
+    DateTimeOffset GeneratedAt,
+    int MatchedRecords,
+    int Imported,
+    IReadOnlyDictionary<ResourceKind, int> KindCounts,
+    IReadOnlyDictionary<PatchRiskLevel, int> RiskCounts,
+    IReadOnlyList<PatchOverlayDraftItemDto> Items,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchOverlayDraftResponse(
+    string ProfileId,
+    string BuildId,
+    int MatchedRecords,
+    int Imported,
+    IReadOnlyDictionary<ResourceKind, int> KindCounts,
+    IReadOnlyDictionary<PatchRiskLevel, int> RiskCounts,
+    string DraftReportPath,
+    IReadOnlyList<PatchOverlayDraftItemDto> Items,
+    IReadOnlyList<string> Warnings);
+
 public sealed record PatchBuildHistoryResponse(
     string ProfileId,
     IReadOnlyList<PatchBuildHistoryItemDto> Items);
@@ -192,6 +319,7 @@ public sealed record PatchBuildHistoryItemDto(
     string? DownloadUrl,
     string? ManifestPath,
     string? RollbackManifestPath,
+    string? ImportManifestPath,
     DateTimeOffset CreatedAt,
     long ZipSize);
 
@@ -227,4 +355,59 @@ public sealed record PatchUninstallResponse(
     bool Applied,
     int Removed,
     IReadOnlyList<string> RemovedPaths,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchSandboxValidateRequest(
+    string ProfileId,
+    string BuildId,
+    string SandboxRootPath);
+
+public sealed record PatchSandboxValidateResponse(
+    string ProfileId,
+    string BuildId,
+    string SandboxBundlesPath,
+    bool Ok,
+    int CheckedFiles,
+    int MissingFiles,
+    int SizeMismatches,
+    IReadOnlyList<PatchInstallFileDto> Files,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchSandboxPrepareRequest(
+    string ProfileId,
+    string BuildId,
+    string SandboxRootPath,
+    bool Overwrite = true);
+
+public sealed record PatchSandboxPrepareResponse(
+    string ProfileId,
+    string BuildId,
+    string SandboxRootPath,
+    string SandboxBundlesPath,
+    bool Ok,
+    int SeededFiles,
+    PatchSandboxValidateResponse Validation,
+    IReadOnlyList<string> Warnings);
+
+public sealed record PatchPipelineRunRequest(
+    string SourceProfileId,
+    string TargetProfileId,
+    string MigrationPlanId,
+    PatchZipTemplate Template = PatchZipTemplate.Official,
+    string BundleName = "Tiny.V0.1.bundle.bin",
+    PatchPackageWriterKind WriterKind = PatchPackageWriterKind.Mvp,
+    string? OodlePath = null,
+    bool IncludeCandidates = false,
+    PatchRiskLevel MaxRiskLevel = PatchRiskLevel.Low,
+    string? SandboxRootPath = null);
+
+public sealed record PatchPipelineRunResponse(
+    string SourceProfileId,
+    string TargetProfileId,
+    string MigrationPlanId,
+    bool Ok,
+    ResourceMigrationPlanValidateResponse Validation,
+    ResourceMigrationDraftResponse Migration,
+    PatchBuildResponse Build,
+    PatchSandboxPrepareResponse? Sandbox,
     IReadOnlyList<string> Warnings);

@@ -12,8 +12,10 @@ public sealed class FileSystemResourceIndexerTests
         var bundles = Path.Combine(root, "Bundles2");
         Directory.CreateDirectory(Path.Combine(bundles, "metadata", "items"));
         Directory.CreateDirectory(Path.Combine(bundles, "art", "textures"));
+        Directory.CreateDirectory(Path.Combine(bundles, "data", "statdescriptions"));
         await File.WriteAllTextAsync(Path.Combine(bundles, "metadata", "items", "amulet.ot"), "item");
         await File.WriteAllBytesAsync(Path.Combine(bundles, "art", "textures", "icon.dds"), [1, 2, 3, 4]);
+        await File.WriteAllTextAsync(Path.Combine(bundles, "data", "statdescriptions", "skill_stat_descriptions.csd"), "description");
         await File.WriteAllBytesAsync(Path.Combine(bundles, "_.index.bin"), [9, 9, 9]);
         await File.WriteAllBytesAsync(Path.Combine(bundles, "Tiny.V0.1.bundle.bin"), [8, 8, 8]);
         await File.WriteAllBytesAsync(Path.Combine(root, "Content.ggpk"), [7, 7, 7]);
@@ -22,10 +24,11 @@ public sealed class FileSystemResourceIndexerTests
 
         var result = await indexer.IndexAsync(profile, CancellationToken.None);
 
-        Assert.Equal(2, result.Resources.Count);
+        Assert.Equal(3, result.Resources.Count);
         Assert.Empty(result.Warnings);
         Assert.Contains(result.Resources, item => item.VirtualPath == "metadata/items/amulet.ot" && item.Kind == ResourceKind.Table);
         Assert.Contains(result.Resources, item => item.VirtualPath == "art/textures/icon.dds" && item.Kind == ResourceKind.Image);
+        Assert.Contains(result.Resources, item => item.VirtualPath == "data/statdescriptions/skill_stat_descriptions.csd" && item.Kind == ResourceKind.Text);
         Assert.DoesNotContain(result.Resources, item => item.VirtualPath.EndsWith(".bundle.bin", StringComparison.OrdinalIgnoreCase));
     }
 

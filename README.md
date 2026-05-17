@@ -25,13 +25,13 @@ POE2 客户端编辑与补丁工具 MVP。
 或者手动启动：
 
 ```powershell
-dotnet run --project src\PoeStudio.Api\PoeStudio.Api.csproj --urls http://localhost:5087
+dotnet run --project src\PoeStudio.Api\PoeStudio.Api.csproj --urls http://localhost:5010
 ```
 
 打开：
 
 ```text
-http://localhost:5087/
+http://localhost:5010/
 ```
 
 ## 发布成品目录

@@ -21,7 +21,7 @@ public sealed class NativeIndexBundleWriter
         }
 
         var payload = await File.ReadAllBytesAsync(decompressedIndexPath, cancellationToken);
-        var bundle = new NativeBundleCompressor(codec).Compress(payload);
+        var bundle = new NativeBundleCompressor(codec).Compress(payload, headerUnknown: 1);
         Directory.CreateDirectory(Path.GetDirectoryName(outputIndexPath)!);
         await File.WriteAllBytesAsync(outputIndexPath, bundle, cancellationToken);
         return new NativeIndexBundleWriteResult(outputIndexPath, payload.LongLength, bundle.LongLength);

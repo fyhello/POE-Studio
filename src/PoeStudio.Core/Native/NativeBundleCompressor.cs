@@ -38,7 +38,7 @@ public sealed class NativeBundleCompressor
         this.codec = codec;
     }
 
-    public byte[] Compress(ReadOnlySpan<byte> payload)
+    public byte[] Compress(ReadOnlySpan<byte> payload, int headerUnknown = 0)
     {
         if (!codec.IsAvailable)
         {
@@ -65,6 +65,7 @@ public sealed class NativeBundleCompressor
         BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(4, 4), compressedSize);
         BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(8, 4), headSize);
         BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(12, 4), codec.CompressorId);
+        BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(16, 4), headerUnknown);
         BinaryPrimitives.WriteInt64LittleEndian(output.AsSpan(20, 8), payload.Length);
         BinaryPrimitives.WriteInt64LittleEndian(output.AsSpan(28, 8), compressedSize);
         BinaryPrimitives.WriteInt32LittleEndian(output.AsSpan(36, 4), chunks.Count);

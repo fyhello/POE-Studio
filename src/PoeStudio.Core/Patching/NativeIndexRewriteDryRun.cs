@@ -35,7 +35,6 @@ public sealed class NativeIndexRewriteDryRun
         var bundles = parsed.Bundles.ToList();
         var files = parsed.Files.ToList();
         var updated = 0;
-
         foreach (var item in plan.Items)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -74,6 +73,15 @@ public sealed class NativeIndexRewriteDryRun
             {
                 targetBundleIndex = bundles.Count;
                 bundles.Add(new NativeBundleRecord(targetBundleIndex, targetBundlePath, checked((int)Math.Min(int.MaxValue, item.Offset + item.Size))));
+            }
+            else
+            {
+                var existing = bundles[targetBundleIndex];
+                var requiredSize = checked((int)Math.Min(int.MaxValue, item.Offset + item.Size));
+                if (requiredSize > existing.UncompressedSize)
+                {
+                    bundles[targetBundleIndex] = existing with { UncompressedSize = requiredSize };
+                }
             }
 
             files[fileIndex] = new NativeFileRecord(current.PathHash, targetBundleIndex, checked((int)item.Offset), checked((int)item.Size));

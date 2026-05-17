@@ -1,7 +1,18 @@
 .worktrees/
+.tmp/
 **/bin/
 **/obj/
 .vs/
 TestResults/
 *.user
 artifacts/
+
+# Publish output copied to the repository root
+/*.deps.json
+/*.dll
+/*.exe
+/*.pdb
+/*.runtimeconfig.json
+/appsettings*.json
+/web.config
+/wwwroot/

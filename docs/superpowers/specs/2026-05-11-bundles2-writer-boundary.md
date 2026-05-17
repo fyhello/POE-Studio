@@ -4,6 +4,8 @@
 
 M5 已经完成补丁构建工作流，但当前 `OverlayBundleMvp` 只负责验证 dry-run、manifest、rollback、zip 模板和双文件输出骨架，不声称生成可直接被游戏加载的真实 Bundles2 补丁。
 
+更新：Native Bundles2 写包已接入真实双文件补丁路径。后续维护必须遵守兼容性复盘中固定的 header 与 compressor 规则，详见 `docs/superpowers/specs/2026-05-13-native-bundles2-patch-compatibility.md`。
+
 为了防止 UI、脚本或后续自动化误用占位包，构建请求现在显式区分写入器：
 
 - `Mvp`：当前可用，输出审计型 MVP 包。

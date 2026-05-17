@@ -17,6 +17,7 @@ public sealed class ResourceClassifierTests
     [InlineData("materials/item.mat", ResourceKind.Material)]
     [InlineData("models/player.smd", ResourceKind.Model)]
     [InlineData("config/filter.filter", ResourceKind.Text)]
+    [InlineData("data/statdescriptions/stat_descriptions.csd", ResourceKind.Text)]
     [InlineData("unknown/blob.bin", ResourceKind.Binary)]
     public void Classify_maps_known_extensions(string virtualPath, ResourceKind expected)
     {

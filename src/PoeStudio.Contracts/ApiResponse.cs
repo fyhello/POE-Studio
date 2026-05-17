@@ -15,3 +15,10 @@ public sealed record AppDiagnosticsDto(
     int ProfileCount,
     DateTimeOffset CheckedAt,
     IReadOnlyList<string> Warnings);
+
+public sealed record WorkspaceSettingsDto(
+    string WorkspaceRoot,
+    bool WorkspaceWritable,
+    IReadOnlyList<string> Warnings);
+
+public sealed record WorkspaceSettingsUpdateRequest(string WorkspaceRoot);

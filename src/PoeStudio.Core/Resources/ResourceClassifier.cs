@@ -6,7 +6,7 @@ public static class ResourceClassifier
 {
     private static readonly HashSet<string> TextExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".xml", ".json", ".txt", ".filter", ".hlsl"
+        ".xml", ".json", ".txt", ".filter", ".hlsl", ".csd"
     };
 
     private static readonly HashSet<string> TableExtensions = new(StringComparer.OrdinalIgnoreCase)

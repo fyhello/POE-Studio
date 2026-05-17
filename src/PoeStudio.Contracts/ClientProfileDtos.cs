@@ -39,3 +39,9 @@ public sealed record CreateProfileRequest(
     string? IndexPath,
     OodleStatus OodleStatus,
     string ClientFingerprint);
+
+public sealed record DeleteProfileRequest(string ProfileId);
+
+public sealed record DeleteProfileResponse(
+    string ProfileId,
+    bool Removed);

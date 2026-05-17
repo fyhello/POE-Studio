@@ -94,3 +94,34 @@ public sealed record NativeResourceIndexBuildResponse(
     int DirectoryCount,
     DateTimeOffset IndexedAt,
     IReadOnlyList<string> Warnings);
+
+public sealed record GgpkResourceIndexBuildRequest(
+    string ProfileId,
+    string? OodlePath = null);
+
+public sealed record GgpkResourceIndexBuildResponse(
+    bool Ok,
+    string ProfileId,
+    string GgpkPath,
+    int TotalFiles,
+    int ResolvedResources,
+    int DirectoryCount,
+    DateTimeOffset IndexedAt,
+    IReadOnlyList<string> Warnings,
+    GgpkBundles2CoverageDto? Bundles2Coverage = null);
+
+public sealed record GgpkBundles2CoverageDto(
+    int IndexBundleCount,
+    int IndexFileCount,
+    int IndexDirectoryCount,
+    int ResolvedPathCount,
+    int FailedPathCount,
+    int ExistingBundleCount,
+    int MissingBundleCount,
+    int ResourcesInExistingBundles,
+    int ResourcesInMissingBundles,
+    IReadOnlyList<GgpkMissingBundleDto> TopMissingBundles);
+
+public sealed record GgpkMissingBundleDto(
+    string BundleFileName,
+    int ResourceCount);
