@@ -2858,7 +2858,10 @@ function renderDatc64ComparisonTable(result, referenceResult = null) {
 function buildDatc64AgGridRows(targetResult, referenceResult) {
   const columns = targetResult.columns || [];
   const referenceRows = new Map((referenceResult?.rows || []).map((row) => [row.rowNumber, row]));
-  return (targetResult.rows || []).map((row) => {
+  const sourceRows = referenceResult?.rows?.length ? referenceResult.rows : (targetResult.rows || []);
+  const targetRows = new Map((targetResult.rows || []).map((row) => [row.rowNumber, row]));
+  return sourceRows.map((sourceRow) => {
+    const row = targetRows.get(sourceRow.rowNumber) || { rowNumber: sourceRow.rowNumber, cells: [] };
     const referenceRow = referenceRows.get(row.rowNumber);
     const item = {
       __rowNumber: row.rowNumber,
