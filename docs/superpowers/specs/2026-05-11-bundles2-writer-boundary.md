@@ -1,0 +1,151 @@
+# Bundles2 Writer 边界说明
+
+## 背景
+
+M5 已经完成补丁构建工作流，但当前 `OverlayBundleMvp` 只负责验证 dry-run、manifest、rollback、zip 模板和双文件输出骨架，不声称生成可直接被游戏加载的真实 Bundles2 补丁。
+
+更新：Native Bundles2 写包已接入真实双文件补丁路径。后续维护必须遵守兼容性复盘中固定的 header 与 compressor 规则，详见 `docs/superpowers/specs/2026-05-13-native-bundles2-patch-compatibility.md`。
+
+为了防止 UI、脚本或后续自动化误用占位包，构建请求现在显式区分写入器：
+
+- `Mvp`：当前可用，输出审计型 MVP 包。
+- `NativeBundles2`：预留给自研内核，未接入时明确返回 `native_writer_unavailable`。
+- `LibGgpk3Adapter`：预留给原型/验证适配器，未接入时明确返回 `libggpk3_writer_unavailable`。
+
+## LibGGPK3 调研摘记
+
+本地 `LibGGPK3-main` 中真实 Bundles2 关键链路：
+
+- `LibBundle3.Index` 负责读取 `Bundles2/_.index.bin`。
+- `Index` 中记录 bundle 表、file 表、directory 表和路径解析数据。
+- `LibBundle3.Records.FileRecord.Write` 会把新内容写入目标 bundle，并更新 `BundleRecord`、`Offset`、`Size`。
+- `FileRecord.Redirect` 是底层改向文件到新 bundle/offset/size 的关键动作。
+- `Index.Save` 负责保存修改后的 index。
+- 示例 `Examples/PatchBundle3/Program.cs` 使用 `new LibBundle3.Index(path, false)` 和 `LibBundle3.Index.Replace(index, zip.Entries, ...)` 完成 zip 覆盖。
+
+## 当前工程边界
+
+`PatchBuildService` 只处理：
+
+- dry-run 结果；
+- 输出目录和平台模板；
+- manifest；
+- rollback manifest；
+- zip 打包。
+
+真实包写入由 `IPatchPackageWriter` 负责。后续实现只需要新增 writer：
+
+- `NativeBundles2PackageWriter`：自研读取/写入 `_.index.bin` 和 patch bundle。
+- `LibGgpk3PackageWriter`：仅用于原型验证或取得授权后的适配器。
+
+## 下一步
+
+推荐优先做 `NativeBundles2IndexReader`：
+
+1. 只读解析 index header、bundle records、file records 数量。
+2. 能在真实国服 `_.index.bin` 上快速输出统计和警告。
+3. 不修改客户端文件，所有解析结果写入 workspace cache。
+4. 通过行为对照测试再推进 writer。
+
+## 真实国服 index 头部探测
+
+只读探测路径：
+
+```text
+C:\WeGameApps\rail_apps\流放之路：降临(2002052)\Bundles2\_.index.bin
+```
+
+观测结果：
+
+- 文件大小：124,951,295 bytes。
+- 解压后大小：153,151,305 bytes。
+- 压缩后大小：124,948,895 bytes。
+- Header size：2,388 bytes。
+- Compressor：12。
+- Chunk count：585。
+- Chunk size：262,144 bytes。
+- First compressed chunk：34,636 bytes。
+
+结论：当前 Native 探针能安全读取 bundle header；内部 index 记录解析需要 Oodle 解压支持后再推进。
+
+## Oodle 解压缓存边界
+
+新增 `NativeIndexCacheService` 用于把 `_.index.bin` 解压到 workspace cache：
+
+```text
+profiles/<profileId>/cache/raw/native/bundles2/index.decompressed.bin
+```
+
+当前核心边界：
+
+- 业务层只依赖 `IOodleCodec`。
+- 默认实现是 `MissingOodleCodec`，不会尝试加载或分发 `oo2core.dll`。
+- 没有 Oodle 时返回 `OodleMissing`，不会写缓存文件。
+- 测试使用可注入 copy codec 验证 chunk 读取、输出缓存和长度校验流程。
+
+下一步接真实 Oodle 时应新增独立实现，例如 `NativeOodleCodec`：
+
+- 由用户指定本机 `oo2core.dll` 路径。
+- 使用 `NativeLibrary.Load` 或隔离的 P/Invoke resolver。
+- 不把 DLL 复制进发布包，避免分发授权风险。
+- 接入前先用小样本和真实国服 `_.index.bin` 做只读解压验证。
+
+## 真实 Oodle 只读解压验证
+
+本机验证 DLL：
+
+```text
+E:\VisualGGPK3_ascii\oo2core.dll
+```
+
+验证输入：
+
+```text
+C:\WeGameApps\rail_apps\流放之路：降临(2002052)\Bundles2\_.index.bin
+```
+
+验证结果：
+
+- `NativeOodleCodec` 通过用户指定路径动态加载 DLL。
+- `NativeIndexCacheService` 解压成功，状态为 `Cached`。
+- 输出缓存大小：153,151,305 bytes。
+- 输出大小与 header 中的 uncompressed size 一致。
+- 解压过程只读打开客户端 index，不修改客户端目录。
+
+## 真实解压后 index 记录解析验证
+
+新增 `NativeIndexRecordParser` 解析解压后的 index 本体，当前只读三类记录：
+
+- bundle records；
+- file records；
+- directory records。
+
+真实国服验证结果：
+
+- Bundle count：60,751。
+- File count：3,414,615。
+- Directory count：85,492。
+- Directory data offset：75,183,313。
+- Directory data size：77,967,992。
+- First bundle：`Folders/audio/haptics`。
+- Last bundle：`Streaming/Folders/art/2ditems/pets.6`。
+
+这些数值与前期 LibGGPK3 调研结果一致。下一步可以在不依赖 LibGGPK3 的前提下实现路径还原和资源索引落库。
+
+## 真实路径还原验证
+
+路径还原需要再解压 `directoryBundleData`，因为它本身仍是 Bundles2 bundle 数据。新增：
+
+- `NativeBundleDecompressor`：通用 bundle byte-array 解压器。
+- `NativeIndexPathResolver`：复刻 LibBundle3 `ParsePaths()` 的路径展开和 MurmurHash64A 匹配。
+- `NativeIndexPathService`：串联 index 解压、record 解析、directory data 解压、路径还原。
+
+真实国服验证结果：
+
+- File count：3,414,615。
+- Resolved paths：3,414,610。
+- Failed paths：5。
+- Directory data decompressed size：165,208,178 bytes。
+- 示例路径包含 `audio/languages/simplified chinese/dialogue/npc/...` 等真实虚拟路径。
+
+结论：Native 只读链路已能还原绝大多数 Bundles2 虚拟路径，失败数量与前期 LibGGPK3 调研一致。

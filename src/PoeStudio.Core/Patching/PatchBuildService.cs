@@ -1,0 +1,884 @@
+using System.IO.Compression;
+using System.Text.Json;
+using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
+using PoeStudio.Core.Resources;
+using PoeStudio.Core.Workspace;
+
+namespace PoeStudio.Core.Patching;
+
+public interface IPatchOverlayReader
+{
+    Task<IReadOnlyList<OverlayEntryDto>> GetEntriesAsync(string profileId, CancellationToken cancellationToken);
+}
+
+public interface IPatchResourceLookup
+{
+    Task<ResourceSummaryDto?> GetByPathAsync(string profileId, string virtualPath, CancellationToken cancellationToken);
+}
+
+public interface IPatchBundleResourceLookup : IPatchResourceLookup
+{
+    Task<ResourceSummaryDto?> FindByBundleNameAsync(string profileId, string bundleName, CancellationToken cancellationToken);
+}
+
+public sealed class PatchBuildService
+{
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        WriteIndented = true
+    };
+
+    private readonly string workspaceRoot;
+    private readonly IPatchOverlayReader overlayStore;
+    private readonly IPatchResourceLookup? resourceLookup;
+    private readonly IReadOnlyDictionary<PatchPackageWriterKind, IPatchPackageWriter> packageWriters;
+
+    public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore)
+        : this(workspaceRoot, overlayStore, null, [new MvpPatchPackageWriter(), CreateNativeUnavailableWriter(), CreateLibGgpkUnavailableWriter()])
+    {
+    }
+
+    public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IPatchPackageWriter packageWriter)
+        : this(workspaceRoot, overlayStore, null, [packageWriter])
+    {
+    }
+
+    public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IPatchResourceLookup resourceLookup)
+        : this(workspaceRoot, overlayStore, resourceLookup, [new MvpPatchPackageWriter(), new NativeBundles2PackageWriter(workspaceRoot, resourceLookup), CreateLibGgpkUnavailableWriter()])
+    {
+    }
+
+    public PatchBuildService(string workspaceRoot, IPatchOverlayReader overlayStore, IEnumerable<IPatchPackageWriter> packageWriters)
+        : this(workspaceRoot, overlayStore, null, packageWriters)
+    {
+    }
+
+    public PatchBuildService(
+        string workspaceRoot,
+        IPatchOverlayReader overlayStore,
+        IPatchResourceLookup? resourceLookup,
+        IEnumerable<IPatchPackageWriter> packageWriters)
+    {
+        this.workspaceRoot = Path.GetFullPath(workspaceRoot);
+        this.overlayStore = overlayStore;
+        this.resourceLookup = resourceLookup;
+        this.packageWriters = packageWriters.ToDictionary(writer => writer.Kind);
+    }
+
+    public async Task<PatchDryRunResponse> DryRunAsync(
+        PatchDryRunRequest request,
+        ClientProfileDto profile,
+        CancellationToken cancellationToken)
+    {
+        return await DryRunAsync(request, profile, oodlePath: null, cancellationToken);
+    }
+
+    private async Task<PatchDryRunResponse> DryRunAsync(
+        PatchDryRunRequest request,
+        ClientProfileDto profile,
+        string? oodlePath,
+        CancellationToken cancellationToken)
+    {
+        var changes = await BuildChangesAsync(request.ProfileId, cancellationToken);
+        var warnings = BuildWarnings(profile, changes, oodlePath);
+        return new PatchDryRunResponse(
+            request.ProfileId,
+            changes.Count,
+            changes,
+            CountBy(changes, change => change.Kind),
+            CountBy(changes, change => change.RiskLevel),
+            warnings);
+    }
+
+    public async Task<PatchReadinessResponse> CheckReadinessAsync(
+        PatchReadinessRequest request,
+        ClientProfileDto profile,
+        CancellationToken cancellationToken)
+    {
+        var dryRun = await DryRunAsync(new PatchDryRunRequest(request.ProfileId), profile, request.OodlePath, cancellationToken);
+        var blockers = new List<string>();
+        if (!packageWriters.TryGetValue(request.WriterKind, out var writer) || writer is UnavailablePatchPackageWriter)
+        {
+            blockers.Add($"{FormatWriterKind(request.WriterKind)} 写入器尚未接入。");
+        }
+
+        if (request.WriterKind == PatchPackageWriterKind.NativeBundles2
+            && profile.OodleStatus != OodleStatus.Found
+            && string.IsNullOrWhiteSpace(request.OodlePath))
+        {
+            blockers.Add("Oodle 不可用，无法进行正式 Bundles2 压缩写入。");
+        }
+
+        if (request.WriterKind == PatchPackageWriterKind.NativeBundles2
+            && !string.IsNullOrWhiteSpace(request.OodlePath)
+            && !File.Exists(request.OodlePath))
+        {
+            blockers.Add($"指定的 oo2core.dll 不存在：{request.OodlePath}");
+        }
+
+        if (request.WriterKind == PatchPackageWriterKind.NativeBundles2)
+        {
+            var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+            var sourceIndexPath = Path.Combine(layout.RawCacheRoot, "native", "bundles2", "index.decompressed.bin");
+            if (!File.Exists(sourceIndexPath))
+            {
+                blockers.Add("缺少解压后的真实索引 cache，请先建立真实索引。");
+            }
+
+            if (resourceLookup is null)
+            {
+                blockers.Add("资源索引不可用，无法定位 Native Bundles2 原始记录。");
+            }
+            else if (dryRun.TotalChanges > 0)
+            {
+                var indexPlan = await PlanNativeIndexRewriteAsync(new NativeIndexRewritePlanRequest(request.ProfileId), cancellationToken);
+                blockers.AddRange(indexPlan.Blockers);
+            }
+        }
+
+        if (dryRun.TotalChanges == 0)
+        {
+            blockers.Add("当前没有 overlay 改动可构建。");
+        }
+
+        return new PatchReadinessResponse(
+            request.ProfileId,
+            request.WriterKind,
+            blockers.Count == 0,
+            dryRun.TotalChanges,
+            blockers,
+            dryRun.Warnings);
+    }
+
+    public async Task<NativePatchPlanResponse> PlanNativePatchAsync(
+        NativePatchPlanRequest request,
+        CancellationToken cancellationToken)
+    {
+        var entries = await overlayStore.GetEntriesAsync(request.ProfileId, cancellationToken);
+        var items = new List<NativePatchPlanItemDto>(entries.Count);
+        var blockers = new List<string>();
+        long offset = 0;
+
+        foreach (var entry in entries.OrderBy(item => item.NormalizedPath, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var blocker = File.Exists(entry.OverlayPath) ? null : "overlay 文件不存在。";
+            if (blocker is not null)
+            {
+                blockers.Add($"{entry.VirtualPath}: {blocker}");
+            }
+
+            items.Add(new NativePatchPlanItemDto(
+                entry.VirtualPath,
+                request.BundleName,
+                offset,
+                entry.OverlaySize,
+                entry.OverlayHash,
+                RequiresIndexUpdate: true,
+                blocker));
+            offset += entry.OverlaySize;
+        }
+
+        return new NativePatchPlanResponse(
+            request.ProfileId,
+            request.BundleName,
+            Ready: blockers.Count == 0 && items.Count > 0,
+            items.Count,
+            items,
+            blockers,
+            ["该计划仅描述 Native Bundles2 写入输入；实际 bundle 压缩和 _.index.bin 重写仍需 Native writer 执行。"]);
+    }
+
+    public async Task<NativeDryBundleBuildResponse> BuildNativeDryBundleAsync(
+        NativeDryBundleBuildRequest request,
+        CancellationToken cancellationToken)
+    {
+        var plan = await PlanNativePatchAsync(new NativePatchPlanRequest(request.ProfileId, request.BundleName), cancellationToken);
+        if (!plan.Ready)
+        {
+            throw new PatchBuildException("native_plan_not_ready", string.Join(Environment.NewLine, plan.Blockers));
+        }
+
+        var entries = await overlayStore.GetEntriesAsync(request.ProfileId, cancellationToken);
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        layout.EnsureDirectories();
+        var outputDirectory = Path.Combine(layout.BuildsRoot, $"native-dry-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}");
+        using var oodleCodec = NativeOodleCompressCodec.TryCreate(request.OodlePath, out var oodleWarning);
+        INativeBundleCodec codec = oodleCodec is not null ? oodleCodec : new CopyNativeBundleCodec();
+        var result = await new NativeDryBundleWriter().WriteAsync(outputDirectory, plan, entries, codec, cancellationToken);
+        var indexPlan = await PlanNativeIndexRewriteAsync(new NativeIndexRewritePlanRequest(request.ProfileId, request.BundleName), cancellationToken);
+        var indexPlanPath = Path.Combine(outputDirectory, "native_index_plan.json");
+        await WriteJsonAsync(indexPlanPath, indexPlan, cancellationToken);
+        var nativeIndexDryPath = Path.Combine(outputDirectory, "native_index_dry.bin");
+        await new NativeIndexDryWriter().WriteAsync(nativeIndexDryPath, indexPlan, cancellationToken);
+        var rewriteDryPath = await TryWriteIndexRewriteDryRunAsync(request.ProfileId, outputDirectory, indexPlan, cancellationToken);
+        var warnings = plan.Warnings
+            .Concat(oodleCodec is null ? [$"使用 Copy codec 生成 dry bundle：{oodleWarning}"] : ["已使用 Oodle 压缩 codec 生成 dry bundle。"])
+            .Concat(rewriteDryPath is null ? ["未找到解压后的 native index cache，已跳过 index rewrite dry-run。"] : ["已生成 native index rewrite dry-run 产物。"])
+            .ToArray();
+        return new NativeDryBundleBuildResponse(
+            request.ProfileId,
+            result.BundlePath,
+            result.ContainerBundlePath,
+            result.ManifestPath,
+            indexPlanPath,
+            nativeIndexDryPath,
+            rewriteDryPath,
+            result.Size,
+            plan,
+            indexPlan,
+            warnings);
+    }
+
+    public async Task<NativeIndexRewritePlanResponse> PlanNativeIndexRewriteAsync(
+        NativeIndexRewritePlanRequest request,
+        CancellationToken cancellationToken)
+    {
+        var plan = await PlanNativePatchAsync(new NativePatchPlanRequest(request.ProfileId, request.BundleName), cancellationToken);
+        var items = new List<NativeIndexRewriteItemDto>(plan.Items.Count);
+        var blockers = new List<string>(plan.Blockers);
+        foreach (var item in plan.Items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var blocker = item.Blocker;
+            string? pathHash = null;
+            string? originalBundleName = null;
+            long? originalOffset = null;
+            long? originalSize = null;
+
+            if (blocker is null && resourceLookup is not null)
+            {
+                var resource = await resourceLookup.GetByPathAsync(request.ProfileId, item.VirtualPath, cancellationToken);
+                if (resource is null)
+                {
+                    blocker = "资源索引中不存在该路径。";
+                }
+                else if (!NativeBundleLocationParser.TryParse(resource.PhysicalPath, out var location))
+                {
+                    blocker = "资源索引不是 Native Bundles2 位置。";
+                }
+                else
+                {
+                    pathHash = $"0x{NativeIndexPathResolver.MurmurHash64A(System.Text.Encoding.UTF8.GetBytes(resource.NormalizedPath)):x16}";
+                    originalBundleName = location.BundleName;
+                    originalOffset = location.Offset;
+                    originalSize = location.Size;
+                }
+            }
+
+            if (blocker is not null)
+            {
+                blockers.Add($"{item.VirtualPath}: {blocker}");
+            }
+
+            items.Add(new NativeIndexRewriteItemDto(
+                item.VirtualPath,
+                item.BundleName,
+                item.Offset,
+                item.Size,
+                item.OverlayHash,
+                pathHash,
+                originalBundleName,
+                originalOffset,
+                originalSize,
+                blocker));
+        }
+
+        return new NativeIndexRewritePlanResponse(
+            request.ProfileId,
+            plan.Ready && blockers.Count == 0,
+            items.Count,
+            items,
+            blockers,
+            plan.Warnings.Concat(["该计划尚未写入 _.index.bin；真实重写器接入后会更新 bundle/file records。"]).ToArray());
+    }
+
+    private async Task<string?> TryWriteIndexRewriteDryRunAsync(
+        string profileId,
+        string outputDirectory,
+        NativeIndexRewritePlanResponse indexPlan,
+        CancellationToken cancellationToken)
+    {
+        if (!indexPlan.Ready)
+        {
+            return null;
+        }
+
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, profileId);
+        var sourcePath = Path.Combine(layout.CacheRoot, "raw", "native", "bundles2", "index.decompressed.bin");
+        if (!File.Exists(sourcePath))
+        {
+            return null;
+        }
+
+        var outputPath = Path.Combine(outputDirectory, "native_index_rewritten.dry.bin");
+        var result = await new NativeIndexRewriteDryRun().RewriteAsync(sourcePath, outputPath, indexPlan, cancellationToken);
+        return result.Ok ? outputPath : null;
+    }
+
+    public async Task<PatchBuildResponse> BuildAsync(
+        PatchBuildRequest request,
+        ClientProfileDto profile,
+        CancellationToken cancellationToken)
+    {
+        var overlayEntries = await overlayStore.GetEntriesAsync(request.ProfileId, cancellationToken);
+        var dryRun = await DryRunAsync(new PatchDryRunRequest(request.ProfileId), profile, request.OodlePath, cancellationToken);
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        layout.EnsureDirectories();
+
+        var buildId = DateTimeOffset.UtcNow.ToString("yyyyMMddHHmmss");
+        var outputDirectory = Path.Combine(layout.BuildsRoot, buildId);
+        var rootPrefix = GetTemplateRoot(request.Template);
+        var bundlesDirectory = string.IsNullOrEmpty(rootPrefix)
+            ? Path.Combine(outputDirectory, "Bundles2")
+            : Path.Combine(outputDirectory, rootPrefix, "Bundles2");
+
+        if (!packageWriters.TryGetValue(request.WriterKind, out var writer))
+        {
+            throw new PatchBuildException("patch_writer_unavailable", $"补丁写入器不可用：{request.WriterKind}");
+        }
+
+        var writeResult = await writer.WriteAsync(
+            new PatchPackageWriterContext(profile, request, bundlesDirectory, overlayEntries, dryRun.Changes),
+            cancellationToken);
+
+        var builtAt = DateTimeOffset.UtcNow;
+        var manifestPath = Path.Combine(outputDirectory, "patch_manifest.json");
+        var warnings = dryRun.Warnings.Concat(writeResult.Warnings).Distinct(StringComparer.Ordinal).ToArray();
+        var manifest = new PatchManifestDto(
+            request.ProfileId,
+            writeResult.BuildMode,
+            request.Template,
+            request.BundleName,
+            builtAt,
+            dryRun.Changes,
+            warnings);
+        await WriteJsonAsync(manifestPath, manifest, cancellationToken);
+
+        var rollbackManifestPath = Path.Combine(outputDirectory, "rollback_manifest.json");
+        var rollback = new PatchRollbackManifestDto(
+            request.ProfileId,
+            builtAt,
+            dryRun.Changes.Select(change => new PatchRollbackItemDto(change.VirtualPath, change.BaseHash, change.OverlayHash)).ToArray());
+        await WriteJsonAsync(rollbackManifestPath, rollback, cancellationToken);
+
+        var zipPath = Path.Combine(layout.BuildsRoot, $"{buildId}-{request.Template.ToString().ToLowerInvariant()}-patch.zip");
+        if (File.Exists(zipPath))
+        {
+            File.Delete(zipPath);
+        }
+
+        CreatePublicPatchZip(outputDirectory, zipPath);
+
+        return new PatchBuildResponse(
+            request.ProfileId,
+            writeResult.BuildMode,
+            request.Template,
+            outputDirectory,
+            writeResult.IndexPath,
+            writeResult.BundlePath,
+            manifestPath,
+            rollbackManifestPath,
+            zipPath,
+            dryRun.TotalChanges,
+            warnings);
+    }
+
+    public async Task<PatchVerifyResponse> VerifyBuildAsync(
+        PatchVerifyRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.BuildId.Any(ch => !char.IsDigit(ch)))
+        {
+            throw new PatchBuildException("invalid_build_id", "构建编号不合法。");
+        }
+
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        var buildDirectory = Path.Combine(layout.BuildsRoot, request.BuildId);
+        if (!Directory.Exists(buildDirectory))
+        {
+            throw new PatchBuildException("build_not_found", "未找到补丁输出。");
+        }
+
+        var bundlesDirectory = FindBundlesDirectory(buildDirectory);
+        if (bundlesDirectory is null)
+        {
+            throw new PatchBuildException("build_bundles_missing", "构建输出中未找到 Bundles2 目录。");
+        }
+
+        var bundleName = await ResolveBuildBundleNameAsync(buildDirectory, request.BundleName, cancellationToken);
+        var codec = CreateVerifyCodec(request.OodlePath);
+        try
+        {
+            var verification = await new PatchPackageVerifier(codec).VerifyNativeAsync(
+                bundlesDirectory,
+                bundleName,
+                cancellationToken);
+            return new PatchVerifyResponse(
+                request.ProfileId,
+                request.BuildId,
+                verification.Ok,
+                verification.BundlesDirectory,
+                verification.IndexPath,
+                verification.BundlePath,
+                verification.PatchedFileRecords,
+                verification.Warnings);
+        }
+        finally
+        {
+            if (codec is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+        }
+    }
+
+    public async Task<PatchInstallResponse> InstallAsync(
+        PatchInstallRequest request,
+        ClientProfileDto profile,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(profile.Bundles2Path))
+        {
+            return new PatchInstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], null, ["客户端配置缺少 Bundles2 路径。"]);
+        }
+
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        var buildDirectory = Path.Combine(layout.BuildsRoot, request.BuildId);
+        if (!Directory.Exists(buildDirectory))
+        {
+            return new PatchInstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], null, ["未找到构建目录。"]);
+        }
+
+        var bundlesSource = FindBundlesDirectory(buildDirectory);
+        if (bundlesSource is null)
+        {
+            return new PatchInstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], null, ["构建输出中未找到 Bundles2 目录。"]);
+        }
+
+        var files = Directory.EnumerateFiles(bundlesSource, "*", SearchOption.AllDirectories)
+            .Select(path =>
+            {
+                var relative = Path.GetRelativePath(bundlesSource, path).Replace('\\', '/');
+                var target = SafeCombine(profile.Bundles2Path, relative);
+                return new PatchInstallFileDto(
+                    relative,
+                    path,
+                    target,
+                    new FileInfo(path).Length,
+                    File.Exists(target));
+            })
+            .OrderBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        string? installManifestPath = null;
+        if (request.Apply)
+        {
+            var backupRoot = Path.Combine(buildDirectory, "install_backups");
+            if (Directory.Exists(backupRoot))
+            {
+                Directory.Delete(backupRoot, recursive: true);
+            }
+
+            foreach (var file in files)
+            {
+                if (File.Exists(file.TargetPath))
+                {
+                    var backupPath = SafeCombine(backupRoot, file.RelativePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(backupPath)!);
+                    File.Copy(file.TargetPath, backupPath, overwrite: true);
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(file.TargetPath)!);
+                File.Copy(file.SourcePath, file.TargetPath, overwrite: true);
+            }
+
+            installManifestPath = Path.Combine(buildDirectory, "install_manifest.json");
+            await WriteJsonAsync(installManifestPath, new PatchInstallManifestDto(request.ProfileId, request.BuildId, DateTimeOffset.UtcNow, backupRoot, files), cancellationToken);
+        }
+
+        return new PatchInstallResponse(request.ProfileId, request.BuildId, request.Apply, files.Length, files, installManifestPath, []);
+    }
+
+    public async Task<PatchUninstallResponse> UninstallAsync(
+        PatchUninstallRequest request,
+        ClientProfileDto profile,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(profile.Bundles2Path))
+        {
+            return new PatchUninstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], ["客户端配置缺少 Bundles2 路径。"]);
+        }
+
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        var buildDirectory = Path.Combine(layout.BuildsRoot, request.BuildId);
+        var manifestPath = Path.Combine(buildDirectory, "install_manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            return new PatchUninstallResponse(request.ProfileId, request.BuildId, request.Apply, 0, [], ["未找到安装清单。"]);
+        }
+
+        await using var stream = File.OpenRead(manifestPath);
+        var manifest = await JsonSerializer.DeserializeAsync<PatchInstallManifestDto>(stream, JsonOptions, cancellationToken);
+        var files = manifest?.Files
+            .Where(file => IsSubPath(profile.Bundles2Path, file.TargetPath))
+            .OrderBy(file => file.TargetPath, StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
+
+        if (request.Apply)
+        {
+            foreach (var file in files)
+            {
+                var backupPath = manifest is not null && !string.IsNullOrWhiteSpace(manifest.BackupRoot)
+                    ? SafeCombine(manifest.BackupRoot, file.RelativePath)
+                    : null;
+                if (file.TargetExists && backupPath is not null && File.Exists(backupPath))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(file.TargetPath)!);
+                    File.Copy(backupPath, file.TargetPath, overwrite: true);
+                }
+                else if (File.Exists(file.TargetPath))
+                {
+                    File.Delete(file.TargetPath);
+                }
+            }
+        }
+
+        return new PatchUninstallResponse(request.ProfileId, request.BuildId, request.Apply, files.Length, files.Select(file => file.TargetPath).ToArray(), []);
+    }
+
+    public Task<PatchSandboxValidateResponse> ValidateInSandboxAsync(
+        PatchSandboxValidateRequest request,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(request.SandboxRootPath))
+        {
+            return Task.FromResult(new PatchSandboxValidateResponse(request.ProfileId, request.BuildId, string.Empty, false, 0, 0, 0, [], ["沙盒目录不能为空。"]));
+        }
+
+        var layout = WorkspaceLayout.ForProfile(workspaceRoot, request.ProfileId);
+        var buildDirectory = Path.Combine(layout.BuildsRoot, request.BuildId);
+        if (!Directory.Exists(buildDirectory))
+        {
+            return Task.FromResult(new PatchSandboxValidateResponse(request.ProfileId, request.BuildId, string.Empty, false, 0, 0, 0, [], ["未找到构建目录。"]));
+        }
+
+        var bundlesSource = FindBundlesDirectory(buildDirectory);
+        if (bundlesSource is null)
+        {
+            return Task.FromResult(new PatchSandboxValidateResponse(request.ProfileId, request.BuildId, string.Empty, false, 0, 0, 0, [], ["构建输出中未找到 Bundles2 目录。"]));
+        }
+
+        var sandboxBundles = Path.Combine(request.SandboxRootPath, "Bundles2");
+        var files = Directory.EnumerateFiles(bundlesSource, "*", SearchOption.AllDirectories)
+            .Select(path =>
+            {
+                var relative = Path.GetRelativePath(bundlesSource, path).Replace('\\', '/');
+                var target = SafeCombine(sandboxBundles, relative);
+                return new PatchInstallFileDto(relative, path, target, new FileInfo(path).Length, File.Exists(target));
+            })
+            .OrderBy(file => file.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var missing = 0;
+        var mismatched = 0;
+        foreach (var file in files)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(file.TargetPath)!);
+            File.Copy(file.SourcePath, file.TargetPath, overwrite: true);
+            if (!File.Exists(file.TargetPath))
+            {
+                missing++;
+                continue;
+            }
+
+            if (new FileInfo(file.TargetPath).Length != file.Size)
+            {
+                mismatched++;
+            }
+        }
+
+        return Task.FromResult(new PatchSandboxValidateResponse(
+            request.ProfileId,
+            request.BuildId,
+            sandboxBundles,
+            missing == 0 && mismatched == 0,
+            files.Length,
+            missing,
+            mismatched,
+            files,
+            []));
+    }
+
+    public async Task<PatchSandboxPrepareResponse> PrepareSandboxAsync(
+        PatchSandboxPrepareRequest request,
+        ClientProfileDto profile,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.SandboxRootPath))
+        {
+            var emptyValidation = new PatchSandboxValidateResponse(request.ProfileId, request.BuildId, string.Empty, false, 0, 0, 0, [], ["沙盒目录不能为空。"]);
+            return new PatchSandboxPrepareResponse(request.ProfileId, request.BuildId, string.Empty, string.Empty, false, 0, emptyValidation, emptyValidation.Warnings);
+        }
+
+        if (string.IsNullOrWhiteSpace(profile.RootPath) || !Directory.Exists(profile.RootPath))
+        {
+            var missingClientValidation = new PatchSandboxValidateResponse(request.ProfileId, request.BuildId, string.Empty, false, 0, 0, 0, [], ["客户端根目录不存在。"]);
+            return new PatchSandboxPrepareResponse(request.ProfileId, request.BuildId, request.SandboxRootPath, string.Empty, false, 0, missingClientValidation, missingClientValidation.Warnings);
+        }
+
+        if (!string.IsNullOrWhiteSpace(profile.Bundles2Path) && !IsSubPath(profile.RootPath, profile.Bundles2Path))
+        {
+            throw new ArgumentException("客户端 Bundles2 路径不在客户端根目录内。");
+        }
+
+        if (IsSubPath(profile.RootPath, request.SandboxRootPath))
+        {
+            throw new ArgumentException("沙盒目录不能位于真实客户端目录内。");
+        }
+
+        var sandboxRoot = Path.GetFullPath(request.SandboxRootPath);
+        Directory.CreateDirectory(sandboxRoot);
+        var seeded = 0;
+        foreach (var file in Directory.EnumerateFiles(profile.RootPath, "*", SearchOption.TopDirectoryOnly))
+        {
+            seeded += CopySeedFile(file, profile.RootPath, sandboxRoot, request.Overwrite);
+        }
+
+        if (!string.IsNullOrWhiteSpace(profile.Bundles2Path) && Directory.Exists(profile.Bundles2Path))
+        {
+            foreach (var file in Directory.EnumerateFiles(profile.Bundles2Path, "*", SearchOption.TopDirectoryOnly))
+            {
+                seeded += CopySeedFile(file, profile.RootPath, sandboxRoot, request.Overwrite);
+            }
+        }
+
+        var validation = await ValidateInSandboxAsync(
+            new PatchSandboxValidateRequest(request.ProfileId, request.BuildId, sandboxRoot),
+            cancellationToken);
+
+        return new PatchSandboxPrepareResponse(
+            request.ProfileId,
+            request.BuildId,
+            sandboxRoot,
+            validation.SandboxBundlesPath,
+            validation.Ok,
+            seeded,
+            validation,
+            validation.Warnings);
+    }
+
+    private async Task<IReadOnlyList<PatchChangeDto>> BuildChangesAsync(string profileId, CancellationToken cancellationToken)
+    {
+        var entries = await overlayStore.GetEntriesAsync(profileId, cancellationToken);
+        return entries.Select(entry =>
+        {
+            var extension = Path.GetExtension(entry.VirtualPath).ToLowerInvariant();
+            return new PatchChangeDto(
+                entry.VirtualPath,
+                extension,
+                ResourceClassifier.Classify(entry.VirtualPath),
+                PatchRiskClassifier.Classify(entry.VirtualPath),
+                entry.OverlaySize,
+                entry.OverlayHash,
+                entry.BaseHash);
+        }).OrderBy(change => change.VirtualPath, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
+    private static IReadOnlyList<string> BuildWarnings(ClientProfileDto profile, IReadOnlyList<PatchChangeDto> changes, string? oodlePath)
+    {
+        var warnings = new List<string>
+        {
+            "构建前会执行 dry-run 汇总，真实写包能力由当前 PatchPackageWriter 决定。"
+        };
+
+        if (profile.OodleStatus != OodleStatus.Found && (string.IsNullOrWhiteSpace(oodlePath) || !File.Exists(oodlePath)))
+        {
+            warnings.Add("未检测到 Oodle，正式压缩和真实 bundle 写入会被阻止。");
+        }
+
+        if (changes.Any(change => change.RiskLevel == PatchRiskLevel.High))
+        {
+            warnings.Add("包含高风险资源类型，正式构建前需要用户确认。");
+        }
+
+        return warnings;
+    }
+
+    private static async Task WriteJsonAsync<T>(string path, T value, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await using var stream = File.Create(path);
+        await JsonSerializer.SerializeAsync(stream, value, JsonOptions, cancellationToken);
+    }
+
+    private static void CreatePublicPatchZip(string outputDirectory, string zipPath)
+    {
+        using var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create);
+        var bundlesDirectory = FindBundlesDirectory(outputDirectory);
+        if (bundlesDirectory is null)
+        {
+            foreach (var file in Directory.EnumerateFiles(outputDirectory, "*", SearchOption.TopDirectoryOnly))
+            {
+                archive.CreateEntryFromFile(file, Path.GetFileName(file), CompressionLevel.Fastest);
+            }
+
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(bundlesDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(bundlesDirectory, file).Replace('\\', '/');
+            archive.CreateEntryFromFile(file, $"Bundles2/{relative}", CompressionLevel.Fastest);
+        }
+    }
+
+    private static string GetTemplateRoot(PatchZipTemplate template)
+    {
+        return template == PatchZipTemplate.Epic ? "PathOfExile2" : string.Empty;
+    }
+
+    private static string? FindBundlesDirectory(string buildDirectory)
+    {
+        var direct = Path.Combine(buildDirectory, "Bundles2");
+        if (Directory.Exists(direct))
+        {
+            return direct;
+        }
+
+        return Directory.EnumerateDirectories(buildDirectory, "Bundles2", SearchOption.AllDirectories)
+            .OrderBy(path => path.Length)
+            .FirstOrDefault();
+    }
+
+    private static async Task<string> ResolveBuildBundleNameAsync(
+        string buildDirectory,
+        string fallbackBundleName,
+        CancellationToken cancellationToken)
+    {
+        var manifestPath = Path.Combine(buildDirectory, "patch_manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            var bundlesDirectory = FindBundlesDirectory(buildDirectory);
+            if (bundlesDirectory is null)
+            {
+                return fallbackBundleName;
+            }
+
+            return Directory.EnumerateFiles(bundlesDirectory, "*.bundle.bin", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFileName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .OrderByDescending(name => string.Equals(name, "Tiny.V0.1.bundle.bin", StringComparison.OrdinalIgnoreCase))
+                .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault() ?? fallbackBundleName;
+        }
+
+        await using var stream = File.OpenRead(manifestPath);
+        var manifest = await JsonSerializer.DeserializeAsync<PatchManifestDto>(stream, JsonOptions, cancellationToken);
+        return string.IsNullOrWhiteSpace(manifest?.BundleName) ? fallbackBundleName : manifest.BundleName;
+    }
+
+    private static INativeBundleCodec CreateVerifyCodec(string? oodlePath)
+    {
+        if (string.Equals(oodlePath, "__copy__", StringComparison.Ordinal))
+        {
+            return new CopyNativeBundleCodec();
+        }
+
+        var codec = NativeOodleCompressCodec.TryCreate(oodlePath, out _);
+        return codec is null ? new UnavailableNativeBundleCodec() : codec;
+    }
+
+    private static string SafeCombine(string root, string relativePath)
+    {
+        var fullRoot = Path.GetFullPath(root);
+        var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+        if (!IsSubPath(fullRoot, fullPath))
+        {
+            throw new ArgumentException("Target path escaped Bundles2 root.");
+        }
+
+        return fullPath;
+    }
+
+    private static int CopySeedFile(string sourcePath, string clientRoot, string sandboxRoot, bool overwrite)
+    {
+        var relative = Path.GetRelativePath(clientRoot, sourcePath).Replace('\\', '/');
+        var target = SafeCombine(sandboxRoot, relative);
+        if (!overwrite && File.Exists(target))
+        {
+            return 0;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        File.Copy(sourcePath, target, overwrite: true);
+        return 1;
+    }
+
+    private static bool IsSubPath(string root, string path)
+    {
+        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var fullPath = Path.GetFullPath(path);
+        return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IPatchPackageWriter CreateNativeUnavailableWriter()
+    {
+        return new UnavailablePatchPackageWriter(
+            PatchPackageWriterKind.NativeBundles2,
+            "native_writer_unavailable",
+            "Native Bundles2 写入器尚未接入，当前不能生成可安装的真实 Bundles2 补丁。");
+    }
+
+    private static IPatchPackageWriter CreateLibGgpkUnavailableWriter()
+    {
+        return new UnavailablePatchPackageWriter(
+            PatchPackageWriterKind.LibGgpk3Adapter,
+            "libggpk3_writer_unavailable",
+            "LibGGPK3 Adapter 尚未接入；正式闭源发布前还需要处理 AGPL 授权边界。");
+    }
+
+    private static IReadOnlyDictionary<TKey, int> CountBy<TKey>(
+        IReadOnlyList<PatchChangeDto> changes,
+        Func<PatchChangeDto, TKey> keySelector)
+        where TKey : notnull
+    {
+        return changes.GroupBy(keySelector).ToDictionary(group => group.Key, group => group.Count());
+    }
+
+    private sealed record PatchInstallManifestDto(
+        string ProfileId,
+        string BuildId,
+        DateTimeOffset InstalledAt,
+        string BackupRoot,
+        IReadOnlyList<PatchInstallFileDto> Files);
+
+    private sealed class UnavailableNativeBundleCodec : INativeBundleCodec
+    {
+        public bool IsAvailable => false;
+
+        public int CompressorId => 0;
+
+        public byte[] Compress(ReadOnlySpan<byte> input)
+        {
+            throw new NotSupportedException("Native bundle codec is not available.");
+        }
+
+        public int Decompress(ReadOnlySpan<byte> compressed, Span<byte> output, int compressor)
+        {
+            throw new NotSupportedException("Native bundle codec is not available.");
+        }
+    }
+
+    private static string FormatWriterKind(PatchPackageWriterKind kind)
+    {
+        return kind switch
+        {
+            PatchPackageWriterKind.NativeBundles2 => "Native Bundles2",
+            PatchPackageWriterKind.LibGgpk3Adapter => "LibGGPK3 Adapter",
+            _ => kind.ToString()
+        };
+    }
+}
