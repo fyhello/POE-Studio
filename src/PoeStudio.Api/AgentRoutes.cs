@@ -114,20 +114,7 @@ public static class AgentRoutes
                 }
 
                 var run = await orchestrator.StartRunShellAsync(request.ThreadId, request.ProfileId, request.Goal, request.TaskKind, request.ResourcePath, cancellationToken);
-                var runToken = cancellations.Register(run.Id);
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        using var scope = scopeFactory.CreateScope();
-                        var scopedOrchestrator = scope.ServiceProvider.GetRequiredService<AgentOrchestrator>();
-                        await scopedOrchestrator.ContinueRunAsync(run.Id, runToken);
-                    }
-                    finally
-                    {
-                        cancellations.Complete(run.Id);
-                    }
-                }, CancellationToken.None);
+                StartBackgroundRun(run.Id, cancellations, scopeFactory);
                 return Results.Ok(ApiResponse<AgentRunDto>.Success(run));
             }
             catch (ArgumentException ex)
@@ -144,11 +131,14 @@ public static class AgentRoutes
         app.MapPost("/api/agent/runs/{runId}/retry", async (
             string runId,
             AgentOrchestrator orchestrator,
+            AgentRunCancellationRegistry cancellations,
+            IServiceScopeFactory scopeFactory,
             CancellationToken cancellationToken) =>
         {
             try
             {
-                var run = await orchestrator.RetryAsync(runId, cancellationToken);
+                var run = await orchestrator.RetryShellAsync(runId, cancellationToken);
+                StartBackgroundRun(run.Id, cancellations, scopeFactory);
                 return Results.Ok(ApiResponse<AgentRunDto>.Success(run));
             }
             catch (ArgumentException ex)
@@ -281,6 +271,40 @@ public static class AgentRoutes
     {
         var marker = ex.Message.IndexOf(" (Parameter", StringComparison.Ordinal);
         return marker > 0 ? ex.Message[..marker] : ex.Message;
+    }
+
+    private static void StartBackgroundRun(
+        string runId,
+        AgentRunCancellationRegistry cancellations,
+        IServiceScopeFactory scopeFactory)
+    {
+        var runToken = cancellations.Register(runId);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var scopedOrchestrator = scope.ServiceProvider.GetRequiredService<AgentOrchestrator>();
+                await scopedOrchestrator.ContinueRunAsync(runId, runToken);
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var scopedOrchestrator = scope.ServiceProvider.GetRequiredService<AgentOrchestrator>();
+                    await scopedOrchestrator.FailRunAsync(runId, "agent_background_failed", ex.Message, CancellationToken.None);
+                }
+                catch
+                {
+                    // Last-resort guard for fire-and-forget work. Nothing else can observe this exception.
+                }
+            }
+            finally
+            {
+                cancellations.Complete(runId);
+            }
+        }, CancellationToken.None);
     }
 
     private static string NewId(string prefix) => $"{prefix}-{Guid.NewGuid():N}";

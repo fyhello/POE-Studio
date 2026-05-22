@@ -175,6 +175,31 @@ public sealed class AgentOrchestrator
             cancellationToken);
     }
 
+    public async Task<AgentRunDto> RetryShellAsync(string runId, CancellationToken cancellationToken)
+    {
+        var previous = await _store.FindRunAsync(runId, cancellationToken)
+            ?? throw new ArgumentException("run_not_found", nameof(runId));
+        return await StartRunShellAsync(
+            previous.ThreadId,
+            previous.ProfileId,
+            previous.Goal,
+            previous.TaskKind,
+            previous.ResourcePath,
+            cancellationToken);
+    }
+
+    public async Task<AgentRunDto> FailRunAsync(
+        string runId,
+        string errorCode,
+        string errorMessage,
+        CancellationToken cancellationToken)
+    {
+        var run = await _store.FindRunAsync(runId, CancellationToken.None)
+            ?? throw new ArgumentException("run_not_found", nameof(runId));
+        await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunFailed, errorMessage, null, CancellationToken.None);
+        return await CompleteRunAsync(run, AgentRunStatus.Failed, 0, "Failed", errorCode, errorMessage, null, CancellationToken.None);
+    }
+
     private async Task PersistParsedEventAsync(
         string threadId,
         string runId,

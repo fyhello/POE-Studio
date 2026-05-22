@@ -169,6 +169,45 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     [Fact]
+    public async Task Agent_retry_returns_running_run_and_can_be_cancelled()
+    {
+        var client = _factory.CreateClient();
+        var thread = await CreateThreadAsync(client, "question");
+        var run = await CreateRunAsync(client, thread, "question", null);
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.Succeeded);
+        _runner.BlockUntilCancelled = true;
+        _runner.SawCancellation = false;
+
+        var retryResponse = await client.PostAsync($"/api/agent/runs/{run.Id}/retry", null);
+        var retry = await retryResponse.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
+        var cancelResponse = await client.PostAsync($"/api/agent/runs/{retry!.Data!.Id}/cancel", null);
+        var final = await WaitForRunStatusAsync(client, retry.Data.Id, AgentRunStatus.Cancelled);
+        await WaitForRunnerCancellationAsync();
+
+        Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+        Assert.Equal(AgentRunStatus.Running, retry.Data.Status);
+        Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
+        Assert.Equal(AgentRunStatus.Cancelled, final.Status);
+        Assert.True(_runner.SawCancellation);
+    }
+
+    [Fact]
+    public async Task Agent_background_run_unknown_exception_marks_run_failed_with_event()
+    {
+        _runner.ThrowUnexpected = true;
+        var client = _factory.CreateClient();
+        var thread = await CreateThreadAsync(client, "question");
+
+        var run = await CreateRunAsync(client, thread, "question", null);
+        var failed = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.Failed);
+        var events = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentEventDto>>>($"/api/agent/runs/{run.Id}/events");
+
+        Assert.Equal("agent_background_failed", failed.ErrorCode);
+        Assert.Contains("unexpected runner failure", failed.ErrorMessage);
+        Assert.Contains(events!.Data!, x => x.Type == AgentEventType.RunFailed && x.Message.Contains("unexpected runner failure", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Agent_run_events_and_missing_approval_are_structured()
     {
         var client = _factory.CreateClient();
@@ -349,10 +388,16 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
     {
         public int Datc64RowIndex { get; set; }
         public bool BlockUntilCancelled { get; set; }
-        public bool SawCancellation { get; private set; }
+        public bool SawCancellation { get; set; }
+        public bool ThrowUnexpected { get; set; }
 
         public async Task<CodexRunResult> RunAsync(AgentSettingsDto settings, string prompt, CancellationToken cancellationToken)
         {
+            if (ThrowUnexpected)
+            {
+                throw new IOException("unexpected runner failure");
+            }
+
             if (BlockUntilCancelled)
             {
                 try
