@@ -212,7 +212,7 @@ git commit -m "feat(mcp): add POE Studio MCP project shell"
 - 创建：`tests/PoeStudio.Tests/McpProtocolTests.cs`
 - 条件创建：`src/PoeStudio.Mcp/McpProtocol.cs`
 
-- [ ] **步骤 1：运行影响分析**  
+- [x] **步骤 1：运行影响分析**
   本任务新增文件，不修改现有函数、类、方法。记录：`Impact: new MCP protocol files only; no existing symbol edited in this task`。
 
 - [x] **步骤 2：确认官方 SDK 可用性**  
@@ -515,8 +515,9 @@ gitnexus_impact target=TableInspector direction=upstream repo=POE-Studio
 ```
 
   记录 TableInspector 的直接调用方和风险等级。若风险为 HIGH 或 CRITICAL，只允许调用现有 public API，不允许修改 `TableInspector`。
+  - Impact: GitNexus reports `TableInspector` upstream risk `CRITICAL`, with direct callers in `tests/PoeStudio.Tests/TableInspectorTests.cs` and `src/PoeStudio.Api/Program.cs`. This task only calls existing public `TableInspector.Inspect(...)`; `TableInspector` was not modified.
 
-- [ ] **步骤 2：先写 DATC64 测试**  
+- [x] **步骤 2：先写 DATC64 测试**
   测试必须用现有 `TableInspectorTests` 中可复用的 DATC64 样例构造数据，验证：
   - 工具返回 `resourcePath`。
   - 返回 `cells` 数组。
@@ -524,7 +525,7 @@ gitnexus_impact target=TableInspector direction=upstream repo=POE-Studio
   - 空表返回空数组不是错误。
   - 非表格资源返回 `isError: true`。
 
-- [ ] **步骤 3：实现提取逻辑**  
+- [x] **步骤 3：实现提取逻辑**
   `poe_datc64_extract_translatable_cells` 必须先调用 `PoeResourceContentReader` 获取 bytes，再调用 `new TableInspector().Inspect(...)`。候选规则：
   - `sourceText` 非空。
   - 跳过纯数字、空白、明显路径或哈希。
@@ -532,7 +533,7 @@ gitnexus_impact target=TableInspector direction=upstream repo=POE-Studio
   - 返回 warnings，说明跳过了哪些不可翻译项。
   - 如果 resource 是 native Bundles2 且 Stage 1 未接入安全 native 读取服务，返回 `isError: true`，错误码为 `native_resource_not_supported_in_stage1`，不得返回空 cells 冒充成功。
 
-- [ ] **步骤 4：运行 DATC64 测试**  
+- [x] **步骤 4：运行 DATC64 测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~McpDatc64ToolTests
@@ -540,7 +541,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
   预期：PASS。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add src\PoeStudio.Mcp\PoeMcpTools.cs tests\PoeStudio.Tests\McpDatc64ToolTests.cs

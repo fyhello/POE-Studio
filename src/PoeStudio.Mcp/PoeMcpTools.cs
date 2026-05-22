@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Tables;
 using PoeStudio.Core.Workspace;
 using PoeStudio.Storage.Profiles;
 using PoeStudio.Storage.Resources;
@@ -58,11 +59,12 @@ public static class PoeMcpTools
                 ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("maxBytes", "integer"))),
             (arguments, cancellationToken) => ReadResourceAsync(workspace, arguments, cancellationToken));
 
-        RegisterPlaceholder(
-            registry,
-            "poe_datc64_extract_translatable_cells",
-            "Extract translatable DATC64 or string-candidate cells through the Stage 1 read-only resource boundary.",
-            ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("limit", "integer")));
+        registry.Register(
+            new McpToolDefinition(
+                "poe_datc64_extract_translatable_cells",
+                "Extract translatable DATC64 or string-candidate cells through the Stage 1 read-only resource boundary.",
+                ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("limit", "integer"))),
+            (arguments, cancellationToken) => ExtractDatc64TranslatableCellsAsync(workspace, arguments, cancellationToken));
     }
 
     private static McpToolResult GetWorkspace(PoeWorkspaceResolution workspace)
@@ -237,6 +239,65 @@ public static class PoeMcpTools
         });
     }
 
+    private static async Task<McpToolResult> ExtractDatc64TranslatableCellsAsync(
+        PoeWorkspaceResolution workspace,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetWorkspaceRoot(workspace, out var workspaceRoot, out var error))
+        {
+            return McpToolResult.Error(error);
+        }
+
+        if (!TryGetString(arguments, "profileId", out var profileId))
+        {
+            return McpToolResult.Error("Argument 'profileId' is required.");
+        }
+
+        if (!TryGetString(arguments, "resourcePath", out var resourcePath))
+        {
+            return McpToolResult.Error("Argument 'resourcePath' is required.");
+        }
+
+        var limit = GetInt32(arguments, "limit") ?? 100;
+        if (limit is < 1 or > 1000)
+        {
+            return McpToolResult.Error("Argument 'limit' must be between 1 and 1000.");
+        }
+
+        var read = await new PoeResourceContentReader(new ResourceIndexStore(workspaceRoot))
+            .ReadAsync(profileId, resourcePath, PoeResourceContentReader.AbsoluteMaxBytes, cancellationToken);
+        if (read.IsError)
+        {
+            return McpToolResult.Error($"{read.ErrorCode}: {read.ErrorMessage}");
+        }
+
+        var resource = read.Resource!;
+        if (resource.Kind != ResourceKind.Table || !resource.Extension.Equals(".datc64", StringComparison.OrdinalIgnoreCase))
+        {
+            return McpToolResult.Error("Resource must be a .datc64 table.");
+        }
+
+        var inspection = new TableInspector().Inspect(resource, read.Bytes, read.Bytes.Length);
+        var skipped = 0;
+        var cells = ExtractCells(inspection, limit, ref skipped);
+        var warnings = inspection.Warnings.ToList();
+        if (skipped > 0)
+        {
+            warnings.Add($"Skipped {skipped} non-translatable empty, numeric, path-like, or hash-like cells.");
+        }
+
+        return JsonSuccess(new
+        {
+            profileId,
+            resourcePath = resource.NormalizedPath,
+            format = inspection.Format,
+            delimiter = inspection.Delimiter,
+            cells,
+            warnings
+        });
+    }
+
     private static async Task<object> ReadIndexStatusAsync(
         string profileId,
         string indexRoot,
@@ -343,6 +404,95 @@ public static class PoeMcpTools
             || resource.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase)
             || resource.Extension.Equals(".xml", StringComparison.OrdinalIgnoreCase)
             || (bytes.Length > 0 && !bytes.Contains((byte)0) && bytes.All(value => value is 9 or 10 or 13 or >= 32));
+    }
+
+    private static IReadOnlyList<object> ExtractCells(TableInspectResponse inspection, int limit, ref int skipped)
+    {
+        var cells = new List<object>();
+        if (inspection.Rows.Count > 0)
+        {
+            var columns = inspection.Columns ?? [];
+            foreach (var row in inspection.Rows)
+            {
+                for (var columnIndex = 0; columnIndex < row.Cells.Count; columnIndex++)
+                {
+                    if (cells.Count >= limit)
+                    {
+                        return cells;
+                    }
+
+                    var sourceText = row.Cells[columnIndex];
+                    if (!IsTranslatableCandidate(sourceText))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
+                    var columnName = columnIndex < columns.Count ? columns[columnIndex] : $"column_{columnIndex}";
+                    cells.Add(new
+                    {
+                        rowIndex = Math.Max(0, row.RowNumber - 1),
+                        columnIndex,
+                        columnName,
+                        sourceText,
+                        textEncoding = inspection.TextEncoding,
+                        locator = $"row:{row.RowNumber};column:{columnIndex};name:{columnName}"
+                    });
+                }
+            }
+
+            return cells;
+        }
+
+        foreach (var candidate in inspection.Strings ?? [])
+        {
+            if (cells.Count >= limit)
+            {
+                return cells;
+            }
+
+            if (!IsTranslatableCandidate(candidate.Value))
+            {
+                skipped++;
+                continue;
+            }
+
+            cells.Add(new
+            {
+                rowIndex = 0,
+                columnIndex = 0,
+                columnName = "string_candidate",
+                sourceText = candidate.Value,
+                textEncoding = candidate.Encoding,
+                offset = candidate.Offset,
+                locator = $"offset:{candidate.Offset};length:{candidate.Length};encoding:{candidate.Encoding}"
+            });
+        }
+
+        return cells;
+    }
+
+    private static bool IsTranslatableCandidate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.All(char.IsDigit))
+        {
+            return false;
+        }
+
+        if (trimmed.Length >= 16 && trimmed.All(Uri.IsHexDigit))
+        {
+            return false;
+        }
+
+        return !trimmed.Contains("://", StringComparison.Ordinal)
+            && !trimmed.Contains('\\', StringComparison.Ordinal)
+            && !(trimmed.Contains('/', StringComparison.Ordinal) && trimmed.Contains('.', StringComparison.Ordinal));
     }
 
     private static DateTimeOffset? GetDateTimeOffset(JsonElement root, string propertyName)
