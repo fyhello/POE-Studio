@@ -451,22 +451,23 @@ git commit -m "feat(mcp): expose workspace profile and index tools"
 - 修改：`tests/PoeStudio.Tests/McpPoeToolsTests.cs`
 - 创建：`tests/PoeStudio.Tests/McpResourceContentReaderTests.cs`
 
-- [ ] **步骤 1：运行影响分析**  
+- [x] **步骤 1：运行影响分析**
 
 ```powershell
 gitnexus_impact target=PoeMcpTools direction=upstream repo=POE-Studio
 ```
 
   如果 GitNexus 尚未索引新增文件，记录：`Impact: PoeMcpTools new Stage 1 symbol; no external callers except MCP tests and Program`。
+  - Impact: `PoeMcpTools` is not present in the current GitNexus index yet. Treat as new Stage 1 symbol; no external callers except MCP tests and `Program`.
 
-- [ ] **步骤 2：先写 resource content reader 测试**  
+- [x] **步骤 2：先写 resource content reader 测试**
   `McpResourceContentReaderTests.cs` 必须覆盖：
   - physical resource 的 `PhysicalPath` 存在时可读取。
   - `resourcePath` 包含 `..`、绝对路径伪装、不同大小写绕过时返回 `isError: true`。
   - native Bundles2 resource 在未接入安全 native 读取服务时返回 `isError: true`，错误码为 `native_resource_not_supported_in_stage1`。
   - `maxBytes` 超过 1048576 返回参数错误。
 
-- [ ] **步骤 3：先写 resource 工具测试**  
+- [x] **步骤 3：先写 resource 工具测试**
   测试必须覆盖：
   - `poe_search_resources` 按 query 返回最多 `limit` 条。
   - `limit` 大于 100 时返回参数错误。
@@ -475,7 +476,7 @@ gitnexus_impact target=PoeMcpTools direction=upstream repo=POE-Studio
   - `poe_read_resource` 读取二进制资源返回 hex/base64 摘要和 truncated 标记。
   - `poe_read_resource` 遇到 native Bundles2 resource 时不伪造内容。
 
-- [ ] **步骤 4：实现只读资源读取边界**  
+- [x] **步骤 4：实现只读资源读取边界**
   `PoeResourceContentReader` 必须：
   - 通过 `ResourceIndexStore.GetByPathAsync(profileId, resourcePath, cancellationToken)` 找资源。
   - 对 `resource.PhysicalPath` 做 `Path.GetFullPath`。
@@ -483,10 +484,10 @@ gitnexus_impact target=PoeMcpTools direction=upstream repo=POE-Studio
   - 如果资源是 native Bundles2 资源或 `PhysicalPath` 为空，返回 `native_resource_not_supported_in_stage1`。
   - 不调用 overlay store，不读 overlay 文件，不扫描磁盘。
 
-- [ ] **步骤 5：实现搜索和读取工具**  
+- [x] **步骤 5：实现搜索和读取工具**
   搜索必须基于现有 `ResourceIndexStore.SearchAsync`，不得递归扫描整个磁盘。读取必须调用 `PoeResourceContentReader`，不得在 `PoeMcpTools` 中直接 `File.ReadAllBytes`。
 
-- [ ] **步骤 6：运行测试**  
+- [x] **步骤 6：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "FullyQualifiedName~McpPoeToolsTests|FullyQualifiedName~McpResourceContentReaderTests"
@@ -494,7 +495,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "
 
   预期：PASS。
 
-- [ ] **步骤 7：Commit**
+- [x] **步骤 7：Commit**
 
 ```powershell
 git add src\PoeStudio.Mcp\PoeMcpTools.cs src\PoeStudio.Mcp\PoeResourceContentReader.cs tests\PoeStudio.Tests\McpPoeToolsTests.cs tests\PoeStudio.Tests\McpResourceContentReaderTests.cs

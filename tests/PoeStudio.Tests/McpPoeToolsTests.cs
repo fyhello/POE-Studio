@@ -2,6 +2,7 @@ using System.Text.Json;
 using PoeStudio.Contracts;
 using PoeStudio.Mcp;
 using PoeStudio.Storage.Profiles;
+using PoeStudio.Storage.Resources;
 
 namespace PoeStudio.Tests;
 
@@ -75,6 +76,135 @@ public sealed class McpPoeToolsTests
         Assert.Contains("index", payload.RootElement.GetProperty("hint").GetString(), StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Search_resources_returns_query_matches_up_to_limit()
+    {
+        var root = CreateTempDirectory();
+        var profile = CreateProfile("profile-1");
+        await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
+        await new ResourceIndexStore(root).SaveAsync(profile.Id, [
+            Resource(profile.Id, "metadata/items/amulet.ot", ".ot", ResourceKind.Table, Path.Combine(root, "amulet.ot")),
+            Resource(profile.Id, "metadata/items/ring.ot", ".ot", ResourceKind.Table, Path.Combine(root, "ring.ot")),
+            Resource(profile.Id, "art/textures/icon.dds", ".dds", ResourceKind.Image, Path.Combine(root, "icon.dds"))
+        ], [], CancellationToken.None);
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_search_resources",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, query = "items", limit = 1 }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal(2, payload.RootElement.GetProperty("total").GetInt32());
+        Assert.Single(payload.RootElement.GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task Search_resources_rejects_limit_above_one_hundred()
+    {
+        var root = CreateTempDirectory();
+        await new ProfileStore(root).SaveAsync(CreateProfile("profile-1"), CancellationToken.None);
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_search_resources",
+            JsonSerializer.SerializeToElement(new { profileId = "profile-1", limit = 101 }),
+            CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Contains("limit", result.Content.Single().Text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Read_resource_returns_error_when_path_is_not_indexed()
+    {
+        var root = CreateTempDirectory();
+        var profile = CreateProfile("profile-1");
+        await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_read_resource",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, resourcePath = "missing.txt" }),
+            CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Contains("not found", result.Content.Single().Text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Read_resource_returns_text_for_text_resource()
+    {
+        var root = CreateTempDirectory();
+        var profile = CreateProfile("profile-1");
+        var textPath = Path.Combine(root, "files", "hello.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(textPath)!);
+        await File.WriteAllTextAsync(textPath, "hello exile");
+        await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
+        await new ResourceIndexStore(root).SaveAsync(profile.Id, [
+            Resource(profile.Id, "text/hello.txt", ".txt", ResourceKind.Text, textPath)
+        ], [], CancellationToken.None);
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_read_resource",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, resourcePath = "text/hello.txt", maxBytes = 64 }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal("text", payload.RootElement.GetProperty("encoding").GetString());
+        Assert.Equal("hello exile", payload.RootElement.GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public async Task Read_resource_returns_binary_summary_and_truncated_flag()
+    {
+        var root = CreateTempDirectory();
+        var profile = CreateProfile("profile-1");
+        var binaryPath = Path.Combine(root, "files", "icon.bin");
+        Directory.CreateDirectory(Path.GetDirectoryName(binaryPath)!);
+        await File.WriteAllBytesAsync(binaryPath, [0, 1, 2, 3, 4, 5]);
+        await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
+        await new ResourceIndexStore(root).SaveAsync(profile.Id, [
+            Resource(profile.Id, "art/icon.bin", ".bin", ResourceKind.Binary, binaryPath)
+        ], [], CancellationToken.None);
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_read_resource",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, resourcePath = "art/icon.bin", maxBytes = 4 }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal("base64", payload.RootElement.GetProperty("encoding").GetString());
+        Assert.True(payload.RootElement.GetProperty("truncated").GetBoolean());
+        Assert.Equal("AAECAw==", payload.RootElement.GetProperty("base64").GetString());
+        Assert.Equal("00010203", payload.RootElement.GetProperty("hexPreview").GetString());
+    }
+
+    [Fact]
+    public async Task Read_resource_returns_native_error_without_fabricated_content()
+    {
+        var root = CreateTempDirectory();
+        var profile = CreateProfile("profile-1");
+        await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
+        await new ResourceIndexStore(root).SaveAsync(profile.Id, [
+            Resource(profile.Id, "metadata/native.datc64", ".datc64", ResourceKind.Table, "native-bundles2://bundle.bin#offset=0&size=12")
+        ], [], CancellationToken.None);
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_read_resource",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, resourcePath = "metadata/native.datc64" }),
+            CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Contains("native_resource_not_supported_in_stage1", result.Content.Single().Text);
+    }
+
     private static JsonElement EmptyArguments()
     {
         return JsonSerializer.SerializeToElement(new { });
@@ -100,6 +230,26 @@ public sealed class McpPoeToolsTests
             ClientFingerprint: "abc",
             CreatedAt: DateTimeOffset.UtcNow,
             UpdatedAt: DateTimeOffset.UtcNow);
+    }
+
+    private static ResourceSummaryDto Resource(
+        string profileId,
+        string path,
+        string extension,
+        ResourceKind kind,
+        string physicalPath)
+    {
+        return new ResourceSummaryDto(
+            Id: Guid.NewGuid().ToString("N"),
+            ProfileId: profileId,
+            VirtualPath: path,
+            NormalizedPath: path,
+            Extension: extension,
+            Kind: kind,
+            Size: 10,
+            PhysicalPath: physicalPath,
+            SourceLayer: ResourceSourceLayer.Base,
+            IndexedAt: DateTimeOffset.UtcNow);
     }
 
     private static string CreateTempDirectory()

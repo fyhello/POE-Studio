@@ -1,7 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using PoeStudio.Contracts;
 using PoeStudio.Core.Workspace;
 using PoeStudio.Storage.Profiles;
+using PoeStudio.Storage.Resources;
 
 namespace PoeStudio.Mcp;
 
@@ -42,16 +44,20 @@ public static class PoeMcpTools
                 ObjectSchema(("profileId", "string"))),
             (arguments, cancellationToken) => GetIndexStatusAsync(workspace, arguments, cancellationToken));
 
-        RegisterPlaceholder(
-            registry,
-            "poe_search_resources",
-            "Search indexed POE Studio resources by query and limit. Does not scan disk.",
-            ObjectSchema(("profileId", "string"), ("query", "string"), ("limit", "integer")));
-        RegisterPlaceholder(
-            registry,
-            "poe_read_resource",
-            "Read an indexed physical resource through the Stage 1 read-only boundary with maxBytes limits.",
-            ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("maxBytes", "integer")));
+        registry.Register(
+            new McpToolDefinition(
+                "poe_search_resources",
+                "Search indexed POE Studio resources by query and limit. Does not scan disk.",
+                ObjectSchema(("profileId", "string"), ("query", "string"), ("limit", "integer"))),
+            (arguments, cancellationToken) => SearchResourcesAsync(workspace, arguments, cancellationToken));
+
+        registry.Register(
+            new McpToolDefinition(
+                "poe_read_resource",
+                "Read an indexed physical resource through the Stage 1 read-only boundary with maxBytes limits.",
+                ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("maxBytes", "integer"))),
+            (arguments, cancellationToken) => ReadResourceAsync(workspace, arguments, cancellationToken));
+
         RegisterPlaceholder(
             registry,
             "poe_datc64_extract_translatable_cells",
@@ -150,6 +156,87 @@ public static class PoeMcpTools
         return JsonSuccess(status);
     }
 
+    private static async Task<McpToolResult> SearchResourcesAsync(
+        PoeWorkspaceResolution workspace,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetWorkspaceRoot(workspace, out var workspaceRoot, out var error))
+        {
+            return McpToolResult.Error(error);
+        }
+
+        if (!TryGetString(arguments, "profileId", out var profileId))
+        {
+            return McpToolResult.Error("Argument 'profileId' is required.");
+        }
+
+        var limit = GetInt32(arguments, "limit") ?? 20;
+        if (limit is < 1 or > 100)
+        {
+            return McpToolResult.Error("Argument 'limit' must be between 1 and 100.");
+        }
+
+        var query = TryGetString(arguments, "query", out var queryValue) ? queryValue : null;
+        var response = await new ResourceIndexStore(workspaceRoot)
+            .SearchAsync(new ResourceSearchRequest(profileId, Query: query, Take: limit), cancellationToken);
+
+        return JsonSuccess(new
+        {
+            profileId,
+            query,
+            limit,
+            total = response.Total,
+            items = response.Items
+        });
+    }
+
+    private static async Task<McpToolResult> ReadResourceAsync(
+        PoeWorkspaceResolution workspace,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetWorkspaceRoot(workspace, out var workspaceRoot, out var error))
+        {
+            return McpToolResult.Error(error);
+        }
+
+        if (!TryGetString(arguments, "profileId", out var profileId))
+        {
+            return McpToolResult.Error("Argument 'profileId' is required.");
+        }
+
+        if (!TryGetString(arguments, "resourcePath", out var resourcePath))
+        {
+            return McpToolResult.Error("Argument 'resourcePath' is required.");
+        }
+
+        var maxBytes = GetInt32(arguments, "maxBytes") ?? PoeResourceContentReader.DefaultMaxBytes;
+        var read = await new PoeResourceContentReader(new ResourceIndexStore(workspaceRoot))
+            .ReadAsync(profileId, resourcePath, maxBytes, cancellationToken);
+
+        if (read.IsError)
+        {
+            return McpToolResult.Error($"{read.ErrorCode}: {read.ErrorMessage}");
+        }
+
+        var isText = IsTextResource(read.Resource!, read.Bytes);
+        return JsonSuccess(new
+        {
+            profileId,
+            resourcePath = read.Resource!.NormalizedPath,
+            physicalPath = read.PhysicalPath,
+            kind = read.Resource.Kind.ToString(),
+            size = read.Resource.Size,
+            bytesRead = read.Bytes.Length,
+            truncated = read.Truncated,
+            encoding = isText ? "text" : "base64",
+            text = isText ? System.Text.Encoding.UTF8.GetString(read.Bytes) : null,
+            base64 = isText ? null : Convert.ToBase64String(read.Bytes),
+            hexPreview = isText ? null : Convert.ToHexString(read.Bytes).ToLowerInvariant()
+        });
+    }
+
     private static async Task<object> ReadIndexStatusAsync(
         string profileId,
         string indexRoot,
@@ -243,6 +330,19 @@ public static class PoeMcpTools
         return root.TryGetProperty(propertyName, out var element) && element.TryGetInt32(out var value)
             ? value
             : null;
+    }
+
+    private static bool IsTextResource(ResourceSummaryDto resource, byte[] bytes)
+    {
+        if (resource.Kind is ResourceKind.Text or ResourceKind.Ui)
+        {
+            return true;
+        }
+
+        return resource.Extension.Equals(".txt", StringComparison.OrdinalIgnoreCase)
+            || resource.Extension.Equals(".json", StringComparison.OrdinalIgnoreCase)
+            || resource.Extension.Equals(".xml", StringComparison.OrdinalIgnoreCase)
+            || (bytes.Length > 0 && !bytes.Contains((byte)0) && bytes.All(value => value is 9 or 10 or 13 or >= 32));
     }
 
     private static DateTimeOffset? GetDateTimeOffset(JsonElement root, string propertyName)
