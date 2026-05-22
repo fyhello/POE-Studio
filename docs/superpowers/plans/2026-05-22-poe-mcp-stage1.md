@@ -289,10 +289,10 @@ git commit -m "feat(mcp): implement stdio protocol lifecycle"
 - 创建：`src/PoeStudio.Mcp/McpToolRegistry.cs`
 - 创建：`tests/PoeStudio.Tests/McpToolRegistryTests.cs`
 
-- [ ] **步骤 1：运行影响分析**  
+- [x] **步骤 1：运行影响分析**  
   本任务新增文件，不修改现有函数、类、方法。记录：`Impact: new MCP tool registry only; no existing symbol edited in this task`。
 
-- [ ] **步骤 2：先写工具注册测试**  
+- [x] **步骤 2：先写工具注册测试**  
   测试必须验证 `tools/list` 返回以下工具名：
 
 ```text
@@ -315,7 +315,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
   预期：实现前 FAIL。
 
-- [ ] **步骤 3：实现工具注册表**  
+- [x] **步骤 3：实现工具注册表**  
   `McpToolRegistry` 必须提供：
   - `Register(McpToolDefinition definition, Func<JsonElement, CancellationToken, Task<McpToolResult>> handler)`
   - `ListTools()`
@@ -330,10 +330,10 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
   - `Content`
   - `IsError`
 
-- [ ] **步骤 4：接入协议层**  
+- [x] **步骤 4：接入协议层**  
   `tools/list` 调用 `McpToolRegistry.ListTools()`。`tools/call` 调用 `McpToolRegistry.CallToolAsync(...)`。
 
-- [ ] **步骤 5：运行工具注册测试**  
+- [x] **步骤 5：运行工具注册测试**  
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~McpToolRegistryTests

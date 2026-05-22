@@ -14,6 +14,8 @@ public static class McpProtocol
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    private static readonly McpToolRegistry DefaultRegistry = McpToolRegistry.CreateDefault();
+
     public static async Task RunAsync(
         TextReader input,
         TextWriter output,
@@ -69,10 +71,10 @@ public static class McpProtocol
             case "notifications/initialized":
                 return;
             case "tools/list":
-                await WriteResponseAsync(output, McpResponse.Success(request.Id, CreateToolsListResult()), cancellationToken);
+                await WriteResponseAsync(output, McpResponse.Success(request.Id, CreateToolsListResult(DefaultRegistry)), cancellationToken);
                 return;
             case "tools/call":
-                await WriteResponseAsync(output, McpResponse.Success(request.Id, CreateToolNotImplementedResult(request)), cancellationToken);
+                await WriteResponseAsync(output, McpResponse.Success(request.Id, await CallToolAsync(DefaultRegistry, request, cancellationToken)), cancellationToken);
                 return;
             default:
                 await WriteResponseAsync(output, McpResponse.Failure(request.Id, -32601, $"Method not found: {request.Method}"), cancellationToken);
@@ -118,46 +120,48 @@ public static class McpProtocol
         };
     }
 
-    private static object CreateToolsListResult()
+    private static object CreateToolsListResult(McpToolRegistry registry)
     {
         return new
         {
-            tools = new[]
+            tools = registry.ListTools().Select(tool => new
             {
-                new
-                {
-                    name = "poe_get_workspace",
-                    description = "Return POE Studio workspace resolution details. Placeholder registered for MCP lifecycle validation.",
-                    inputSchema = new
-                    {
-                        type = "object",
-                        properties = new { }
-                    }
-                }
-            }
+                name = tool.Name,
+                description = tool.Description,
+                inputSchema = tool.InputSchema
+            }).ToArray()
         };
     }
 
-    private static object CreateToolNotImplementedResult(McpRequest request)
+    private static async Task<object> CallToolAsync(
+        McpToolRegistry registry,
+        McpRequest request,
+        CancellationToken cancellationToken)
     {
-        var name = "<unknown>";
-        if (request.Params.ValueKind == JsonValueKind.Object
-            && request.Params.TryGetProperty("name", out var nameElement)
-            && nameElement.ValueKind == JsonValueKind.String
-            && !string.IsNullOrWhiteSpace(nameElement.GetString()))
+        if (request.Params.ValueKind != JsonValueKind.Object
+            || !request.Params.TryGetProperty("name", out var nameElement)
+            || nameElement.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(nameElement.GetString()))
         {
-            name = nameElement.GetString()!;
+            return new
+            {
+                content = new[] { new McpContent("text", "Invalid params: tools/call requires name.") },
+                isError = true
+            };
         }
 
+        var arguments = request.Params.TryGetProperty("arguments", out var argumentsElement)
+            && argumentsElement.ValueKind == JsonValueKind.Object
+                ? argumentsElement
+                : JsonSerializer.SerializeToElement(new { });
+        var result = await registry.CallToolAsync(nameElement.GetString()!, arguments, cancellationToken);
         return new
         {
-            content = new[]
-            {
-                new McpContent("text", $"Tool '{name}' is not implemented yet.")
-            },
-            isError = true
+            content = result.Content,
+            isError = result.IsError
         };
     }
+
 }
 
 public sealed record McpRequest(
