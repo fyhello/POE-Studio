@@ -3,7 +3,15 @@ using PoeStudio.Contracts;
 
 namespace PoeStudio.Core.Agent;
 
-public sealed class CodexProcessRunner
+public interface ICodexProcessRunner
+{
+    Task<CodexRunResult> RunAsync(
+        AgentSettingsDto settings,
+        string prompt,
+        CancellationToken cancellationToken);
+}
+
+public sealed class CodexProcessRunner : ICodexProcessRunner
 {
     private readonly CodexJsonEventParser _parser;
 

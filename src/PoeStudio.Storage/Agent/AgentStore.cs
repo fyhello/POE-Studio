@@ -36,9 +36,50 @@ public sealed class AgentStore
         await WriteJsonAsync(ThreadPath(thread.Id), thread, cancellationToken);
     }
 
+    public async Task<AgentThreadDto> SaveNewThreadAsync(
+        string profileId,
+        string title,
+        string goal,
+        string taskKind,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var thread = new AgentThreadDto(
+            NewId("thread"),
+            profileId,
+            title,
+            goal,
+            taskKind,
+            AgentThreadStatus.Active,
+            now,
+            now);
+        await SaveThreadAsync(thread, cancellationToken);
+        return thread;
+    }
+
     public async Task<AgentThreadDto?> GetThreadAsync(string threadId, CancellationToken cancellationToken)
     {
         return await ReadJsonAsync<AgentThreadDto>(ThreadPath(threadId), cancellationToken);
+    }
+
+    public async Task<AgentRunDto?> FindRunAsync(string runId, CancellationToken cancellationToken)
+    {
+        var threadsRoot = Path.Combine(AgentRoot, "threads");
+        if (!Directory.Exists(threadsRoot))
+        {
+            return null;
+        }
+
+        foreach (var runPath in Directory.EnumerateFiles(threadsRoot, "run.json", SearchOption.AllDirectories))
+        {
+            var run = await ReadJsonAsync<AgentRunDto>(runPath, cancellationToken);
+            if (run is not null && string.Equals(run.Id, runId, StringComparison.Ordinal))
+            {
+                return run;
+            }
+        }
+
+        return null;
     }
 
     public async Task AppendMessageAsync(AgentMessageDto message, CancellationToken cancellationToken)
