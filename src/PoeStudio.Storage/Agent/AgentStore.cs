@@ -105,6 +105,27 @@ public sealed class AgentStore
         return await ReadJsonAsync<AgentRunDto>(RunPath(threadId, runId), cancellationToken);
     }
 
+    public async Task<IReadOnlyList<AgentRunDto>> ListRunsAsync(string threadId, CancellationToken cancellationToken)
+    {
+        var runsRoot = Path.Combine(ThreadRoot(threadId), "runs");
+        if (!Directory.Exists(runsRoot))
+        {
+            return [];
+        }
+
+        var runs = new List<AgentRunDto>();
+        foreach (var path in Directory.EnumerateFiles(runsRoot, "run.json", SearchOption.AllDirectories))
+        {
+            var run = await ReadJsonAsync<AgentRunDto>(path, cancellationToken);
+            if (run is not null)
+            {
+                runs.Add(run);
+            }
+        }
+
+        return runs.OrderByDescending(x => x.CreatedAt).ToArray();
+    }
+
     public async Task SavePlanAsync(
         string threadId,
         string runId,
@@ -173,6 +194,36 @@ public sealed class AgentStore
     {
         return await ReadJsonAsync<IReadOnlyList<AgentApprovalDto>>(ApprovalsPath(threadId, runId), cancellationToken)
             ?? [];
+    }
+
+    public async Task<(string ThreadId, string RunId, AgentApprovalDto Approval)?> FindApprovalAsync(
+        string approvalId,
+        CancellationToken cancellationToken)
+    {
+        var threadsRoot = Path.Combine(AgentRoot, "threads");
+        if (!Directory.Exists(threadsRoot))
+        {
+            return null;
+        }
+
+        foreach (var approvalsPath in Directory.EnumerateFiles(threadsRoot, "approvals.json", SearchOption.AllDirectories))
+        {
+            var approvals = await ReadJsonAsync<IReadOnlyList<AgentApprovalDto>>(approvalsPath, cancellationToken) ?? [];
+            var approval = approvals.FirstOrDefault(x => string.Equals(x.Id, approvalId, StringComparison.Ordinal));
+            if (approval is null)
+            {
+                continue;
+            }
+
+            var runPath = Path.Combine(Path.GetDirectoryName(approvalsPath)!, "run.json");
+            var run = await ReadJsonAsync<AgentRunDto>(runPath, cancellationToken);
+            if (run is not null)
+            {
+                return (run.ThreadId, run.Id, approval);
+            }
+        }
+
+        return null;
     }
 
     public async Task<bool> TryUpdateApprovalStatusAsync(

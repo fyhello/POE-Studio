@@ -13,6 +13,8 @@ using PoeStudio.Core.Resources;
 using PoeStudio.Core.Tables;
 using PoeStudio.Core.Translation;
 using PoeStudio.Core.Workspace;
+using PoeStudio.Core.Agent;
+using PoeStudio.Storage.Agent;
 using PoeStudio.Storage.Overlay;
 using PoeStudio.Storage.Profiles;
 using PoeStudio.Storage.Batch;
@@ -54,11 +56,19 @@ builder.Services.AddScoped(sp => new PatchOverlayDraftService(
     sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot,
     sp.GetRequiredService<OverlayStore>(),
     sp.GetRequiredService<ResourceIndexStore>()));
+builder.Services.AddScoped(sp => new AgentStore(sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
+builder.Services.AddSingleton<CodexJsonEventParser>();
+builder.Services.AddSingleton<AgentPromptBuilder>();
+builder.Services.AddSingleton<Datc64TranslationDraftParser>();
+builder.Services.AddScoped<CodexProcessRunner>();
+builder.Services.AddScoped<ICodexProcessRunner>(sp => sp.GetRequiredService<CodexProcessRunner>());
+builder.Services.AddScoped<AgentOrchestrator>();
 
 var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapAgentRoutes();
 
 app.MapGet("/api/health", () => ApiResponse<object>.Success(new
 {

@@ -133,3 +133,27 @@ public sealed record AgentApprovalDto(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     string? AppliedOverlayPath);
+
+public sealed record AgentThreadCreateRequest(
+    string ProfileId,
+    string Title,
+    string Goal,
+    string TaskKind);
+
+public sealed record AgentMessageCreateRequest(
+    string Content,
+    IReadOnlyList<string>? Attachments);
+
+public sealed record AgentRunCreateRequest(
+    string ThreadId,
+    string ProfileId,
+    string Goal,
+    string TaskKind,
+    string? ResourcePath);
+
+public sealed record AgentThreadSnapshotDto(
+    AgentThreadDto Thread,
+    IReadOnlyList<AgentMessageDto> Messages,
+    IReadOnlyList<AgentRunDto> RecentRuns,
+    IReadOnlyList<AgentPlanStepDto> LatestPlan,
+    IReadOnlyList<AgentApprovalDto> PendingApprovals);
