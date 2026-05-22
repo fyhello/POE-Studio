@@ -204,6 +204,61 @@ public sealed class AgentStoreTests
     }
 
     [Fact]
+    public async Task Events_can_be_listed_while_new_events_are_appended()
+    {
+        var workspace = CreateWorkspace();
+        var now = DateTimeOffset.Parse("2026-05-22T00:00:00Z");
+        var store = new AgentStore(workspace);
+        var thread = new AgentThreadDto(
+            "thread-1",
+            "profile-1",
+            "Question",
+            "Goal",
+            "question",
+            AgentThreadStatus.Active,
+            now,
+            now);
+        var run = new AgentRunDto(
+            "run-1",
+            thread.Id,
+            thread.ProfileId,
+            thread.Goal,
+            thread.TaskKind,
+            AgentRunStatus.Running,
+            5,
+            "Running",
+            now,
+            now,
+            0,
+            null,
+            null,
+            null);
+        await store.SaveThreadAsync(thread, CancellationToken.None);
+        await store.SaveRunAsync(run, CancellationToken.None);
+
+        var writer = Task.Run(async () =>
+        {
+            for (var i = 0; i < 50; i++)
+            {
+                await store.AppendEventAsync(thread.Id, run.Id, AgentEventType.CodexStdout, $"event {i}", null, CancellationToken.None);
+            }
+        });
+        var reader = Task.Run(async () =>
+        {
+            for (var i = 0; i < 50; i++)
+            {
+                _ = await store.ListEventsAsync(thread.Id, run.Id, 0, CancellationToken.None);
+            }
+        });
+
+        await Task.WhenAll(writer, reader);
+        var events = await store.ListEventsAsync(thread.Id, run.Id, 0, CancellationToken.None);
+
+        Assert.Equal(50, events.Count);
+        Assert.Equal(Enumerable.Range(1, 50).Select(x => (long)x), events.Select(x => x.Sequence));
+    }
+
+    [Fact]
     public async Task Approve_pending_approval_once()
     {
         var workspace = CreateWorkspace();

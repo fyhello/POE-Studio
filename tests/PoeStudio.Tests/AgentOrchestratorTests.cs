@@ -191,19 +191,31 @@ public sealed class AgentOrchestratorTests
             _stderr = stderr;
         }
 
-        public Task<CodexRunResult> RunAsync(AgentSettingsDto settings, string prompt, CancellationToken cancellationToken)
+        public async Task<CodexRunResult> RunAsync(
+            AgentSettingsDto settings,
+            string prompt,
+            Func<CodexParsedEvent, Task>? onEvent,
+            CancellationToken cancellationToken)
         {
             var events = new[]
             {
                 new CodexParsedEvent("{}", CodexParsedEventType.McpToolCall, "poe_get_workspace completed", "{}", false, true, "poe_get_workspace"),
                 new CodexParsedEvent("{}", CodexParsedEventType.AgentMessage, _message, "{}", true, false, null)
             };
-            return Task.FromResult(new CodexRunResult(
+            if (onEvent is not null)
+            {
+                foreach (var parsedEvent in events)
+                {
+                    await onEvent(parsedEvent);
+                }
+            }
+
+            return new CodexRunResult(
                 _exitCode,
                 _exitCode != 0,
                 false,
                 events,
-                _stderr));
+                _stderr);
         }
     }
 
@@ -218,14 +230,26 @@ public sealed class AgentOrchestratorTests
 
         public List<string> Prompts { get; } = [];
 
-        public Task<CodexRunResult> RunAsync(AgentSettingsDto settings, string prompt, CancellationToken cancellationToken)
+        public async Task<CodexRunResult> RunAsync(
+            AgentSettingsDto settings,
+            string prompt,
+            Func<CodexParsedEvent, Task>? onEvent,
+            CancellationToken cancellationToken)
         {
             Prompts.Add(prompt);
             var events = new[]
             {
                 new CodexParsedEvent("{}", CodexParsedEventType.AgentMessage, _message, "{}", true, false, null)
             };
-            return Task.FromResult(new CodexRunResult(0, false, false, events, null));
+            if (onEvent is not null)
+            {
+                foreach (var parsedEvent in events)
+                {
+                    await onEvent(parsedEvent);
+                }
+            }
+
+            return new CodexRunResult(0, false, false, events, null);
         }
     }
 }

@@ -8,30 +8,70 @@ public interface ICodexProcessRunner
     Task<CodexRunResult> RunAsync(
         AgentSettingsDto settings,
         string prompt,
+        Func<CodexParsedEvent, Task>? onEvent,
         CancellationToken cancellationToken);
+
+    Task<CodexRunResult> RunAsync(
+        AgentSettingsDto settings,
+        string prompt,
+        CancellationToken cancellationToken)
+    {
+        return RunAsync(settings, prompt, null, cancellationToken);
+    }
 }
 
 public sealed class CodexProcessRunner : ICodexProcessRunner
 {
     private readonly CodexJsonEventParser _parser;
+    private readonly TimeSpan _noOutputTimeout;
 
     public CodexProcessRunner(CodexJsonEventParser parser)
+        : this(parser, TimeSpan.FromSeconds(30))
+    {
+    }
+
+    public CodexProcessRunner(CodexJsonEventParser parser, TimeSpan noOutputTimeout)
     {
         _parser = parser;
+        _noOutputTimeout = noOutputTimeout;
+    }
+
+    public Task<CodexRunResult> RunAsync(
+        AgentSettingsDto settings,
+        string prompt,
+        CancellationToken cancellationToken)
+    {
+        return RunAsync(settings, prompt, null, cancellationToken);
     }
 
     public async Task<CodexRunResult> RunAsync(
         AgentSettingsDto settings,
         string prompt,
+        Func<CodexParsedEvent, Task>? onEvent,
         CancellationToken cancellationToken)
     {
         var events = new List<CodexParsedEvent>();
         var stderrLines = new List<string>();
+        var lastOutputAt = DateTimeOffset.UtcNow;
         using var process = new Process
         {
             StartInfo = BuildStartInfo(settings, prompt),
             EnableRaisingEvents = true
         };
+
+        async Task PublishAsync(CodexParsedEvent parsedEvent)
+        {
+            lock (events)
+            {
+                events.Add(parsedEvent);
+                lastOutputAt = DateTimeOffset.UtcNow;
+            }
+
+            if (onEvent is not null)
+            {
+                await onEvent(parsedEvent);
+            }
+        }
 
         try
         {
@@ -39,33 +79,64 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
         {
-            events.Add(new CodexParsedEvent(
+            var parsedEvent = new CodexParsedEvent(
                 string.Empty,
                 CodexParsedEventType.Error,
                 ex.Message,
                 null,
                 true,
                 false,
-                null));
-            return new CodexRunResult(null, true, false, events, ex.Message);
+                null);
+            await PublishAsync(parsedEvent);
+            return new CodexRunResult(null, true, false, events.ToArray(), ex.Message, "process_start_failed");
         }
 
-        var stdoutTask = ReadStdoutAsync(process, events);
-        var stderrTask = ReadStderrAsync(process, events, stderrLines);
+        var stdoutTask = ReadStdoutAsync(process, PublishAsync);
+        var stderrTask = ReadStderrAsync(process, PublishAsync, stderrLines);
         var cancelled = false;
+        var timedOut = false;
         await using var cancellationRegistration = cancellationToken.Register(() =>
         {
             if (!process.HasExited)
             {
-                process.Kill(entireProcessTree: true);
+                KillProcessTree(process);
             }
         });
 
-        await process.WaitForExitAsync(CancellationToken.None);
+        var waitTask = process.WaitForExitAsync(CancellationToken.None);
+        while (!waitTask.IsCompleted)
+        {
+            var completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromMilliseconds(200), CancellationToken.None));
+            if (completed == waitTask)
+            {
+                break;
+            }
+
+            if (!cancellationToken.IsCancellationRequested && DateTimeOffset.UtcNow - lastOutputAt > _noOutputTimeout)
+            {
+                timedOut = true;
+                await PublishAsync(new CodexParsedEvent(
+                    string.Empty,
+                    CodexParsedEventType.Error,
+                    $"No Codex output was observed for {_noOutputTimeout.TotalSeconds:0.#} seconds.",
+                    null,
+                    true,
+                    false,
+                    null));
+                if (!process.HasExited)
+                {
+                    KillProcessTree(process);
+                }
+
+                break;
+            }
+        }
+
+        await waitTask;
         if (cancellationToken.IsCancellationRequested)
         {
             cancelled = true;
-            events.Add(new CodexParsedEvent(
+            await PublishAsync(new CodexParsedEvent(
                 string.Empty,
                 CodexParsedEventType.Cancelled,
                 "Codex run cancelled",
@@ -77,13 +148,18 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
 
         await Task.WhenAll(SwallowCancellation(stdoutTask), SwallowCancellation(stderrTask));
         int? exitCode = process.HasExited ? process.ExitCode : null;
-        var failed = !cancelled && exitCode != 0;
+        var hasErrorEvent = events.Any(x => x.EventType == CodexParsedEventType.Error);
+        var failed = !cancelled && (timedOut || exitCode != 0 || hasErrorEvent);
+        var errorCode = timedOut ? "no_output_timeout" : failed ? "codex_failed" : null;
+        var errorSummary = events.LastOrDefault(x => x.EventType == CodexParsedEventType.Error)?.Message
+            ?? (stderrLines.Count == 0 ? null : string.Join(Environment.NewLine, stderrLines.Take(20)));
         return new CodexRunResult(
             exitCode,
             failed,
             cancelled,
             events.ToArray(),
-            stderrLines.Count == 0 ? null : string.Join(Environment.NewLine, stderrLines.Take(20)));
+            errorSummary,
+            errorCode);
     }
 
     private ProcessStartInfo BuildStartInfo(AgentSettingsDto settings, string prompt)
@@ -138,9 +214,9 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
 
     private async Task ReadStdoutAsync(
         Process process,
-        List<CodexParsedEvent> events)
+        Func<CodexParsedEvent, Task> onEvent)
     {
-        while (!process.StandardOutput.EndOfStream)
+        while (true)
         {
             var line = await process.StandardOutput.ReadLineAsync();
             if (line is null)
@@ -148,16 +224,16 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
                 break;
             }
 
-            events.Add(_parser.ParseLine(line));
+            await onEvent(_parser.ParseLine(line));
         }
     }
 
     private static async Task ReadStderrAsync(
         Process process,
-        List<CodexParsedEvent> events,
+        Func<CodexParsedEvent, Task> onEvent,
         List<string> stderrLines)
     {
-        while (!process.StandardError.EndOfStream)
+        while (true)
         {
             var line = await process.StandardError.ReadLineAsync();
             if (line is null)
@@ -166,7 +242,7 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
             }
 
             stderrLines.Add(line);
-            events.Add(new CodexParsedEvent(
+            await onEvent(new CodexParsedEvent(
                 line,
                 CodexParsedEventType.StdErr,
                 line,
@@ -174,6 +250,17 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
                 false,
                 false,
                 null));
+        }
+    }
+
+    private static void KillProcessTree(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
         }
     }
 

@@ -192,6 +192,24 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     [Fact]
+    public async Task Agent_run_streams_events_while_runner_is_still_running()
+    {
+        _runner.BlockAfterFirstEvent = true;
+        var client = _factory.CreateClient();
+        var thread = await CreateThreadAsync(client, "question");
+
+        var run = await CreateRunAsync(client, thread, "question", null);
+        var events = await WaitForRunEventAsync(client, run.Id, AgentEventType.McpToolCall);
+        var stillRunning = await client.GetFromJsonAsync<ApiResponse<AgentRunDto>>($"/api/agent/runs/{run.Id}");
+        var cancelResponse = await client.PostAsync($"/api/agent/runs/{run.Id}/cancel", null);
+        await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.Cancelled);
+
+        Assert.Equal(AgentRunStatus.Running, stillRunning!.Data!.Status);
+        Assert.Contains(events, x => x.Type == AgentEventType.McpToolCall);
+        Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
+    }
+
+    [Fact]
     public async Task Agent_background_run_unknown_exception_marks_run_failed_with_event()
     {
         _runner.ThrowUnexpected = true;
@@ -363,6 +381,22 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         throw new TimeoutException("Runner did not observe cancellation.");
     }
 
+    private static async Task<IReadOnlyList<AgentEventDto>> WaitForRunEventAsync(HttpClient client, string runId, AgentEventType eventType)
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            var payload = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentEventDto>>>($"/api/agent/runs/{runId}/events");
+            if (payload!.Data!.Any(x => x.Type == eventType))
+            {
+                return payload.Data!;
+            }
+
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException($"Run {runId} did not record {eventType}.");
+    }
+
     private async Task SaveResourceIndexAsync(string profileId, string resourcePath, string physicalPath)
     {
         await new ResourceIndexStore(_workspaceRoot).SaveAsync(
@@ -388,10 +422,15 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
     {
         public int Datc64RowIndex { get; set; }
         public bool BlockUntilCancelled { get; set; }
+        public bool BlockAfterFirstEvent { get; set; }
         public bool SawCancellation { get; set; }
         public bool ThrowUnexpected { get; set; }
 
-        public async Task<CodexRunResult> RunAsync(AgentSettingsDto settings, string prompt, CancellationToken cancellationToken)
+        public async Task<CodexRunResult> RunAsync(
+            AgentSettingsDto settings,
+            string prompt,
+            Func<CodexParsedEvent, Task>? onEvent,
+            CancellationToken cancellationToken)
         {
             if (ThrowUnexpected)
             {
@@ -449,6 +488,33 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
                 new CodexParsedEvent("{}", CodexParsedEventType.McpToolCall, "poe_get_workspace completed", "{}", false, true, "poe_get_workspace"),
                 new CodexParsedEvent("{}", CodexParsedEventType.AgentMessage, final, "{}", true, false, null)
             };
+            if (onEvent is not null)
+            {
+                await onEvent(events[0]);
+                if (BlockAfterFirstEvent)
+                {
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        SawCancellation = true;
+                        return new CodexRunResult(
+                            null,
+                            false,
+                            true,
+                            [events[0], new CodexParsedEvent("{}", CodexParsedEventType.Cancelled, "cancelled", "{}", true, false, null)],
+                            null);
+                    }
+                }
+
+                for (var i = 1; i < events.Length; i++)
+                {
+                    await onEvent(events[i]);
+                }
+            }
+
             return new CodexRunResult(0, false, false, events, null);
         }
     }

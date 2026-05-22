@@ -23,6 +23,23 @@ public sealed class CodexJsonEventParserTests
         Assert.Equal("in_progress", payload.RootElement.GetProperty("status").GetString());
     }
 
+    [Theory]
+    [InlineData("failed")]
+    [InlineData("cancelled")]
+    public void ParseLine_marks_failed_mcp_tool_call_as_error(string status)
+    {
+        var parsed = _parser.ParseLine(
+            "{\"type\":\"item.completed\",\"item\":{\"type\":\"mcp_tool_call\",\"server\":\"poe-studio\",\"tool\":\"poe_get_workspace\",\"status\":\""
+            + status
+            + "\",\"error\":\"user cancelled MCP tool call\"}}");
+
+        Assert.Equal(CodexParsedEventType.Error, parsed.EventType);
+        Assert.True(parsed.IsToolCall);
+        Assert.Equal("poe_get_workspace", parsed.ToolName);
+        Assert.Contains(status, parsed.Message);
+        Assert.Contains("user cancelled", parsed.Message);
+    }
+
     [Fact]
     public void ParseLine_extracts_agent_message()
     {

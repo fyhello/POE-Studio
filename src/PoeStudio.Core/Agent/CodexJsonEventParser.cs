@@ -71,19 +71,24 @@ public sealed class CodexJsonEventParser
         var server = GetString(item, "server") ?? "unknown-server";
         var tool = GetString(item, "tool") ?? "unknown-tool";
         var status = GetString(item, "status") ?? "unknown";
+        var error = GetString(item, "error") ?? GetString(item, "message");
         var payload = new
         {
             server,
             tool,
             arguments = TryGetRaw(item, "arguments"),
-            status
+            status,
+            error
         };
+        var failed = string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, "cancelled", StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrWhiteSpace(error);
         return new CodexParsedEvent(
             rawJson,
-            CodexParsedEventType.McpToolCall,
-            $"{server}.{tool} {status}",
+            failed ? CodexParsedEventType.Error : CodexParsedEventType.McpToolCall,
+            string.IsNullOrWhiteSpace(error) ? $"{server}.{tool} {status}" : $"{server}.{tool} {status}: {error}",
             JsonSerializer.Serialize(payload, JsonLineOptions),
-            false,
+            failed,
             true,
             tool);
     }

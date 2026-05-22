@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Collections.Concurrent;
 using PoeStudio.Contracts;
 
 namespace PoeStudio.Storage.Agent;
@@ -11,6 +12,7 @@ public sealed class AgentStore
         WriteIndented = true
     };
     private static readonly JsonSerializerOptions JsonLineOptions = new(JsonSerializerDefaults.Web);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> FileLocks = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly string _workspaceRoot;
 
@@ -87,7 +89,7 @@ public sealed class AgentStore
         var path = MessagesPath(message.ThreadId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var line = JsonSerializer.Serialize(message, JsonLineOptions);
-        await File.AppendAllTextAsync(path, line + Environment.NewLine, Encoding.UTF8, cancellationToken);
+        await AppendLineAsync(path, line, cancellationToken);
     }
 
     public async Task<IReadOnlyList<AgentMessageDto>> ListMessagesAsync(string threadId, CancellationToken cancellationToken)
@@ -154,18 +156,27 @@ public sealed class AgentStore
     {
         var path = EventsPath(threadId, runId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var sequence = await GetNextEventSequenceAsync(path, cancellationToken);
-        var evt = new AgentEventDto(
-            NewId("event"),
-            runId,
-            sequence,
-            type,
-            message,
-            payloadJson,
-            DateTimeOffset.UtcNow);
-        var line = JsonSerializer.Serialize(evt, JsonLineOptions);
-        await File.AppendAllTextAsync(path, line + Environment.NewLine, Encoding.UTF8, cancellationToken);
-        return evt;
+        var fileLock = FileLocks.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
+        await fileLock.WaitAsync(cancellationToken);
+        try
+        {
+            var sequence = await GetNextEventSequenceAsync(path, cancellationToken);
+            var evt = new AgentEventDto(
+                NewId("event"),
+                runId,
+                sequence,
+                type,
+                message,
+                payloadJson,
+                DateTimeOffset.UtcNow);
+            var line = JsonSerializer.Serialize(evt, JsonLineOptions);
+            await AppendLineAsync(path, line, cancellationToken);
+            return evt;
+        }
+        finally
+        {
+            fileLock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<AgentEventDto>> ListEventsAsync(
@@ -282,7 +293,7 @@ public sealed class AgentStore
         }
 
         long last = 0;
-        await foreach (var line in File.ReadLinesAsync(path, cancellationToken))
+        await foreach (var line in ReadLinesSharedAsync(path, cancellationToken))
         {
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -318,7 +329,7 @@ public sealed class AgentStore
             return default;
         }
 
-        await using var stream = File.OpenRead(path);
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
     }
 
@@ -330,7 +341,7 @@ public sealed class AgentStore
         }
 
         var items = new List<T>();
-        await foreach (var line in File.ReadLinesAsync(path, cancellationToken))
+        await foreach (var line in ReadLinesSharedAsync(path, cancellationToken))
         {
             if (string.IsNullOrWhiteSpace(line))
             {
@@ -345,6 +356,32 @@ public sealed class AgentStore
         }
 
         return items;
+    }
+
+    private static async Task AppendLineAsync(string path, string line, CancellationToken cancellationToken)
+    {
+        var bytes = Encoding.UTF8.GetBytes(line + Environment.NewLine);
+        await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
+        await stream.WriteAsync(bytes, cancellationToken);
+    }
+
+    private static async IAsyncEnumerable<string> ReadLinesSharedAsync(
+        string path,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        while (!reader.EndOfStream)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var line = await reader.ReadLineAsync(cancellationToken);
+            if (line is null)
+            {
+                yield break;
+            }
+
+            yield return line;
+        }
     }
 
     private static string SafeSegment(string value)

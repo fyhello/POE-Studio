@@ -26,4 +26,5 @@ public sealed record CodexRunResult(
     bool Failed,
     bool Cancelled,
     IReadOnlyList<CodexParsedEvent> Events,
-    string? StderrSummary);
+    string? StderrSummary,
+    string? ErrorCode = null);

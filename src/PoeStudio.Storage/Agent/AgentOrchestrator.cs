@@ -102,9 +102,23 @@ public sealed class AgentOrchestrator
             var profileId = run.ProfileId;
             var taskKind = run.TaskKind;
             var prompt = _promptBuilder.Build(settings, capability, thread, messages, goal, resourcePath);
-            var result = await _runner.RunAsync(settings, prompt, cancellationToken);
+            var persistedEventKeys = new HashSet<string>(StringComparer.Ordinal);
+            var result = await _runner.RunAsync(
+                settings,
+                prompt,
+                async parsedEvent =>
+                {
+                    await PersistParsedEventAsync(run.ThreadId, run.Id, parsedEvent, CancellationToken.None);
+                    persistedEventKeys.Add(EventKey(parsedEvent));
+                },
+                cancellationToken);
             foreach (var parsedEvent in result.Events)
             {
+                if (persistedEventKeys.Contains(EventKey(parsedEvent)))
+                {
+                    continue;
+                }
+
                 await PersistParsedEventAsync(run.ThreadId, run.Id, parsedEvent, CancellationToken.None);
             }
 
@@ -116,7 +130,7 @@ public sealed class AgentOrchestrator
             if (result.Failed)
             {
                 await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunFailed, result.StderrSummary ?? "Codex failed", null, CancellationToken.None);
-                return await CompleteRunAsync(run, AgentRunStatus.Failed, 0, "Failed", "codex_failed", result.StderrSummary ?? "Codex failed", null, CancellationToken.None);
+                return await CompleteRunAsync(run, AgentRunStatus.Failed, 0, "Failed", result.ErrorCode ?? "codex_failed", result.StderrSummary ?? "Codex failed", null, CancellationToken.None);
             }
 
             var finalMessage = LastAgentMessage(result.Events);
@@ -268,6 +282,11 @@ public sealed class AgentOrchestrator
     {
         return events.LastOrDefault(x => x.EventType is CodexParsedEventType.AgentMessage or CodexParsedEventType.FinalMessage)?.Message
             ?? string.Empty;
+    }
+
+    private static string EventKey(CodexParsedEvent parsedEvent)
+    {
+        return $"{parsedEvent.EventType}|{parsedEvent.RawJson}|{parsedEvent.Message}";
     }
 
     private static string ExtractFinalJsonOrWrap(string taskKind, string profileId, string finalMessage)
