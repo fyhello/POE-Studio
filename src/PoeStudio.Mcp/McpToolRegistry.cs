@@ -43,13 +43,21 @@ public sealed class McpToolRegistry
         }
     }
 
-    public static McpToolRegistry CreateDefault()
+    public static McpToolRegistry CreateDefault(PoeWorkspaceResolution? workspace = null)
     {
+        workspace ??= new PoeWorkspaceResolution(false, null, "unresolved", "POE Studio workspace root is not configured.");
         var registry = new McpToolRegistry();
         foreach (var definition in CreateDefaultDefinitions())
         {
             registry.Register(definition, (_, _) => Task.FromResult(McpToolResult.Error($"Tool '{definition.Name}' is not implemented yet.")));
         }
+
+        registry.Register(
+            new McpToolDefinition(
+                "poe_get_workspace",
+                "Return POE Studio workspace root, resolution source, data directory, and current process directory.",
+                ObjectSchema()),
+            (_, _) => Task.FromResult(CreateWorkspaceResult(workspace)));
 
         return registry;
     }
@@ -103,6 +111,23 @@ public sealed class McpToolRegistry
         return JsonSerializer.SerializeToElement(schema);
     }
 
+    private static McpToolResult CreateWorkspaceResult(PoeWorkspaceResolution workspace)
+    {
+        if (!workspace.Success)
+        {
+            return McpToolResult.Error(workspace.Error ?? "POE Studio workspace root is not configured.");
+        }
+
+        var payload = JsonSerializer.Serialize(new
+        {
+            workspaceRoot = workspace.WorkspaceRoot,
+            source = workspace.Source,
+            dataDirectory = Path.Combine(workspace.WorkspaceRoot!, ".poe-studio"),
+            currentDirectory = Environment.CurrentDirectory
+        });
+        return McpToolResult.Success(payload);
+    }
+
     private sealed record RegisteredTool(
         McpToolDefinition Definition,
         Func<JsonElement, CancellationToken, Task<McpToolResult>> Handler);
@@ -117,6 +142,11 @@ public sealed record McpToolResult(
     IReadOnlyList<McpContent> Content,
     bool IsError)
 {
+    public static McpToolResult Success(string text)
+    {
+        return new McpToolResult([new McpContent("text", text)], false);
+    }
+
     public static McpToolResult Error(string message)
     {
         return new McpToolResult([new McpContent("text", message)], true);

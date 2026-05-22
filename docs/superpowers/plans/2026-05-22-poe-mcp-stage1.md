@@ -355,7 +355,7 @@ git commit -m "feat(mcp): register POE tool schemas"
 - 创建：`tests/PoeStudio.Tests/McpWorkspaceResolverTests.cs`
 - 修改：`src/PoeStudio.Mcp/Program.cs`
 
-- [ ] **步骤 1：运行影响分析**  
+- [x] **步骤 1：运行影响分析**  
   修改 `Program.cs` 前运行：
 
 ```powershell
@@ -363,15 +363,16 @@ gitnexus_impact target=Program direction=upstream repo=POE-Studio
 ```
 
   如果 GitNexus 无法区分新增 MCP `Program` 和 API `Program`，记录 `Impact: Program.cs in new PoeStudio.Mcp project; existing API Program.cs not edited`。
+  记录：GitNexus impact 命中 `src/PoeStudio.Api/Program.cs:Program`，risk LOW，direct 0；本任务修改的是新项目 `src/PoeStudio.Mcp/Program.cs`，existing API Program.cs not edited。
 
-- [ ] **步骤 2：先写 workspace 解析测试**  
+- [x] **步骤 2：先写 workspace 解析测试**  
   测试必须覆盖：
   - `--workspace-root C:\Example` 优先。
   - `POE_STUDIO_WORKSPACE_ROOT` 次优先。
   - `%LOCALAPPDATA%\PoeStudio\workspace-settings.json` 可解析。
   - 三者都不存在时返回失败，错误消息包含如何修复。
 
-- [ ] **步骤 3：实现解析器**  
+- [x] **步骤 3：实现解析器**  
   `PoeWorkspaceResolver` 必须暴露：
 
 ```csharp
@@ -388,10 +389,10 @@ public sealed class PoeWorkspaceResolver
 { "workspaceRoot": "C:\\Path\\To\\Workspace" }
 ```
 
-- [ ] **步骤 4：Program 接入解析器**  
+- [x] **步骤 4：Program 接入解析器**  
   启动时创建 resolver，并把 resolution 传入 `PoeMcpTools`。解析失败不退出进程；工具调用时返回 `isError: true`。
 
-- [ ] **步骤 5：运行测试**  
+- [x] **步骤 5：运行测试**  
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~McpWorkspaceResolverTests

@@ -14,14 +14,16 @@ public static class McpProtocol
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    private static readonly McpToolRegistry DefaultRegistry = McpToolRegistry.CreateDefault();
-
     public static async Task RunAsync(
         TextReader input,
         TextWriter output,
         TextWriter error,
         CancellationToken cancellationToken)
     {
+        var workspace = new PoeWorkspaceResolver().Resolve(Environment.GetCommandLineArgs().Skip(1).ToArray(), Environment.GetEnvironmentVariables()
+            .Cast<System.Collections.DictionaryEntry>()
+            .ToDictionary(entry => (string)entry.Key, entry => entry.Value?.ToString(), StringComparer.OrdinalIgnoreCase));
+        var registry = McpToolRegistry.CreateDefault(workspace);
         while (!cancellationToken.IsCancellationRequested)
         {
             var line = await input.ReadLineAsync(cancellationToken);
@@ -35,11 +37,12 @@ public static class McpProtocol
                 continue;
             }
 
-            await HandleLineAsync(line, output, error, cancellationToken);
+            await HandleLineAsync(registry, line, output, error, cancellationToken);
         }
     }
 
     public static async Task HandleLineAsync(
+        McpToolRegistry registry,
         string line,
         TextWriter output,
         TextWriter error,
@@ -71,10 +74,10 @@ public static class McpProtocol
             case "notifications/initialized":
                 return;
             case "tools/list":
-                await WriteResponseAsync(output, McpResponse.Success(request.Id, CreateToolsListResult(DefaultRegistry)), cancellationToken);
+                await WriteResponseAsync(output, McpResponse.Success(request.Id, CreateToolsListResult(registry)), cancellationToken);
                 return;
             case "tools/call":
-                await WriteResponseAsync(output, McpResponse.Success(request.Id, await CallToolAsync(DefaultRegistry, request, cancellationToken)), cancellationToken);
+                await WriteResponseAsync(output, McpResponse.Success(request.Id, await CallToolAsync(registry, request, cancellationToken)), cancellationToken);
                 return;
             default:
                 await WriteResponseAsync(output, McpResponse.Failure(request.Id, -32601, $"Method not found: {request.Method}"), cancellationToken);
