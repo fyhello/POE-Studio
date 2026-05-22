@@ -139,7 +139,7 @@
 - 修改：`PoeStudio.sln`
 - 修改：`tests/PoeStudio.Tests/PoeStudio.Tests.csproj`
 
-- [x] **步骤 1：运行影响分析**  
+- [x] **步骤 1：运行影响分析**
   由于本任务新增项目，不修改现有函数、类、方法。记录：`Impact: new project only; no existing symbol edited in this task`。
 
 - [x] **步骤 2：创建项目文件**  
@@ -341,7 +341,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
   预期：PASS。
 
-- [ ] **步骤 6：Commit**
+- [x] **步骤 6：Commit**
 
 ```powershell
 git add src\PoeStudio.Mcp\McpToolRegistry.cs src\PoeStudio.Mcp\McpProtocol.cs tests\PoeStudio.Tests\McpToolRegistryTests.cs
@@ -413,10 +413,11 @@ git commit -m "feat(mcp): resolve POE workspace root"
 - 创建：`src/PoeStudio.Mcp/PoeMcpTools.cs`
 - 创建：`tests/PoeStudio.Tests/McpPoeToolsTests.cs`
 
-- [ ] **步骤 1：运行影响分析**  
+- [x] **步骤 1：运行影响分析**
   本任务新增 `PoeMcpTools`，不修改现有函数、类、方法。记录：`Impact: new MCP tool implementations only; existing stores are consumed through public APIs`。
+  - Impact: `PoeMcpTools` is a new Stage 1 symbol; GitNexus has not indexed it yet. `McpToolRegistry` is likewise not present in the current index. Scope remains new MCP tool implementations only; existing stores are consumed through public APIs.
 
-- [ ] **步骤 2：先写工具测试**  
+- [x] **步骤 2：先写工具测试**
   测试必须覆盖：
   - `poe_get_workspace` 成功返回 root 和 source。
   - `poe_get_workspace` 在未配置 workspace 时返回 `isError: true`。
@@ -424,10 +425,10 @@ git commit -m "feat(mcp): resolve POE workspace root"
   - `poe_get_profile` 对不存在 id 返回 `isError: true`。
   - `poe_get_index_status` 对缺失索引返回 `exists: false` 和可操作提示。
 
-- [ ] **步骤 3：实现工具**  
+- [x] **步骤 3：实现工具**
   `PoeMcpTools.RegisterAll(McpToolRegistry registry, PoeWorkspaceResolution workspace)` 必须注册任务 2 工具清单中的必须工具。profile/index 读取优先复用现有 Storage/Core 类型；如现有类型需要配置路径，必须从 workspace root 推导，不得硬编码用户目录。
 
-- [ ] **步骤 4：运行测试**  
+- [x] **步骤 4：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~McpPoeToolsTests
@@ -435,7 +436,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
   预期：PASS。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add src\PoeStudio.Mcp\PoeMcpTools.cs tests\PoeStudio.Tests\McpPoeToolsTests.cs
