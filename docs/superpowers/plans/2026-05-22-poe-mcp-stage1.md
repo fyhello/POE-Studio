@@ -215,7 +215,7 @@ git commit -m "feat(mcp): add POE Studio MCP project shell"
 - [ ] **步骤 1：运行影响分析**  
   本任务新增文件，不修改现有函数、类、方法。记录：`Impact: new MCP protocol files only; no existing symbol edited in this task`。
 
-- [ ] **步骤 2：确认官方 SDK 可用性**  
+- [x] **步骤 2：确认官方 SDK 可用性**  
   运行：
 
 ```powershell
@@ -224,7 +224,7 @@ dotnet list src\PoeStudio.Mcp\PoeStudio.Mcp.csproj package
 
   预期：输出包含 `ModelContextProtocol`。如果没有，回到任务 1 重新执行 `dotnet add package`。
 
-- [ ] **步骤 3：先写协议测试**  
+- [x] **步骤 3：先写协议测试**  
   `McpProtocolTests.cs` 必须覆盖：
   - `initialize` 返回 protocol version、server info、capabilities.tools。
   - `notifications/initialized` 不返回响应。
@@ -239,14 +239,15 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
   预期：实现前 FAIL，失败原因指向 MCP server 尚未返回预期 lifecycle/tool 响应。
 
-- [ ] **步骤 4：用官方 SDK 实现 stdio server**  
+- [x] **步骤 4：用官方 SDK 实现 stdio server**  
   `Program.cs` 必须使用官方 SDK 创建 MCP server、注册 tools、连接 stdio transport。实现时遵守：
   - stdout 只允许 SDK transport 写 JSON-RPC。
   - 诊断日志写 stderr。
   - 工具注册在 server connect 前完成。
   - 所有 tool handler 捕获业务异常并返回 `isError: true`。
 
-- [ ] **步骤 5：manual fallback 条件**  
+- [x] **步骤 5：manual fallback 条件**  
+  记录：SDK 包版本 `ModelContextProtocol 1.3.0`。失败命令：`dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~McpProtocolTests`。失败摘要：官方 SDK stdio server 可通过 `initialize`、`notifications/initialized`、unknown method 测试，但 malformed JSON 输入没有向 stdout 返回本计划要求的 JSON-RPC parse error，测试 `Invalid_json_returns_error_and_diagnostics_stay_off_stdout` 超时。已排除工具注册顺序和 stdout 日志污染：server 已在 connect 前注册 tools，`builder.Logging.ClearProviders()`，stdout 无非 JSON 文本。为满足任务 2 协议错误处理要求，切换 `manual fallback`。
   只有官方 SDK 方案无法通过 `codex mcp add` 或进程级测试，且错误不是参数或用法问题时，才允许创建 `McpProtocol.cs`。fallback 版 `McpProtocol.cs` 必须包含：
   - `McpRequest`
   - `McpResponse`
@@ -264,10 +265,10 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
   - invalid params error code `-32602`
   - internal error code `-32603`
 
-- [ ] **步骤 6：fallback stdio loop 要求**  
+- [x] **步骤 6：fallback stdio loop 要求**  
   仅 fallback 模式适用：`Program.cs` 必须逐行读取 stdin JSON，逐行写 stdout JSON，异常写 stderr。不得使用 `Console.WriteLine` 输出日志。
 
-- [ ] **步骤 7：运行协议测试**  
+- [x] **步骤 7：运行协议测试**  
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~McpProtocolTests

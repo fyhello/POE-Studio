@@ -1,2 +1,3 @@
-Console.Error.WriteLine("POE Studio MCP Tools shell is not implemented yet.");
-return 1;
+using PoeStudio.Mcp;
+
+await McpProtocol.RunAsync(Console.In, Console.Out, Console.Error, CancellationToken.None);
