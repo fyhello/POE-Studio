@@ -553,10 +553,11 @@ git commit -m "feat(mcp): extract DATC64 translatable cells"
 **文件：**
 - 创建：`tests/PoeStudio.Tests/McpProcessSmokeTests.cs`
 
-- [ ] **步骤 1：运行影响分析**  
+- [x] **步骤 1：运行影响分析**
   本任务新增测试，不修改生产代码。记录：`Impact: tests only`。
+  - Impact: tests only.
 
-- [ ] **步骤 2：写进程级测试**  
+- [x] **步骤 2：写进程级测试**
   测试启动：
 
 ```powershell
@@ -577,7 +578,7 @@ dotnet run --project src\PoeStudio.Mcp\PoeStudio.Mcp.csproj -- --workspace-root 
 
   预期 stdout 两行都是合法 JSON，第二行包含 `poe_datc64_extract_translatable_cells`。
 
-- [ ] **步骤 3：运行 smoke test**  
+- [x] **步骤 3：运行 smoke test**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~McpProcessSmokeTests
@@ -585,7 +586,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
   预期：PASS。
 
-- [ ] **步骤 4：Commit**
+- [x] **步骤 4：Commit**
 
 ```powershell
 git add tests\PoeStudio.Tests\McpProcessSmokeTests.cs
