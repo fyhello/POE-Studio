@@ -160,6 +160,7 @@ public static class AgentRoutes
         app.MapPost("/api/agent/approvals/{approvalId}/approve", async (
             string approvalId,
             AgentStore store,
+            Datc64DraftApplyService applyService,
             CancellationToken cancellationToken) =>
         {
             var located = await store.FindApprovalAsync(approvalId, cancellationToken);
@@ -175,6 +176,15 @@ public static class AgentRoutes
             }
 
             await store.AppendEventAsync(located.Value.ThreadId, located.Value.RunId, AgentEventType.ApprovalApproved, "Approval approved", null, cancellationToken);
+            if (string.Equals(located.Value.Approval.Kind, "datc64-translation", StringComparison.Ordinal))
+            {
+                var apply = await applyService.ApplyAsync(located.Value.ThreadId, located.Value.RunId, approvalId, cancellationToken);
+                if (!apply.Applied)
+                {
+                    return Results.BadRequest(ApiResponse<AgentApprovalDto>.Failure(apply.ErrorCode ?? "approval_apply_failed", apply.ErrorCode ?? "Approval apply failed."));
+                }
+            }
+
             var updated = (await store.ListApprovalsAsync(located.Value.ThreadId, located.Value.RunId, cancellationToken)).First(x => x.Id == approvalId);
             return Results.Ok(ApiResponse<AgentApprovalDto>.Success(updated));
         });

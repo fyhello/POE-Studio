@@ -1,22 +1,26 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using PoeStudio.Contracts;
 using PoeStudio.Core.Agent;
+using PoeStudio.Storage.Resources;
 
 namespace PoeStudio.Tests;
 
 public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly WebApplicationFactory<Program> _factory;
+    private readonly string _workspaceRoot;
 
     public AgentApiSmokeTests(WebApplicationFactory<Program> factory)
     {
+        _workspaceRoot = Path.Combine(Path.GetTempPath(), "poe-studio-agent-api-tests", Guid.NewGuid().ToString("N"));
         _factory = factory.WithWebHostBuilder(builder =>
         {
-            builder.UseSetting("PoeStudio:WorkspaceRoot", Path.Combine(Path.GetTempPath(), "poe-studio-agent-api-tests", Guid.NewGuid().ToString("N")));
+            builder.UseSetting("PoeStudio:WorkspaceRoot", _workspaceRoot);
             builder.UseSetting("PoeStudio:WorkspaceSettingsPath", Path.Combine(Path.GetTempPath(), "poe-studio-agent-api-tests", Guid.NewGuid().ToString("N"), "workspace-settings.json"));
             builder.ConfigureServices(services =>
             {
@@ -24,6 +28,69 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
                 services.AddScoped<ICodexProcessRunner>(_ => new FakeRunner());
             });
         });
+    }
+
+    [Fact]
+    public async Task Question_run_records_mcp_event_result_and_no_approval_or_overlay()
+    {
+        var client = _factory.CreateClient();
+        var thread = await CreateThreadAsync(client, "question");
+
+        var run = await CreateRunAsync(client, thread, "question", null);
+        var events = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentEventDto>>>($"/api/agent/runs/{run.Id}/events");
+        var snapshot = await client.GetFromJsonAsync<ApiResponse<AgentThreadSnapshotDto>>($"/api/agent/threads/{thread.Id}");
+        var overlay = await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(thread.ProfileId));
+        var overlayPayload = await overlay.Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
+
+        Assert.Equal(AgentRunStatus.Succeeded, run.Status);
+        Assert.Contains(events!.Data!, x => x.Type == AgentEventType.McpToolCall);
+        Assert.Contains("done", run.ResultJson);
+        Assert.Empty(snapshot!.Data!.PendingApprovals);
+        Assert.Empty(overlayPayload!.Data!.Items);
+    }
+
+    [Fact]
+    public async Task Datc64_run_waits_for_approval_then_writes_overlay()
+    {
+        var client = _factory.CreateClient();
+        var profileId = "profile-1";
+        var resourcePath = "metadata/example.datc64";
+        var basePath = Path.Combine(_workspaceRoot, "fixtures", "example.datc64");
+        Directory.CreateDirectory(Path.GetDirectoryName(basePath)!);
+        await File.WriteAllBytesAsync(basePath, BuildDatc64PointerTableData([("NoMana", "法力不足")]));
+        await new ResourceIndexStore(_workspaceRoot).SaveAsync(
+            profileId,
+            [
+                new ResourceSummaryDto(
+                    Guid.NewGuid().ToString("N"),
+                    profileId,
+                    resourcePath,
+                    resourcePath,
+                    ".datc64",
+                    ResourceKind.Table,
+                    new FileInfo(basePath).Length,
+                    basePath,
+                    ResourceSourceLayer.Base,
+                    DateTimeOffset.UtcNow)
+            ],
+            [],
+            CancellationToken.None);
+        var thread = await CreateThreadAsync(client, "datc64-translation");
+
+        var run = await CreateRunAsync(client, thread, "datc64-translation", resourcePath);
+        var beforeOverlay = await (await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(profileId))).Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
+        var snapshot = await client.GetFromJsonAsync<ApiResponse<AgentThreadSnapshotDto>>($"/api/agent/threads/{thread.Id}");
+        var approval = Assert.Single(snapshot!.Data!.PendingApprovals);
+        var approveResponse = await client.PostAsync($"/api/agent/approvals/{approval.Id}/approve", null);
+        var approvePayload = await approveResponse.Content.ReadFromJsonAsync<ApiResponse<AgentApprovalDto>>();
+        var afterOverlay = await (await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(profileId))).Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
+
+        Assert.Equal(AgentRunStatus.WaitingForApproval, run.Status);
+        Assert.Empty(beforeOverlay!.Data!.Items);
+        Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
+        Assert.Equal(AgentApprovalStatus.Applied, approvePayload!.Data!.Status);
+        var entry = Assert.Single(afterOverlay!.Data!.Items);
+        Assert.Equal(resourcePath, entry.NormalizedPath);
     }
 
     [Fact]
@@ -163,5 +230,49 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
             };
             return Task.FromResult(new CodexRunResult(0, false, false, events, null));
         }
+    }
+
+    private static byte[] BuildDatc64PointerTableData(IReadOnlyList<(string Id, string Text)> rows)
+    {
+        const int rowLength = 32;
+        var fixedData = new byte[rows.Count * rowLength];
+        using var variable = new MemoryStream();
+        variable.Write(new byte[] { 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb });
+
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
+        {
+            var rowOffset = rowIndex * rowLength;
+            WriteUInt32(fixedData, rowOffset, (uint)rowIndex);
+            WriteUInt32(fixedData, rowOffset + 4, AppendDatc64String(variable, rows[rowIndex].Id));
+            WriteUInt32(fixedData, rowOffset + 8, 0);
+            WriteUInt32(fixedData, rowOffset + 12, AppendDatc64String(variable, rows[rowIndex].Text));
+        }
+
+        var variableData = variable.ToArray();
+        var data = new byte[4 + fixedData.Length + variableData.Length];
+        WriteUInt32(data, 0, (uint)rows.Count);
+        fixedData.CopyTo(data, 4);
+        variableData.CopyTo(data, 4 + fixedData.Length);
+        return data;
+    }
+
+    private static uint AppendDatc64String(Stream stream, string value)
+    {
+        var offset = checked((uint)stream.Position);
+        var bytes = Encoding.Unicode.GetBytes(value);
+        stream.Write(bytes, 0, bytes.Length);
+        stream.WriteByte(0);
+        stream.WriteByte(0);
+        stream.WriteByte(0);
+        stream.WriteByte(0);
+        return offset;
+    }
+
+    private static void WriteUInt32(byte[] data, int offset, uint value)
+    {
+        data[offset] = (byte)(value & 0xff);
+        data[offset + 1] = (byte)((value >> 8) & 0xff);
+        data[offset + 2] = (byte)((value >> 16) & 0xff);
+        data[offset + 3] = (byte)((value >> 24) & 0xff);
     }
 }

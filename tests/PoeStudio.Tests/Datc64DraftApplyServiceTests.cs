@@ -153,7 +153,7 @@ public sealed class Datc64DraftApplyServiceTests
             thread.Id,
             run.Id,
             approval,
-            (_, cancellationToken) => Task.FromResult(new Datc64DraftResourceReadResult(
+            (_, _, cancellationToken) => Task.FromResult(new Datc64DraftResourceReadResult(
                 new ResourceSummaryDto(
                     Guid.NewGuid().ToString("N"),
                     profileId,
@@ -221,5 +221,5 @@ public sealed class Datc64DraftApplyServiceTests
         string ThreadId,
         string RunId,
         AgentApprovalDto Approval,
-        Func<string, CancellationToken, Task<Datc64DraftResourceReadResult>> ReadResourceAsync);
+        Func<string, string, CancellationToken, Task<Datc64DraftResourceReadResult>> ReadResourceAsync);
 }
