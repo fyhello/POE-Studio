@@ -10,10 +10,16 @@ public sealed class PoeResourceContentReader
     public const int AbsoluteMaxBytes = 1048576;
 
     private readonly ResourceIndexStore resourceIndexStore;
+    private readonly string[] allowedRoots;
 
-    public PoeResourceContentReader(ResourceIndexStore resourceIndexStore)
+    public PoeResourceContentReader(ResourceIndexStore resourceIndexStore, IEnumerable<string> allowedRoots)
     {
         this.resourceIndexStore = resourceIndexStore;
+        this.allowedRoots = allowedRoots
+            .Where(root => !string.IsNullOrWhiteSpace(root))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     public async Task<PoeResourceContentReadResult> ReadAsync(
@@ -61,6 +67,13 @@ public sealed class PoeResourceContentReader
             return PoeResourceContentReadResult.Error("invalid_physical_path", exception.Message);
         }
 
+        if (!IsUnderAllowedRoot(fullPath))
+        {
+            return PoeResourceContentReadResult.Error(
+                "physical_path_outside_allowed_roots",
+                $"Physical resource path is outside the allowed profile roots: {fullPath}");
+        }
+
         if (!File.Exists(fullPath))
         {
             return PoeResourceContentReadResult.Error("physical_resource_not_found", $"Physical resource file does not exist: {fullPath}");
@@ -75,6 +88,25 @@ public sealed class PoeResourceContentReader
         return string.IsNullOrWhiteSpace(physicalPath)
             || NativeBundleLocationParser.TryParse(physicalPath, out _)
             || physicalPath.Contains("://", StringComparison.Ordinal);
+    }
+
+    private bool IsUnderAllowedRoot(string fullPath)
+    {
+        return allowedRoots.Any(root => IsSameOrChildPath(root, fullPath));
+    }
+
+    private static bool IsSameOrChildPath(string root, string path)
+    {
+        var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedPath = Path.GetFullPath(path);
+
+        return string.Equals(normalizedRoot, normalizedPath, StringComparison.OrdinalIgnoreCase)
+            || normalizedPath.StartsWith(
+                normalizedRoot + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase)
+            || normalizedPath.StartsWith(
+                normalizedRoot + Path.AltDirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<(byte[] Bytes, bool Truncated)> ReadPrefixAsync(

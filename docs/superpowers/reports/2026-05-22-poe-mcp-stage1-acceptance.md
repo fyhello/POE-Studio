@@ -6,7 +6,7 @@
 
 ## 结论
 
-Stage 1 通过验收。Codex CLI 可以发现并调用 `poe-studio` MCP server；必需工具已注册；真实调用证据覆盖 profile、index、resource search、DATC64 extraction 和 native resource boundary。未实现 UI、Agent API、Codex app-server、写 overlay 或任意写工具。
+Stage 1 修复后通过验收。Codex CLI 可以发现并调用 `poe-studio` MCP server；必需工具已注册；真实调用证据覆盖 profile、index、resource search、DATC64 extraction 和 native resource boundary。`poe_read_resource` 已补强 physical path allowed-roots 校验，不再仅信任索引中的 `PhysicalPath`。未实现 UI、Agent API、Codex app-server、写 overlay 或任意写工具。
 
 ## 环境
 
@@ -115,6 +115,35 @@ native_resource_not_supported_in_stage1: Native Bundles2 or non-physical resourc
 
 This satisfies the Stage 1 boundary: native Bundles2 resources do not return empty successful content.
 
+## Physical Path 边界修复验收
+
+Review finding:
+
+```text
+poe_read_resource could read any existing indexed PhysicalPath after Path.GetFullPath and File.Exists.
+```
+
+Fix summary:
+
+- `PoeResourceContentReader` now requires explicit allowed physical roots.
+- `poe_read_resource` and `poe_datc64_extract_translatable_cells` derive allowed roots from the target profile:
+  - `RootPath`
+  - `Bundles2Path`
+  - `ContentGgpkPath` parent directory
+- Indexed physical files outside those roots return `physical_path_outside_allowed_roots` and are not read.
+
+Regression evidence:
+
+```text
+dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "FullyQualifiedName~McpResourceContentReaderTests|FullyQualifiedName~McpPoeToolsTests|FullyQualifiedName~McpDatc64ToolTests"
+Result: 22/22 passed
+```
+
+Added coverage:
+
+- `McpResourceContentReaderTests.ReadAsync_rejects_indexed_physical_path_outside_allowed_roots`
+- `McpPoeToolsTests.Read_resource_rejects_indexed_physical_path_outside_profile_roots`
+
 ## 写入边界
 
 Before report creation, `git status --short` was clean. Codex MCP acceptance calls were read-only. No overlay draft, game resource, POE client file, `/api/agent/*`, `/api/codex/*`, UI, Codex app-server, shell execution tool, arbitrary file write tool, or real overlay write was added by Stage 1.
@@ -139,7 +168,7 @@ Full suite:
 
 ```text
 dotnet test PoeStudio.sln --no-restore
-Result: 345/345 passed
+Result after physical path boundary fix: 347/347 passed
 ```
 
 ## Commit 证据
@@ -154,5 +183,7 @@ Completed Stage 1 implementation commits:
 - `b89ad9a feat(mcp): expose resource search and read tools`
 - `1f85b6d feat(mcp): extract DATC64 translatable cells`
 - `b96487e test(mcp): verify stdio process handshake`
+- `c6340ef docs(mcp): record Stage 1 acceptance evidence`
+- this commit: `fix(mcp): constrain physical resource reads to profile roots`
 
 Stage 1 status: PASS

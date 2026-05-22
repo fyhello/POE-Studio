@@ -63,7 +63,7 @@ public sealed class McpPoeToolsTests
     public async Task Get_index_status_returns_missing_index_details_and_hint()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1");
+        var profile = CreateProfile("profile-1", root);
         await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
         var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
 
@@ -80,7 +80,7 @@ public sealed class McpPoeToolsTests
     public async Task Search_resources_returns_query_matches_up_to_limit()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1");
+        var profile = CreateProfile("profile-1", root);
         await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
         await new ResourceIndexStore(root).SaveAsync(profile.Id, [
             Resource(profile.Id, "metadata/items/amulet.ot", ".ot", ResourceKind.Table, Path.Combine(root, "amulet.ot")),
@@ -104,7 +104,7 @@ public sealed class McpPoeToolsTests
     public async Task Search_resources_rejects_limit_above_one_hundred()
     {
         var root = CreateTempDirectory();
-        await new ProfileStore(root).SaveAsync(CreateProfile("profile-1"), CancellationToken.None);
+        await new ProfileStore(root).SaveAsync(CreateProfile("profile-1", root), CancellationToken.None);
         var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
 
         var result = await registry.CallToolAsync(
@@ -120,7 +120,7 @@ public sealed class McpPoeToolsTests
     public async Task Read_resource_returns_error_when_path_is_not_indexed()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1");
+        var profile = CreateProfile("profile-1", root);
         await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
         var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
 
@@ -137,7 +137,7 @@ public sealed class McpPoeToolsTests
     public async Task Read_resource_returns_text_for_text_resource()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1");
+        var profile = CreateProfile("profile-1", root);
         var textPath = Path.Combine(root, "files", "hello.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(textPath)!);
         await File.WriteAllTextAsync(textPath, "hello exile");
@@ -162,7 +162,7 @@ public sealed class McpPoeToolsTests
     public async Task Read_resource_returns_binary_summary_and_truncated_flag()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1");
+        var profile = CreateProfile("profile-1", root);
         var binaryPath = Path.Combine(root, "files", "icon.bin");
         Directory.CreateDirectory(Path.GetDirectoryName(binaryPath)!);
         await File.WriteAllBytesAsync(binaryPath, [0, 1, 2, 3, 4, 5]);
@@ -189,7 +189,7 @@ public sealed class McpPoeToolsTests
     public async Task Read_resource_returns_native_error_without_fabricated_content()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1");
+        var profile = CreateProfile("profile-1", root);
         await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
         await new ResourceIndexStore(root).SaveAsync(profile.Id, [
             Resource(profile.Id, "metadata/native.datc64", ".datc64", ResourceKind.Table, "native-bundles2://bundle.bin#offset=0&size=12")
@@ -205,6 +205,32 @@ public sealed class McpPoeToolsTests
         Assert.Contains("native_resource_not_supported_in_stage1", result.Content.Single().Text);
     }
 
+    [Fact]
+    public async Task Read_resource_rejects_indexed_physical_path_outside_profile_roots()
+    {
+        var root = CreateTempDirectory();
+        var clientRoot = Path.Combine(root, "client");
+        var outsideRoot = Path.Combine(root, "outside");
+        var profile = CreateProfile("profile-1", clientRoot);
+        var outsidePath = Path.Combine(outsideRoot, "secret.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(outsidePath)!);
+        await File.WriteAllTextAsync(outsidePath, "do not read");
+        await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
+        await new ResourceIndexStore(root).SaveAsync(profile.Id, [
+            Resource(profile.Id, "text/safe.txt", ".txt", ResourceKind.Text, outsidePath)
+        ], [], CancellationToken.None);
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_read_resource",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, resourcePath = "text/safe.txt", maxBytes = 64 }),
+            CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Contains("physical_path_outside_allowed_roots", result.Content.Single().Text);
+        Assert.DoesNotContain("do not read", result.Content.Single().Text);
+    }
+
     private static JsonElement EmptyArguments()
     {
         return JsonSerializer.SerializeToElement(new { });
@@ -215,15 +241,16 @@ public sealed class McpPoeToolsTests
         return JsonDocument.Parse(result.Content.Single().Text);
     }
 
-    private static ClientProfileDto CreateProfile(string id)
+    private static ClientProfileDto CreateProfile(string id, string? root = null)
     {
+        var rootPath = root ?? "C:/Game";
         return new ClientProfileDto(
             Id: id,
             DisplayName: "Official",
             Platform: ClientPlatform.Official,
             EntryKind: ClientEntryKind.Ggpk,
-            RootPath: "C:/Game",
-            ContentGgpkPath: "C:/Game/Content.ggpk",
+            RootPath: rootPath,
+            ContentGgpkPath: Path.Combine(rootPath, "Content.ggpk"),
             Bundles2Path: null,
             IndexPath: null,
             OodleStatus: OodleStatus.Missing,

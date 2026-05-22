@@ -13,7 +13,7 @@ public sealed class McpDatc64ToolTests
     public async Task Extract_translatable_cells_returns_resource_path_and_cells_with_locators()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1");
+        var profile = CreateProfile("profile-1", root);
         var resourcePath = "data/balance/traditional chinese/combatuiprompts.datc64";
         var data = BuildDatc64PointerTableData([
             ("NoMana", "法力不足"),
@@ -43,7 +43,7 @@ public sealed class McpDatc64ToolTests
     public async Task Extract_translatable_cells_returns_empty_array_for_empty_datc64()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1");
+        var profile = CreateProfile("profile-1", root);
         var resourcePath = "data/balance/empty.datc64";
         var data = new byte[12];
         WriteUInt32(data, 0, 0);
@@ -66,7 +66,7 @@ public sealed class McpDatc64ToolTests
     public async Task Extract_translatable_cells_returns_error_for_non_table_resource()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1");
+        var profile = CreateProfile("profile-1", root);
         var resourcePath = "text/readme.txt";
         var physicalPath = await WriteResourceAsync(root, resourcePath, Encoding.UTF8.GetBytes("hello"));
         await SaveProfileAndResourcesAsync(root, profile, Resource(profile.Id, resourcePath, ".txt", ResourceKind.Text, 5, physicalPath));
@@ -100,15 +100,15 @@ public sealed class McpDatc64ToolTests
         return path;
     }
 
-    private static ClientProfileDto CreateProfile(string id)
+    private static ClientProfileDto CreateProfile(string id, string root)
     {
         return new ClientProfileDto(
             Id: id,
             DisplayName: "Official",
             Platform: ClientPlatform.Official,
             EntryKind: ClientEntryKind.Ggpk,
-            RootPath: "C:/Game",
-            ContentGgpkPath: "C:/Game/Content.ggpk",
+            RootPath: root,
+            ContentGgpkPath: Path.Combine(root, "Content.ggpk"),
             Bundles2Path: null,
             IndexPath: null,
             OodleStatus: OodleStatus.Missing,

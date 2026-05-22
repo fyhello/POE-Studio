@@ -214,7 +214,13 @@ public static class PoeMcpTools
         }
 
         var maxBytes = GetInt32(arguments, "maxBytes") ?? PoeResourceContentReader.DefaultMaxBytes;
-        var read = await new PoeResourceContentReader(new ResourceIndexStore(workspaceRoot))
+        var profile = await new ProfileStore(workspaceRoot).GetAsync(profileId, cancellationToken);
+        if (profile is null)
+        {
+            return McpToolResult.Error($"Profile '{profileId}' was not found.");
+        }
+
+        var read = await new PoeResourceContentReader(new ResourceIndexStore(workspaceRoot), GetAllowedPhysicalRoots(profile))
             .ReadAsync(profileId, resourcePath, maxBytes, cancellationToken);
 
         if (read.IsError)
@@ -265,7 +271,13 @@ public static class PoeMcpTools
             return McpToolResult.Error("Argument 'limit' must be between 1 and 1000.");
         }
 
-        var read = await new PoeResourceContentReader(new ResourceIndexStore(workspaceRoot))
+        var profile = await new ProfileStore(workspaceRoot).GetAsync(profileId, cancellationToken);
+        if (profile is null)
+        {
+            return McpToolResult.Error($"Profile '{profileId}' was not found.");
+        }
+
+        var read = await new PoeResourceContentReader(new ResourceIndexStore(workspaceRoot), GetAllowedPhysicalRoots(profile))
             .ReadAsync(profileId, resourcePath, PoeResourceContentReader.AbsoluteMaxBytes, cancellationToken);
         if (read.IsError)
         {
@@ -369,6 +381,28 @@ public static class PoeMcpTools
         workspaceRoot = string.Empty;
         error = workspace.Error ?? "POE Studio workspace root is not configured.";
         return false;
+    }
+
+    private static IReadOnlyList<string> GetAllowedPhysicalRoots(ClientProfileDto profile)
+    {
+        var roots = new List<string>();
+        AddRoot(roots, profile.RootPath);
+        AddRoot(roots, profile.Bundles2Path);
+
+        if (!string.IsNullOrWhiteSpace(profile.ContentGgpkPath))
+        {
+            AddRoot(roots, Path.GetDirectoryName(profile.ContentGgpkPath));
+        }
+
+        return roots;
+    }
+
+    private static void AddRoot(List<string> roots, string? path)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            roots.Add(path);
+        }
     }
 
     private static bool TryGetString(JsonElement arguments, string name, out string value)

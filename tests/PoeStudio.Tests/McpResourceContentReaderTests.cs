@@ -15,7 +15,7 @@ public sealed class McpResourceContentReaderTests
         Directory.CreateDirectory(Path.GetDirectoryName(physicalPath)!);
         await File.WriteAllTextAsync(physicalPath, "hello exile");
         await SaveResourcesAsync(root, Resource(profileId, "text/text.txt", ".txt", ResourceKind.Text, physicalPath));
-        var reader = new PoeResourceContentReader(new ResourceIndexStore(root));
+        var reader = new PoeResourceContentReader(new ResourceIndexStore(root), [Path.Combine(root, "source")]);
 
         var result = await reader.ReadAsync(profileId, "text/text.txt", 1024, CancellationToken.None);
 
@@ -32,7 +32,7 @@ public sealed class McpResourceContentReaderTests
     public async Task ReadAsync_rejects_unsafe_resource_paths(string resourcePath)
     {
         var root = CreateTempDirectory();
-        var reader = new PoeResourceContentReader(new ResourceIndexStore(root));
+        var reader = new PoeResourceContentReader(new ResourceIndexStore(root), [root]);
 
         var result = await reader.ReadAsync("profile-1", resourcePath, 1024, CancellationToken.None);
 
@@ -53,7 +53,7 @@ public sealed class McpResourceContentReaderTests
                 ".datc64",
                 ResourceKind.Table,
                 "native-bundles2://bundle.bin#offset=0&size=12"));
-        var reader = new PoeResourceContentReader(new ResourceIndexStore(root));
+        var reader = new PoeResourceContentReader(new ResourceIndexStore(root), [root]);
 
         var result = await reader.ReadAsync(profileId, "metadata/native.datc64", 1024, CancellationToken.None);
 
@@ -64,12 +64,32 @@ public sealed class McpResourceContentReaderTests
     [Fact]
     public async Task ReadAsync_rejects_max_bytes_above_one_megabyte()
     {
-        var reader = new PoeResourceContentReader(new ResourceIndexStore(CreateTempDirectory()));
+        var reader = new PoeResourceContentReader(new ResourceIndexStore(CreateTempDirectory()), [CreateTempDirectory()]);
 
         var result = await reader.ReadAsync("profile-1", "text/text.txt", 1048577, CancellationToken.None);
 
         Assert.True(result.IsError);
         Assert.Equal("invalid_max_bytes", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task ReadAsync_rejects_indexed_physical_path_outside_allowed_roots()
+    {
+        var root = CreateTempDirectory();
+        var allowedRoot = Path.Combine(root, "client");
+        var outsideRoot = Path.Combine(root, "outside");
+        var profileId = "profile-1";
+        var outsidePath = Path.Combine(outsideRoot, "secret.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(outsidePath)!);
+        await File.WriteAllTextAsync(outsidePath, "do not read");
+        await SaveResourcesAsync(root, Resource(profileId, "text/safe.txt", ".txt", ResourceKind.Text, outsidePath));
+        var reader = new PoeResourceContentReader(new ResourceIndexStore(root), [allowedRoot]);
+
+        var result = await reader.ReadAsync(profileId, "text/safe.txt", 1024, CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal("physical_path_outside_allowed_roots", result.ErrorCode);
+        Assert.Empty(result.Bytes);
     }
 
     private static async Task SaveResourcesAsync(string root, params ResourceSummaryDto[] resources)

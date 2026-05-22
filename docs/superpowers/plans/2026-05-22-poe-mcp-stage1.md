@@ -719,7 +719,7 @@ git commit -m "docs(mcp): record Stage 1 acceptance evidence"
 - [x] `codex exec --json` 有真实 MCP 工具调用证据。
 - [x] `poe_datc64_extract_translatable_cells` 返回 DATC64 可翻译单元样例。
 - [x] 验收报告记录 `MCP implementation mode`。
-- [x] physical resource 读取通过；native Bundles2 resource 不伪成功。
+- [x] physical resource 读取通过且限制在 profile allowed roots；native Bundles2 resource 不伪成功。
 - [x] 验收报告存在并写明 `Stage 1 status: PASS`。
 - [x] `git status --short` 证明没有未计划的业务数据写入。
 - [x] 执行者停止，等待用户批准进入 Stage 2。
