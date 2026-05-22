@@ -20,3 +20,10 @@ public sealed record CodexParsedEvent(
     bool IsTerminal,
     bool IsToolCall,
     string? ToolName);
+
+public sealed record CodexRunResult(
+    int? ExitCode,
+    bool Failed,
+    bool Cancelled,
+    IReadOnlyList<CodexParsedEvent> Events,
+    string? StderrSummary);
