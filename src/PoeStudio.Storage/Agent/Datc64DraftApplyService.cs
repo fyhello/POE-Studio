@@ -37,9 +37,9 @@ public sealed class Datc64DraftApplyService
             return Datc64DraftApplyResult.Fail("approval_not_found");
         }
 
-        if (approval.Status != AgentApprovalStatus.Approved)
+        if (approval.Status != AgentApprovalStatus.Pending)
         {
-            return Datc64DraftApplyResult.Fail("approval_not_approved");
+            return Datc64DraftApplyResult.Fail("approval_not_pending");
         }
 
         var proposal = JsonSerializer.Deserialize<Datc64TranslationDraftProposal>(approval.ProposalJson, JsonOptions);
@@ -86,7 +86,7 @@ public sealed class Datc64DraftApplyService
             threadId,
             runId,
             approvalId,
-            AgentApprovalStatus.Approved,
+            AgentApprovalStatus.Pending,
             AgentApprovalStatus.Applied,
             entry.NormalizedPath,
             cancellationToken);

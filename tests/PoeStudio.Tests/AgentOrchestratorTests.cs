@@ -126,6 +126,46 @@ public sealed class AgentOrchestratorTests
         Assert.NotEmpty(await store.ListEventsAsync(thread.Id, retry.Id, 0, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task RetryAsync_preserves_original_resource_path()
+    {
+        var workspace = CreateWorkspace();
+        var store = new AgentStore(workspace);
+        await store.SaveSettingsAsync(Settings(workspace), CancellationToken.None);
+        var runner = new RecordingRunner("""
+            ```json
+            {
+              "taskKind": "datc64-translation",
+              "profileId": "profile-1",
+              "resourcePath": "metadata/example.datc64",
+              "candidates": [
+                {
+                  "locator": "row:1;column:3;name:text_3 @12",
+                  "rowIndex": 0,
+                  "columnIndex": 3,
+                  "sourceText": "NoMana",
+                  "translatedText": "法力不足",
+                  "confidence": 0.86,
+                  "notes": "test"
+                }
+              ]
+            }
+            ```
+            """);
+        var orchestrator = new AgentOrchestrator(
+            store,
+            new AgentPromptBuilder(),
+            new Datc64TranslationDraftParser(),
+            runner);
+        var thread = await store.SaveNewThreadAsync("profile-1", "Task", "Goal", "datc64-translation", CancellationToken.None);
+        var first = await orchestrator.StartRunAsync(thread.Id, "profile-1", "Goal", "datc64-translation", "metadata/example.datc64", CancellationToken.None);
+
+        var retry = await orchestrator.RetryAsync(first.Id, CancellationToken.None);
+
+        Assert.Equal(AgentRunStatus.WaitingForApproval, retry.Status);
+        Assert.All(runner.Prompts, prompt => Assert.Contains("metadata/example.datc64", prompt));
+    }
+
     private static AgentSettingsDto Settings(string workspace)
     {
         return new AgentSettingsDto("codex", null, null, "workspace-write", "poe-studio", workspace, "manual");
@@ -164,6 +204,28 @@ public sealed class AgentOrchestratorTests
                 false,
                 events,
                 _stderr));
+        }
+    }
+
+    private sealed class RecordingRunner : ICodexProcessRunner
+    {
+        private readonly string _message;
+
+        public RecordingRunner(string message)
+        {
+            _message = message;
+        }
+
+        public List<string> Prompts { get; } = [];
+
+        public Task<CodexRunResult> RunAsync(AgentSettingsDto settings, string prompt, CancellationToken cancellationToken)
+        {
+            Prompts.Add(prompt);
+            var events = new[]
+            {
+                new CodexParsedEvent("{}", CodexParsedEventType.AgentMessage, _message, "{}", true, false, null)
+            };
+            return Task.FromResult(new CodexRunResult(0, false, false, events, null));
         }
     }
 }

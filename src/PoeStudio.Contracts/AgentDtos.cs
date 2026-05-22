@@ -95,7 +95,8 @@ public sealed record AgentRunDto(
     int EventCount,
     string? ErrorCode,
     string? ErrorMessage,
-    string? ResultJson);
+    string? ResultJson,
+    string? ResourcePath = null);
 
 public sealed record AgentEventDto(
     string Id,

@@ -14,6 +14,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
 {
     private readonly WebApplicationFactory<Program> _factory;
     private readonly string _workspaceRoot;
+    private readonly FakeRunner _runner = new();
 
     public AgentApiSmokeTests(WebApplicationFactory<Program> factory)
     {
@@ -25,7 +26,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<ICodexProcessRunner>();
-                services.AddScoped<ICodexProcessRunner>(_ => new FakeRunner());
+                services.AddScoped<ICodexProcessRunner>(_ => _runner);
             });
         });
     }
@@ -37,6 +38,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         var thread = await CreateThreadAsync(client, "question");
 
         var run = await CreateRunAsync(client, thread, "question", null);
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.Succeeded);
         var events = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentEventDto>>>($"/api/agent/runs/{run.Id}/events");
         var snapshot = await client.GetFromJsonAsync<ApiResponse<AgentThreadSnapshotDto>>($"/api/agent/threads/{thread.Id}");
         var overlay = await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(thread.ProfileId));
@@ -78,6 +80,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         var thread = await CreateThreadAsync(client, "datc64-translation");
 
         var run = await CreateRunAsync(client, thread, "datc64-translation", resourcePath);
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.WaitingForApproval);
         var beforeOverlay = await (await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(profileId))).Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
         var snapshot = await client.GetFromJsonAsync<ApiResponse<AgentThreadSnapshotDto>>($"/api/agent/threads/{thread.Id}");
         var approval = Assert.Single(snapshot!.Data!.PendingApprovals);
@@ -140,10 +143,12 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
             taskKind,
             taskKind == "datc64-translation" ? "metadata/example.datc64" : null));
         var payload = await response.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
+        var run = payload!.Data!;
+        run = await WaitForRunStatusAsync(client, run.Id, taskKind == "datc64-translation" ? AgentRunStatus.WaitingForApproval : AgentRunStatus.Succeeded);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.True(payload!.Ok);
-        Assert.Equal(taskKind == "datc64-translation" ? AgentRunStatus.WaitingForApproval : AgentRunStatus.Succeeded, payload.Data!.Status);
+        Assert.True(payload.Ok);
+        Assert.Equal(taskKind == "datc64-translation" ? AgentRunStatus.WaitingForApproval : AgentRunStatus.Succeeded, run.Status);
     }
 
     [Fact]
@@ -152,6 +157,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         var client = _factory.CreateClient();
         var thread = await CreateThreadAsync(client, "question");
         var run = await CreateRunAsync(client, thread, "question", null);
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.Succeeded);
 
         var retryResponse = await client.PostAsync($"/api/agent/runs/{run.Id}/retry", null);
         var retry = await retryResponse.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
@@ -168,6 +174,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         var client = _factory.CreateClient();
         var thread = await CreateThreadAsync(client, "question");
         var run = await CreateRunAsync(client, thread, "question", null);
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.Succeeded);
 
         var events = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentEventDto>>>($"/api/agent/runs/{run.Id}/events");
         var missingApproval = await client.PostAsync("/api/agent/approvals/missing/approve", null);
@@ -175,6 +182,100 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         Assert.True(events!.Ok);
         Assert.NotEmpty(events.Data!);
         Assert.Equal(HttpStatusCode.NotFound, missingApproval.StatusCode);
+    }
+
+    [Fact]
+    public async Task Agent_run_cancel_requests_running_runner_cancellation()
+    {
+        _runner.BlockUntilCancelled = true;
+        var client = _factory.CreateClient();
+        var thread = await CreateThreadAsync(client, "question");
+
+        var createResponse = await client.PostAsJsonAsync("/api/agent/runs", new AgentRunCreateRequest(thread.Id, thread.ProfileId, "Goal", "question", null));
+        var created = await createResponse.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
+        var cancelResponse = await client.PostAsync($"/api/agent/runs/{created!.Data!.Id}/cancel", null);
+        var cancelPayload = await cancelResponse.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
+        var final = await WaitForRunStatusAsync(client, created.Data.Id, AgentRunStatus.Cancelled);
+        await WaitForRunnerCancellationAsync();
+        var events = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentEventDto>>>($"/api/agent/runs/{created.Data.Id}/events");
+
+        Assert.Equal(HttpStatusCode.OK, createResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
+        Assert.Equal(AgentRunStatus.Cancelled, cancelPayload!.Data!.Status);
+        Assert.Equal(AgentRunStatus.Cancelled, final.Status);
+        Assert.True(_runner.SawCancellation);
+        Assert.Contains(events!.Data!, x => x.Type == AgentEventType.RunCancelled);
+    }
+
+    [Fact]
+    public async Task Agent_run_cancel_rejects_completed_run_without_overwriting_status()
+    {
+        var client = _factory.CreateClient();
+        var thread = await CreateThreadAsync(client, "question");
+        var run = await CreateRunAsync(client, thread, "question", null);
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.Succeeded);
+
+        var cancelResponse = await client.PostAsync($"/api/agent/runs/{run.Id}/cancel", null);
+        var cancelPayload = await cancelResponse.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
+        var after = await client.GetFromJsonAsync<ApiResponse<AgentRunDto>>($"/api/agent/runs/{run.Id}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, cancelResponse.StatusCode);
+        Assert.False(cancelPayload!.Ok);
+        Assert.Equal("run_not_running", cancelPayload.ErrorCode);
+        Assert.Equal(AgentRunStatus.Succeeded, after!.Data!.Status);
+    }
+
+    [Theory]
+    [InlineData("missing-thread", "profile-1", "Goal", "question", null, "thread_not_found")]
+    [InlineData("valid-thread", "profile-1", "Goal", "unsupported", null, "unsupported_task_kind")]
+    [InlineData("valid-thread", "profile-1", "Goal", "datc64-translation", null, "resource_path_required")]
+    public async Task Agent_run_create_returns_structured_failure_without_500(
+        string threadSelector,
+        string profileId,
+        string goal,
+        string taskKind,
+        string? resourcePath,
+        string expectedError)
+    {
+        var client = _factory.CreateClient();
+        var threadId = threadSelector;
+        if (threadSelector == "valid-thread")
+        {
+            threadId = (await CreateThreadAsync(client, taskKind == "unsupported" ? "question" : taskKind)).Id;
+        }
+
+        var response = await client.PostAsJsonAsync("/api/agent/runs", new AgentRunCreateRequest(threadId, profileId, goal, taskKind, resourcePath));
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
+
+        Assert.NotEqual(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.False(payload!.Ok);
+        Assert.Equal(expectedError, payload.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Approval_apply_failure_keeps_approval_pending_so_user_can_reject()
+    {
+        var client = _factory.CreateClient();
+        _runner.Datc64RowIndex = 10;
+        var profileId = "profile-1";
+        var resourcePath = "metadata/example.datc64";
+        var basePath = Path.Combine(_workspaceRoot, "fixtures", "bad-locator.datc64");
+        Directory.CreateDirectory(Path.GetDirectoryName(basePath)!);
+        await File.WriteAllBytesAsync(basePath, BuildDatc64PointerTableData([("NoMana", "法力不足")]));
+        await SaveResourceIndexAsync(profileId, resourcePath, basePath);
+        var thread = await CreateThreadAsync(client, "datc64-translation");
+        var run = await CreateRunAsync(client, thread, "datc64-translation", resourcePath);
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.WaitingForApproval);
+        var snapshot = await client.GetFromJsonAsync<ApiResponse<AgentThreadSnapshotDto>>($"/api/agent/threads/{thread.Id}");
+        var approval = Assert.Single(snapshot!.Data!.PendingApprovals);
+
+        var approveResponse = await client.PostAsync($"/api/agent/approvals/{approval.Id}/approve", null);
+        var rejectResponse = await client.PostAsync($"/api/agent/approvals/{approval.Id}/reject", null);
+        var rejected = await rejectResponse.Content.ReadFromJsonAsync<ApiResponse<AgentApprovalDto>>();
+
+        Assert.Equal(HttpStatusCode.BadRequest, approveResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, rejectResponse.StatusCode);
+        Assert.Equal(AgentApprovalStatus.Rejected, rejected!.Data!.Status);
     }
 
     private static async Task<AgentThreadDto> CreateThreadAsync(HttpClient client, string taskKind)
@@ -192,13 +293,88 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         return payload!.Data!;
     }
 
+    private static async Task<AgentRunDto> WaitForRunStatusAsync(HttpClient client, string runId, AgentRunStatus status)
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            var payload = await client.GetFromJsonAsync<ApiResponse<AgentRunDto>>($"/api/agent/runs/{runId}");
+            if (payload!.Data!.Status == status)
+            {
+                return payload.Data;
+            }
+
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException($"Run {runId} did not reach {status}.");
+    }
+
+    private async Task WaitForRunnerCancellationAsync()
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            if (_runner.SawCancellation)
+            {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        throw new TimeoutException("Runner did not observe cancellation.");
+    }
+
+    private async Task SaveResourceIndexAsync(string profileId, string resourcePath, string physicalPath)
+    {
+        await new ResourceIndexStore(_workspaceRoot).SaveAsync(
+            profileId,
+            [
+                new ResourceSummaryDto(
+                    Guid.NewGuid().ToString("N"),
+                    profileId,
+                    resourcePath,
+                    resourcePath,
+                    ".datc64",
+                    ResourceKind.Table,
+                    new FileInfo(physicalPath).Length,
+                    physicalPath,
+                    ResourceSourceLayer.Base,
+                    DateTimeOffset.UtcNow)
+            ],
+            [],
+            CancellationToken.None);
+    }
+
     private sealed class FakeRunner : ICodexProcessRunner
     {
-        public Task<CodexRunResult> RunAsync(AgentSettingsDto settings, string prompt, CancellationToken cancellationToken)
+        public int Datc64RowIndex { get; set; }
+        public bool BlockUntilCancelled { get; set; }
+        public bool SawCancellation { get; private set; }
+
+        public async Task<CodexRunResult> RunAsync(AgentSettingsDto settings, string prompt, CancellationToken cancellationToken)
         {
+            if (BlockUntilCancelled)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    SawCancellation = true;
+                    return new CodexRunResult(
+                        null,
+                        false,
+                        true,
+                        [new CodexParsedEvent("{}", CodexParsedEventType.Cancelled, "cancelled", "{}", true, false, null)],
+                        null);
+                }
+            }
+
             var isDatc64 = prompt.Contains("datc64-translation", StringComparison.Ordinal);
+            var rowIndex = Datc64RowIndex;
             var final = isDatc64
-                ? """
+                ? $$"""
                   ```json
                   {
                     "taskKind": "datc64-translation",
@@ -206,8 +382,8 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
                     "resourcePath": "metadata/example.datc64",
                     "candidates": [
                       {
-                        "locator": "row:1;column:3;name:text_3 @12",
-                        "rowIndex": 0,
+                        "locator": "row:{{rowIndex + 1}};column:3;name:text_3 @12",
+                        "rowIndex": {{rowIndex}},
                         "columnIndex": 3,
                         "sourceText": "NoMana",
                         "translatedText": "法力不足",
@@ -228,7 +404,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
                 new CodexParsedEvent("{}", CodexParsedEventType.McpToolCall, "poe_get_workspace completed", "{}", false, true, "poe_get_workspace"),
                 new CodexParsedEvent("{}", CodexParsedEventType.AgentMessage, final, "{}", true, false, null)
             };
-            return Task.FromResult(new CodexRunResult(0, false, false, events, null));
+            return new CodexRunResult(0, false, false, events, null);
         }
     }
 

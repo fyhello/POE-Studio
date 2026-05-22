@@ -101,10 +101,44 @@ public static class AgentRoutes
         app.MapPost("/api/agent/runs", async (
             AgentRunCreateRequest request,
             AgentOrchestrator orchestrator,
+            AgentRunCancellationRegistry cancellations,
+            IServiceScopeFactory scopeFactory,
             CancellationToken cancellationToken) =>
         {
-            var run = await orchestrator.StartRunAsync(request.ThreadId, request.ProfileId, request.Goal, request.TaskKind, request.ResourcePath, cancellationToken);
-            return Results.Ok(ApiResponse<AgentRunDto>.Success(run));
+            try
+            {
+                if (string.Equals(request.TaskKind, "datc64-translation", StringComparison.Ordinal)
+                    && string.IsNullOrWhiteSpace(request.ResourcePath))
+                {
+                    return Results.BadRequest(ApiResponse<AgentRunDto>.Failure("resource_path_required", "resourcePath is required for datc64-translation."));
+                }
+
+                var run = await orchestrator.StartRunShellAsync(request.ThreadId, request.ProfileId, request.Goal, request.TaskKind, request.ResourcePath, cancellationToken);
+                var runToken = cancellations.Register(run.Id);
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        using var scope = scopeFactory.CreateScope();
+                        var scopedOrchestrator = scope.ServiceProvider.GetRequiredService<AgentOrchestrator>();
+                        await scopedOrchestrator.ContinueRunAsync(run.Id, runToken);
+                    }
+                    finally
+                    {
+                        cancellations.Complete(run.Id);
+                    }
+                }, CancellationToken.None);
+                return Results.Ok(ApiResponse<AgentRunDto>.Success(run));
+            }
+            catch (ArgumentException ex)
+            {
+                var errorCode = StableErrorCode(ex);
+                return Results.BadRequest(ApiResponse<AgentRunDto>.Failure(errorCode, ex.Message));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(ApiResponse<AgentRunDto>.Failure(ex.Message, ex.Message));
+            }
         });
 
         app.MapPost("/api/agent/runs/{runId}/retry", async (
@@ -143,7 +177,11 @@ public static class AgentRoutes
             return Results.Ok(ApiResponse<IReadOnlyList<AgentEventDto>>.Success(events));
         });
 
-        app.MapPost("/api/agent/runs/{runId}/cancel", async (string runId, AgentStore store, CancellationToken cancellationToken) =>
+        app.MapPost("/api/agent/runs/{runId}/cancel", async (
+            string runId,
+            AgentStore store,
+            AgentRunCancellationRegistry cancellations,
+            CancellationToken cancellationToken) =>
         {
             var run = await store.FindRunAsync(runId, cancellationToken);
             if (run is null)
@@ -151,6 +189,12 @@ public static class AgentRoutes
                 return Results.NotFound(ApiResponse<AgentRunDto>.Failure("run_not_found", "Run not found."));
             }
 
+            if (run.Status != AgentRunStatus.Running)
+            {
+                return Results.BadRequest(ApiResponse<AgentRunDto>.Failure("run_not_running", "Run is not running."));
+            }
+
+            cancellations.Cancel(runId);
             var cancelled = run with { Status = AgentRunStatus.Cancelled, Message = "Cancelled", UpdatedAt = DateTimeOffset.UtcNow };
             await store.SaveRunAsync(cancelled, cancellationToken);
             await store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunCancelled, "Cancellation requested", null, cancellationToken);
@@ -169,22 +213,30 @@ public static class AgentRoutes
                 return Results.NotFound(ApiResponse<AgentApprovalDto>.Failure("approval_not_found", "Approval not found."));
             }
 
-            var changed = await store.TryUpdateApprovalStatusAsync(located.Value.ThreadId, located.Value.RunId, approvalId, AgentApprovalStatus.Pending, AgentApprovalStatus.Approved, null, cancellationToken);
-            if (!changed)
+            if (located.Value.Approval.Status != AgentApprovalStatus.Pending)
             {
                 return Results.BadRequest(ApiResponse<AgentApprovalDto>.Failure("approval_not_pending", "Approval is not pending."));
             }
 
-            await store.AppendEventAsync(located.Value.ThreadId, located.Value.RunId, AgentEventType.ApprovalApproved, "Approval approved", null, cancellationToken);
             if (string.Equals(located.Value.Approval.Kind, "datc64-translation", StringComparison.Ordinal))
             {
                 var apply = await applyService.ApplyAsync(located.Value.ThreadId, located.Value.RunId, approvalId, cancellationToken);
                 if (!apply.Applied)
                 {
+                    await store.AppendEventAsync(located.Value.ThreadId, located.Value.RunId, AgentEventType.RunFailed, apply.ErrorCode ?? "approval_apply_failed", null, cancellationToken);
                     return Results.BadRequest(ApiResponse<AgentApprovalDto>.Failure(apply.ErrorCode ?? "approval_apply_failed", apply.ErrorCode ?? "Approval apply failed."));
                 }
             }
+            else
+            {
+                var changed = await store.TryUpdateApprovalStatusAsync(located.Value.ThreadId, located.Value.RunId, approvalId, AgentApprovalStatus.Pending, AgentApprovalStatus.Approved, null, cancellationToken);
+                if (!changed)
+                {
+                    return Results.BadRequest(ApiResponse<AgentApprovalDto>.Failure("approval_not_pending", "Approval is not pending."));
+                }
+            }
 
+            await store.AppendEventAsync(located.Value.ThreadId, located.Value.RunId, AgentEventType.ApprovalApproved, "Approval approved", null, cancellationToken);
             var updated = (await store.ListApprovalsAsync(located.Value.ThreadId, located.Value.RunId, cancellationToken)).First(x => x.Id == approvalId);
             return Results.Ok(ApiResponse<AgentApprovalDto>.Success(updated));
         });
@@ -223,6 +275,12 @@ public static class AgentRoutes
     {
         return string.Equals(codexPath, "codex", StringComparison.OrdinalIgnoreCase)
             || File.Exists(codexPath);
+    }
+
+    private static string StableErrorCode(ArgumentException ex)
+    {
+        var marker = ex.Message.IndexOf(" (Parameter", StringComparison.Ordinal);
+        return marker > 0 ? ex.Message[..marker] : ex.Message;
     }
 
     private static string NewId(string prefix) => $"{prefix}-{Guid.NewGuid():N}";

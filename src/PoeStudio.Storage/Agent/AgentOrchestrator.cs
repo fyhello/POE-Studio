@@ -36,12 +36,21 @@ public sealed class AgentOrchestrator
         string? resourcePath,
         CancellationToken cancellationToken)
     {
+        var run = await StartRunShellAsync(threadId, profileId, goal, taskKind, resourcePath, cancellationToken);
+        return await ContinueRunAsync(run.Id, cancellationToken);
+    }
+
+    public async Task<AgentRunDto> StartRunShellAsync(
+        string threadId,
+        string profileId,
+        string goal,
+        string taskKind,
+        string? resourcePath,
+        CancellationToken cancellationToken)
+    {
         var thread = await _store.GetThreadAsync(threadId, cancellationToken)
             ?? throw new ArgumentException("thread_not_found", nameof(threadId));
-        var settings = await _store.GetSettingsAsync(cancellationToken)
-            ?? DefaultSettings();
-        var capability = AgentCapabilities.GetRequired(taskKind);
-        var messages = await _store.ListMessagesAsync(threadId, cancellationToken);
+        AgentCapabilities.GetRequired(taskKind);
         var now = DateTimeOffset.UtcNow;
         var userMessage = new AgentMessageDto(
             NewId("message"),
@@ -66,31 +75,48 @@ public sealed class AgentOrchestrator
             0,
             null,
             null,
-            null);
+            null,
+            resourcePath);
         await _store.SaveRunAsync(run, cancellationToken);
         await _store.AppendEventAsync(threadId, run.Id, AgentEventType.RunCreated, "Run created", null, cancellationToken);
         var plan = CreateInitialPlan(run.Id);
         await _store.SavePlanAsync(threadId, run.Id, plan, cancellationToken);
         await _store.AppendEventAsync(threadId, run.Id, AgentEventType.PlanUpdated, "Initial plan created", null, cancellationToken);
+        return run;
+    }
 
+    public async Task<AgentRunDto> ContinueRunAsync(string runId, CancellationToken cancellationToken)
+    {
+        var run = await _store.FindRunAsync(runId, CancellationToken.None)
+            ?? throw new ArgumentException("run_not_found", nameof(runId));
         try
         {
-            var prompt = _promptBuilder.Build(settings, capability, thread, messages.Concat([userMessage]).ToArray(), goal, resourcePath);
+            var thread = await _store.GetThreadAsync(run.ThreadId, CancellationToken.None)
+                ?? throw new ArgumentException("thread_not_found", nameof(run.ThreadId));
+            var settings = await _store.GetSettingsAsync(CancellationToken.None)
+                ?? DefaultSettings();
+            var capability = AgentCapabilities.GetRequired(run.TaskKind);
+            var messages = await _store.ListMessagesAsync(run.ThreadId, CancellationToken.None);
+            var resourcePath = run.ResourcePath;
+            var goal = run.Goal;
+            var profileId = run.ProfileId;
+            var taskKind = run.TaskKind;
+            var prompt = _promptBuilder.Build(settings, capability, thread, messages, goal, resourcePath);
             var result = await _runner.RunAsync(settings, prompt, cancellationToken);
             foreach (var parsedEvent in result.Events)
             {
-                await PersistParsedEventAsync(threadId, run.Id, parsedEvent, cancellationToken);
+                await PersistParsedEventAsync(run.ThreadId, run.Id, parsedEvent, CancellationToken.None);
             }
 
             if (result.Cancelled)
             {
-                return await CompleteRunAsync(run, AgentRunStatus.Cancelled, 0, "Cancelled", "cancelled", "Run cancelled", null, cancellationToken);
+                return await CompleteRunAsync(run, AgentRunStatus.Cancelled, 0, "Cancelled", "cancelled", "Run cancelled", null, CancellationToken.None);
             }
 
             if (result.Failed)
             {
-                await _store.AppendEventAsync(threadId, run.Id, AgentEventType.RunFailed, result.StderrSummary ?? "Codex failed", null, cancellationToken);
-                return await CompleteRunAsync(run, AgentRunStatus.Failed, 0, "Failed", "codex_failed", result.StderrSummary ?? "Codex failed", null, cancellationToken);
+                await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunFailed, result.StderrSummary ?? "Codex failed", null, CancellationToken.None);
+                return await CompleteRunAsync(run, AgentRunStatus.Failed, 0, "Failed", "codex_failed", result.StderrSummary ?? "Codex failed", null, CancellationToken.None);
             }
 
             var finalMessage = LastAgentMessage(result.Events);
@@ -114,20 +140,25 @@ public sealed class AgentOrchestrator
                     DateTimeOffset.UtcNow,
                     DateTimeOffset.UtcNow,
                     null);
-                await _store.SaveApprovalsAsync(threadId, run.Id, [approval], cancellationToken);
-                await _store.AppendEventAsync(threadId, run.Id, AgentEventType.ApprovalRequested, approval.Summary, proposalJson, cancellationToken);
-                await _store.SavePlanAsync(threadId, run.Id, CompletePlan(run.Id, waitingForApproval: true), cancellationToken);
+                await _store.SaveApprovalsAsync(run.ThreadId, run.Id, [approval], cancellationToken);
+                await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.ApprovalRequested, approval.Summary, proposalJson, cancellationToken);
+                await _store.SavePlanAsync(run.ThreadId, run.Id, CompletePlan(run.Id, waitingForApproval: true), cancellationToken);
                 return await CompleteRunAsync(run, AgentRunStatus.WaitingForApproval, 90, "Waiting for approval", null, null, null, cancellationToken);
             }
 
             var resultJson = ExtractFinalJsonOrWrap(taskKind, profileId, finalMessage);
-            await _store.SavePlanAsync(threadId, run.Id, CompletePlan(run.Id, waitingForApproval: false), cancellationToken);
+            await _store.SavePlanAsync(run.ThreadId, run.Id, CompletePlan(run.Id, waitingForApproval: false), cancellationToken);
             return await CompleteRunAsync(run, AgentRunStatus.Succeeded, 100, "Succeeded", null, null, resultJson, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunCancelled, "Run cancelled", null, CancellationToken.None);
+            return await CompleteRunAsync(run, AgentRunStatus.Cancelled, 0, "Cancelled", "cancelled", "Run cancelled", null, CancellationToken.None);
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or JsonException)
         {
-            await _store.AppendEventAsync(threadId, run.Id, AgentEventType.RunFailed, ex.Message, null, cancellationToken);
-            return await CompleteRunAsync(run, AgentRunStatus.Failed, 0, "Failed", "agent_run_failed", ex.Message, null, cancellationToken);
+            await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunFailed, ex.Message, null, CancellationToken.None);
+            return await CompleteRunAsync(run, AgentRunStatus.Failed, 0, "Failed", "agent_run_failed", ex.Message, null, CancellationToken.None);
         }
     }
 
@@ -140,7 +171,7 @@ public sealed class AgentOrchestrator
             previous.ProfileId,
             previous.Goal,
             previous.TaskKind,
-            null,
+            previous.ResourcePath,
             cancellationToken);
     }
 

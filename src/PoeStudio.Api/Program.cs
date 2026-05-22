@@ -25,6 +25,7 @@ using PoeStudio.Storage.Tables;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddCors();
 builder.Services.AddSingleton<InMemoryJobStore>();
+builder.Services.AddSingleton<AgentRunCancellationRegistry>();
 builder.Services.AddSingleton<WorkspaceRootProvider>();
 builder.Services.AddScoped(sp => new ProfileStore(sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
 builder.Services.AddSingleton(sp => new ResourceIndexStore(() => sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));

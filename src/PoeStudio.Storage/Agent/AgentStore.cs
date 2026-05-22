@@ -308,12 +308,7 @@ public sealed class AgentStore
             JsonSerializer.Serialize(value, JsonOptions),
             Encoding.UTF8,
             cancellationToken);
-        if (File.Exists(path))
-        {
-            File.Delete(path);
-        }
-
-        File.Move(tempPath, path);
+        File.Move(tempPath, path, overwrite: true);
     }
 
     private static async Task<T?> ReadJsonAsync<T>(string path, CancellationToken cancellationToken)

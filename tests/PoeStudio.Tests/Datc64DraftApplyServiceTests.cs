@@ -10,20 +10,7 @@ namespace PoeStudio.Tests;
 public sealed class Datc64DraftApplyServiceTests
 {
     [Fact]
-    public async Task ApplyAsync_rejects_pending_approval_without_writing_overlay()
-    {
-        var fixture = await CreateFixtureAsync();
-        var service = new Datc64DraftApplyService(fixture.Store, fixture.Overlay, fixture.ReadResourceAsync);
-
-        var result = await service.ApplyAsync(fixture.ThreadId, fixture.RunId, fixture.Approval.Id, CancellationToken.None);
-
-        Assert.False(result.Applied);
-        Assert.Equal("approval_not_approved", result.ErrorCode);
-        Assert.Empty((await fixture.Overlay.ListAsync(fixture.ProfileId, CancellationToken.None)).Items);
-    }
-
-    [Fact]
-    public async Task ApplyAsync_writes_overlay_after_approval()
+    public async Task ApplyAsync_rejects_non_pending_approval_without_writing_overlay()
     {
         var fixture = await CreateFixtureAsync();
         await fixture.Store.TryUpdateApprovalStatusAsync(
@@ -31,9 +18,22 @@ public sealed class Datc64DraftApplyServiceTests
             fixture.RunId,
             fixture.Approval.Id,
             AgentApprovalStatus.Pending,
-            AgentApprovalStatus.Approved,
+            AgentApprovalStatus.Rejected,
             null,
             CancellationToken.None);
+        var service = new Datc64DraftApplyService(fixture.Store, fixture.Overlay, fixture.ReadResourceAsync);
+
+        var result = await service.ApplyAsync(fixture.ThreadId, fixture.RunId, fixture.Approval.Id, CancellationToken.None);
+
+        Assert.False(result.Applied);
+        Assert.Equal("approval_not_pending", result.ErrorCode);
+        Assert.Empty((await fixture.Overlay.ListAsync(fixture.ProfileId, CancellationToken.None)).Items);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_writes_overlay_after_approval()
+    {
+        var fixture = await CreateFixtureAsync();
         var service = new Datc64DraftApplyService(fixture.Store, fixture.Overlay, fixture.ReadResourceAsync);
 
         var result = await service.ApplyAsync(fixture.ThreadId, fixture.RunId, fixture.Approval.Id, CancellationToken.None);
@@ -49,14 +49,6 @@ public sealed class Datc64DraftApplyServiceTests
     public async Task ApplyAsync_returns_locator_not_found_without_writing_overlay()
     {
         var fixture = await CreateFixtureAsync(rowIndex: 10);
-        await fixture.Store.TryUpdateApprovalStatusAsync(
-            fixture.ThreadId,
-            fixture.RunId,
-            fixture.Approval.Id,
-            AgentApprovalStatus.Pending,
-            AgentApprovalStatus.Approved,
-            null,
-            CancellationToken.None);
         var service = new Datc64DraftApplyService(fixture.Store, fixture.Overlay, fixture.ReadResourceAsync);
 
         var result = await service.ApplyAsync(fixture.ThreadId, fixture.RunId, fixture.Approval.Id, CancellationToken.None);
@@ -70,14 +62,6 @@ public sealed class Datc64DraftApplyServiceTests
     public async Task ApplyAsync_allows_same_text_candidate_with_warning()
     {
         var fixture = await CreateFixtureAsync(translatedText: "法力不足");
-        await fixture.Store.TryUpdateApprovalStatusAsync(
-            fixture.ThreadId,
-            fixture.RunId,
-            fixture.Approval.Id,
-            AgentApprovalStatus.Pending,
-            AgentApprovalStatus.Approved,
-            null,
-            CancellationToken.None);
         var service = new Datc64DraftApplyService(fixture.Store, fixture.Overlay, fixture.ReadResourceAsync);
 
         var result = await service.ApplyAsync(fixture.ThreadId, fixture.RunId, fixture.Approval.Id, CancellationToken.None);
