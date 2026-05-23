@@ -13,6 +13,8 @@ using PoeStudio.Core.Resources;
 using PoeStudio.Core.Tables;
 using PoeStudio.Core.Translation;
 using PoeStudio.Core.Workspace;
+using PoeStudio.Core.Agent;
+using PoeStudio.Storage.Agent;
 using PoeStudio.Storage.Overlay;
 using PoeStudio.Storage.Profiles;
 using PoeStudio.Storage.Batch;
@@ -23,6 +25,7 @@ using PoeStudio.Storage.Tables;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddCors();
 builder.Services.AddSingleton<InMemoryJobStore>();
+builder.Services.AddSingleton<AgentRunCancellationRegistry>();
 builder.Services.AddSingleton<WorkspaceRootProvider>();
 builder.Services.AddScoped(sp => new ProfileStore(sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
 builder.Services.AddSingleton(sp => new ResourceIndexStore(() => sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
@@ -54,11 +57,43 @@ builder.Services.AddScoped(sp => new PatchOverlayDraftService(
     sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot,
     sp.GetRequiredService<OverlayStore>(),
     sp.GetRequiredService<ResourceIndexStore>()));
+builder.Services.AddScoped(sp => new AgentStore(sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
+builder.Services.AddSingleton<CodexJsonEventParser>();
+builder.Services.AddSingleton<AgentPromptBuilder>();
+builder.Services.AddSingleton<Datc64TranslationDraftParser>();
+builder.Services.AddSingleton<AgentRepositoryRootResolver>();
+builder.Services.AddScoped<AgentProjectContextService>();
+builder.Services.AddScoped<CodexProcessRunner>();
+builder.Services.AddScoped<ICodexProcessRunner>(sp => sp.GetRequiredService<CodexProcessRunner>());
+builder.Services.AddScoped<AgentOrchestrator>();
+builder.Services.AddScoped(sp => new Datc64DraftApplyService(
+    sp.GetRequiredService<AgentStore>(),
+    sp.GetRequiredService<OverlayStore>(),
+    async (profileId, resourcePath, cancellationToken) =>
+    {
+        var resourceIndex = sp.GetRequiredService<ResourceIndexStore>();
+        var profiles = sp.GetRequiredService<ProfileStore>();
+        var nativeContentResolver = sp.GetRequiredService<NativeBundleResourceContentResolver>();
+        var resource = await resourceIndex.GetByPathAsync(profileId, resourcePath, cancellationToken)
+            ?? throw new InvalidOperationException("resource_not_found");
+        var read = await ReadResourceBytesAsync(profileId, null, resource, profiles, nativeContentResolver, cancellationToken);
+        if (!read.Ok)
+        {
+            throw new InvalidOperationException(read.ErrorCode);
+        }
+
+        return new Datc64DraftResourceReadResult(
+            resource,
+            read.Data,
+            resource.PhysicalPath,
+            !string.IsNullOrWhiteSpace(resource.PhysicalPath) && File.Exists(resource.PhysicalPath));
+    }));
 
 var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapAgentRoutes();
 
 app.MapGet("/api/health", () => ApiResponse<object>.Success(new
 {
