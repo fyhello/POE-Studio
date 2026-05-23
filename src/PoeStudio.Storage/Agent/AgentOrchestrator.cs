@@ -15,17 +15,20 @@ public sealed class AgentOrchestrator
     private readonly AgentPromptBuilder _promptBuilder;
     private readonly Datc64TranslationDraftParser _datc64Parser;
     private readonly ICodexProcessRunner _runner;
+    private readonly AgentProjectContextService _projectContextService;
 
     public AgentOrchestrator(
         AgentStore store,
         AgentPromptBuilder promptBuilder,
         Datc64TranslationDraftParser datc64Parser,
-        ICodexProcessRunner runner)
+        ICodexProcessRunner runner,
+        AgentProjectContextService projectContextService)
     {
         _store = store;
         _promptBuilder = promptBuilder;
         _datc64Parser = datc64Parser;
         _runner = runner;
+        _projectContextService = projectContextService;
     }
 
     public async Task<AgentRunDto> StartRunAsync(
@@ -101,7 +104,33 @@ public sealed class AgentOrchestrator
             var goal = run.Goal;
             var profileId = run.ProfileId;
             var taskKind = run.TaskKind;
-            var prompt = _promptBuilder.Build(settings, capability, thread, messages, goal, resourcePath);
+            var projectContext = await _projectContextService.BuildAsync(
+                taskKind,
+                goal,
+                resourcePath,
+                settings.WorkingDirectory,
+                CancellationToken.None);
+            var preflight = new AgentProjectPreflightDto(
+                thread.Id,
+                run.Id,
+                profileId,
+                taskKind,
+                goal,
+                resourcePath,
+                projectContext.Sources.Any(source => source.Exists),
+                settings.WorkingDirectory,
+                projectContext.Sources,
+                projectContext.Summary,
+                projectContext.ToolGuidance.Select(tool => tool.ToolName).ToArray(),
+                projectContext.Unknowns);
+            await _store.AppendEventAsync(
+                run.ThreadId,
+                run.Id,
+                AgentEventType.PlanUpdated,
+                "Project context loaded",
+                JsonSerializer.Serialize(preflight, JsonOptions),
+                CancellationToken.None);
+            var prompt = _promptBuilder.Build(settings, capability, thread, messages, goal, resourcePath, projectContext);
             var persistedEventKeys = new HashSet<string>(StringComparer.Ordinal);
             var result = await _runner.RunAsync(
                 settings,
@@ -262,9 +291,10 @@ public sealed class AgentOrchestrator
     {
         return
         [
-            new AgentPlanStepDto(NewId("step"), runId, 1, "Build prompt", "completed", "AgentPromptBuilder"),
-            new AgentPlanStepDto(NewId("step"), runId, 2, "Run Codex", "running", null),
-            new AgentPlanStepDto(NewId("step"), runId, 3, "Store result", "pending", null)
+            new AgentPlanStepDto(NewId("step"), runId, 1, "Load project context", "pending", null),
+            new AgentPlanStepDto(NewId("step"), runId, 2, "Build prompt", "pending", null),
+            new AgentPlanStepDto(NewId("step"), runId, 3, "Run Codex", "pending", null),
+            new AgentPlanStepDto(NewId("step"), runId, 4, "Store result", "pending", null)
         ];
     }
 
@@ -272,9 +302,10 @@ public sealed class AgentOrchestrator
     {
         return
         [
-            new AgentPlanStepDto(NewId("step"), runId, 1, "Build prompt", "completed", "AgentPromptBuilder"),
-            new AgentPlanStepDto(NewId("step"), runId, 2, "Run Codex", "completed", "Codex events recorded"),
-            new AgentPlanStepDto(NewId("step"), runId, 3, waitingForApproval ? "Request approval" : "Store result", "completed", waitingForApproval ? "Pending approval created" : "Result saved")
+            new AgentPlanStepDto(NewId("step"), runId, 1, "Load project context", "completed", "Project context preflight recorded"),
+            new AgentPlanStepDto(NewId("step"), runId, 2, "Build prompt", "completed", "AgentPromptBuilder"),
+            new AgentPlanStepDto(NewId("step"), runId, 3, "Run Codex", "completed", "Codex events recorded"),
+            new AgentPlanStepDto(NewId("step"), runId, 4, waitingForApproval ? "Request approval" : "Store result", "completed", waitingForApproval ? "Pending approval created" : "Result saved")
         ];
     }
 

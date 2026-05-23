@@ -14,10 +14,9 @@ public sealed class AgentOrchestratorTests
         var workspace = CreateWorkspace();
         var store = new AgentStore(workspace);
         await store.SaveSettingsAsync(Settings(workspace), CancellationToken.None);
-        var orchestrator = new AgentOrchestrator(
+        var orchestrator = CreateOrchestrator(
             store,
-            new AgentPromptBuilder(),
-            new Datc64TranslationDraftParser(),
+            workspace,
             new FakeRunner("""
                 ```json
                 {"taskKind":"question","profileId":"profile-1","summary":"done","evidence":[]}
@@ -40,10 +39,9 @@ public sealed class AgentOrchestratorTests
         var workspace = CreateWorkspace();
         var store = new AgentStore(workspace);
         await store.SaveSettingsAsync(Settings(workspace), CancellationToken.None);
-        var orchestrator = new AgentOrchestrator(
+        var orchestrator = CreateOrchestrator(
             store,
-            new AgentPromptBuilder(),
-            new Datc64TranslationDraftParser(),
+            workspace,
             new FakeRunner("""
                 ```json
                 {
@@ -86,11 +84,7 @@ public sealed class AgentOrchestratorTests
         var workspace = CreateWorkspace();
         var store = new AgentStore(workspace);
         await store.SaveSettingsAsync(Settings(workspace), CancellationToken.None);
-        var orchestrator = new AgentOrchestrator(
-            store,
-            new AgentPromptBuilder(),
-            new Datc64TranslationDraftParser(),
-            new FakeRunner("failed", exitCode: 9, stderr: "boom"));
+        var orchestrator = CreateOrchestrator(store, workspace, new FakeRunner("failed", exitCode: 9, stderr: "boom"));
         var thread = await store.SaveNewThreadAsync("profile-1", "Task", "Goal", "question", CancellationToken.None);
 
         var run = await orchestrator.StartRunAsync(thread.Id, "profile-1", "Goal", "question", null, CancellationToken.None);
@@ -107,10 +101,9 @@ public sealed class AgentOrchestratorTests
         var workspace = CreateWorkspace();
         var store = new AgentStore(workspace);
         await store.SaveSettingsAsync(Settings(workspace), CancellationToken.None);
-        var orchestrator = new AgentOrchestrator(
+        var orchestrator = CreateOrchestrator(
             store,
-            new AgentPromptBuilder(),
-            new Datc64TranslationDraftParser(),
+            workspace,
             new FakeRunner("""
                 ```json
                 {"taskKind":"question","profileId":"profile-1","summary":"done","evidence":[]}
@@ -152,11 +145,7 @@ public sealed class AgentOrchestratorTests
             }
             ```
             """);
-        var orchestrator = new AgentOrchestrator(
-            store,
-            new AgentPromptBuilder(),
-            new Datc64TranslationDraftParser(),
-            runner);
+        var orchestrator = CreateOrchestrator(store, workspace, runner);
         var thread = await store.SaveNewThreadAsync("profile-1", "Task", "Goal", "datc64-translation", CancellationToken.None);
         var first = await orchestrator.StartRunAsync(thread.Id, "profile-1", "Goal", "datc64-translation", "metadata/example.datc64", CancellationToken.None);
 
@@ -166,9 +155,62 @@ public sealed class AgentOrchestratorTests
         Assert.All(runner.Prompts, prompt => Assert.Contains("metadata/example.datc64", prompt));
     }
 
+    [Fact]
+    public async Task StartRunAsync_loads_project_context_before_runner_and_records_preflight()
+    {
+        var workspace = CreateWorkspace();
+        using var repository = CreateRepositoryRoot();
+        var store = new AgentStore(workspace);
+        await store.SaveSettingsAsync(Settings(repository.Root), CancellationToken.None);
+        var runner = new RecordingRunner("""
+            ```json
+            {"taskKind":"question","profileId":"profile-1","summary":"done","evidence":[]}
+            ```
+            """);
+        var orchestrator = CreateOrchestrator(store, repository.Root, runner);
+        var thread = await store.SaveNewThreadAsync("profile-1", "Task", "Explain current working state", "question", CancellationToken.None);
+
+        var run = await orchestrator.StartRunAsync(thread.Id, "profile-1", "Explain current working state", "question", null, CancellationToken.None);
+
+        Assert.Equal(AgentRunStatus.Succeeded, run.Status);
+        var prompt = Assert.Single(runner.Prompts);
+        Assert.Contains("Project context", prompt);
+        var events = await store.ListEventsAsync(thread.Id, run.Id, 0, CancellationToken.None);
+        var preflight = Assert.Single(events, x => x.Type == AgentEventType.PlanUpdated && x.Message == "Project context loaded");
+        Assert.Contains("\"projectContextLoaded\": true", preflight.PayloadJson);
+        Assert.Contains("\"repositoryRoot\"", preflight.PayloadJson);
+        Assert.Contains("\"sources\"", preflight.PayloadJson);
+        var plan = await store.GetPlanAsync(thread.Id, run.Id, CancellationToken.None);
+        Assert.Equal("Load project context", plan[0].Title);
+    }
+
     private static AgentSettingsDto Settings(string workspace)
     {
         return new AgentSettingsDto("codex", null, null, "workspace-write", "poe-studio", workspace, "manual");
+    }
+
+    private static AgentOrchestrator CreateOrchestrator(
+        AgentStore store,
+        string repositoryRoot,
+        ICodexProcessRunner runner)
+    {
+        return new AgentOrchestrator(
+            store,
+            new AgentPromptBuilder(),
+            new Datc64TranslationDraftParser(),
+            runner,
+            new AgentProjectContextService(new AgentRepositoryRootResolver(repositoryRoot)));
+    }
+
+    private static TemporaryDirectory CreateRepositoryRoot()
+    {
+        var directory = new TemporaryDirectory();
+        File.WriteAllText(Path.Combine(directory.Root, "PoeStudio.sln"), string.Empty);
+        var agentDocs = Directory.CreateDirectory(Path.Combine(directory.Root, "docs", "agent"));
+        File.WriteAllText(Path.Combine(agentDocs.FullName, "poe-studio-project-workflows.md"), "# Workflow\n\n## 7. 原始层、草稿层与当前工作态\ncurrent working state overlay mcp approval");
+        File.WriteAllText(Path.Combine(agentDocs.FullName, "poe-studio-agent-context.md"), "# Agent Context\n\n## 1. Agent 总目标\nAgent context.");
+        File.WriteAllText(Path.Combine(directory.Root, "docs", "ai-project-memory.md"), "# Memory\n\n## 项目定位\nProject memory.");
+        return directory;
     }
 
     private static string CreateWorkspace()
@@ -176,6 +218,25 @@ public sealed class AgentOrchestratorTests
         var path = Path.Combine(Path.GetTempPath(), "poe-studio-agent-orchestrator-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            Root = Path.Combine(Path.GetTempPath(), "poe-studio-agent-orchestrator-repo-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(Root);
+        }
+
+        public string Root { get; }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Root))
+            {
+                Directory.Delete(Root, recursive: true);
+            }
+        }
     }
 
     private sealed class FakeRunner : ICodexProcessRunner

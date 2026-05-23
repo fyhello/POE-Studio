@@ -61,6 +61,8 @@ builder.Services.AddScoped(sp => new AgentStore(sp.GetRequiredService<WorkspaceR
 builder.Services.AddSingleton<CodexJsonEventParser>();
 builder.Services.AddSingleton<AgentPromptBuilder>();
 builder.Services.AddSingleton<Datc64TranslationDraftParser>();
+builder.Services.AddSingleton<AgentRepositoryRootResolver>();
+builder.Services.AddScoped<AgentProjectContextService>();
 builder.Services.AddScoped<CodexProcessRunner>();
 builder.Services.AddScoped<ICodexProcessRunner>(sp => sp.GetRequiredService<CodexProcessRunner>());
 builder.Services.AddScoped<AgentOrchestrator>();
