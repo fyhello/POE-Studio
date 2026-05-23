@@ -12,25 +12,25 @@
 
 ## 0. 固定硬约束
 
-- [ ] **H0.1：目标是 Agent 项目认知，不是 DATC64 专项修复**  
+- [x] **H0.1：目标是 Agent 项目认知，不是 DATC64 专项修复**  
   本计划不实现 overlay-aware DATC64 读取、不改 DATC64 proposal schema、不新增 DATC64 对比写入规则。DATC64 只用于验证 Agent 是否会理解“目标当前工作态、来源参考表、MCP 读取层限制、审批边界”。
 
-- [ ] **H0.2：知识底座必须进入运行链路**  
+- [x] **H0.2：知识底座必须进入运行链路**  
   `docs/agent/poe-studio-project-workflows.md` 必须由运行时读取或摘要化。禁止只在 prompt 中手写几条规则冒充接入。
 
-- [ ] **H0.3：每个 run 必须留下可追溯证据**  
+- [x] **H0.3：每个 run 必须留下可追溯证据**  
   run events 或 plan evidence 中必须能看到：项目上下文已加载、来源文档路径、hash 或版本、摘要、preflight 结果、warnings。
 
-- [ ] **H0.4：保持 Stage 2 边界**  
+- [x] **H0.4：保持 Stage 2 边界**  
   允许改后端 Agent runtime、Core prompt、MCP 只读工具、测试和验收报告。禁止新增正式 Agent Workspace UI，禁止新增任意 shell 工具，禁止自动写代码工具，禁止绕过 approval 写 overlay。
 
-- [ ] **H0.5：区分 repository root 与 workspace root**  
-  AgentStore 使用 POE Studio 用户 workspace；项目知识文档位于代码仓库。实现者必须新增 repository root 解析，不得直接把 `WorkspaceRootProvider.CurrentRoot` 当作仓库根。
+- [x] **H0.5：区分 repository root 与 workspace root**  
+  AgentStore 使用 POE Studio 用户 workspace；项目知识文档位于代码仓库。实现者必须新增 repository root 解析，不得直接把 `WorkspaceRootProvider.CurrentRoot` 当作仓库根。`AgentSettingsDto.WorkingDirectory` 必须作为 repository root 解析的优先候选之一，因为 API 进程可能不是从仓库根启动。
 
-- [ ] **H0.6：知识注入要可控**  
-  禁止每次把整篇知识底座无脑塞进 prompt。必须有摘要、章节选择和长度上限，避免 token 失控。
+- [x] **H0.6：知识注入要可控**  
+  禁止每次把整篇知识底座无脑塞进 prompt。必须有摘要、章节选择、长度上限和整条 prompt budget 验收，避免 token 失控。执行完成后必须用 fake runner 捕获 prompt，并证明 prompt 没有携带整篇知识底座原文。
 
-- [ ] **H0.7：计划与进度可追溯**  
+- [x] **H0.7：计划与进度可追溯**  
   执行者必须逐项更新本计划复选框。偏离计划时先补充计划说明，再继续实现。
 
 ---
@@ -77,6 +77,7 @@
 - `tests/PoeStudio.Tests/AgentRepositoryRootResolverTests.cs`
 - `tests/PoeStudio.Tests/AgentProjectContextServiceTests.cs`
 - `tests/PoeStudio.Tests/AgentProjectContextSelectorTests.cs`
+- `tests/PoeStudio.Tests/AgentProjectContextBudgetTests.cs`
 - `tests/PoeStudio.Tests/McpProjectContextToolTests.cs`
 - `docs/superpowers/reports/2026-05-23-agent-project-cognition-integration-acceptance.md`
 
@@ -96,13 +97,32 @@
 
 ---
 
-## 2. 任务 1：Repository root 解析
+## 2. Token 与 prompt budget 硬门槛
+
+- [x] **B0.1：Project context 输出预算**  
+  `AgentProjectContextService` 输出的 `Summary` 最大 2500 字符；每个 `RelevantSections[*].Content`、`ToolGuidance[*].UseFor + Limitation`、`RiskBoundaries[*].Rule` 最大 900 字符。
+
+- [x] **B0.2：Prompt 总长度预算**  
+  `AgentPromptBuilder.Build(...)` 生成的完整 prompt 在测试中必须小于 16000 字符。若未来确有需要扩大，必须先更新本计划或后续计划，并说明原因、任务类型和验收标准。
+
+- [x] **B0.3：禁止全文灌入**  
+  fake runner 捕获的 prompt 不得包含 `docs/agent/poe-studio-project-workflows.md` 中任一长章节的连续原文。测试至少选择一个超过 1200 字符的章节，断言 prompt 不包含该章节全文。
+
+- [x] **B0.4：任务相关性验收**  
+  DATC64 翻译任务 prompt 应包含 `layering`、`datc64`、`mcp`、`approval` 相关摘要；不应携带大段无关 patch/import/native 章节全文。Patch/Native 任务可以包含 patch/native 摘要，但不应携带 DATC64 章节全文。
+
+- [x] **B0.5：MCP 按需查询，不替代预算**  
+  `poe_get_project_context` 允许 Codex 执行中按需查询项目上下文，但工具返回也必须遵守同类摘要和 section 长度限制。MCP 工具不能返回整篇知识底座全文。
+
+---
+
+## 3. 任务 1：Repository root 解析
 
 **文件：**
 - 创建：`src/PoeStudio.Core/Agent/AgentRepositoryRootResolver.cs`
 - 创建：`tests/PoeStudio.Tests/AgentRepositoryRootResolverTests.cs`
 
-- [ ] **步骤 1：运行影响分析**
+- [x] **步骤 1：运行影响分析**
 
 通过 GitNexus MCP：
 
@@ -116,13 +136,14 @@ mcp__gitnexus__impact({
 
 本任务只新增类，不修改现有符号；记录后续 prompt/orchestrator 影响面。
 
-- [ ] **步骤 2：编写失败测试**
+- [x] **步骤 2：编写失败测试**
 
 测试必须覆盖：
 
 - 从包含 `PoeStudio.sln` 和 `docs/agent/poe-studio-project-workflows.md` 的目录识别仓库根。
 - 从子目录向上查找仓库根。
 - 显式 repository root 优先。
+- `ResolveFromCandidates(settings.WorkingDirectory, ...)` 能把 Agent 设置中的 working directory 作为优先候选。
 - 环境变量 `POE_STUDIO_REPOSITORY_ROOT` 可作为 fallback。
 - 找不到时返回 `null`，不抛异常。
 
@@ -134,7 +155,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL，类型不存在。
 
-- [ ] **步骤 3：实现 resolver**
+- [x] **步骤 3：实现 resolver**
 
 接口：
 
@@ -162,7 +183,7 @@ public sealed class AgentRepositoryRootResolver
 3. `Environment.CurrentDirectory` 及祖先。
 4. `AppContext.BaseDirectory` 及祖先。
 
-- [ ] **步骤 4：运行测试**
+- [x] **步骤 4：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~AgentRepositoryRootResolverTests
@@ -170,7 +191,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add src\PoeStudio.Core\Agent\AgentRepositoryRootResolver.cs tests\PoeStudio.Tests\AgentRepositoryRootResolverTests.cs
@@ -179,13 +200,13 @@ git commit -m "feat(agent): resolve repository root for project context"
 
 ---
 
-## 3. 任务 2：项目认知 DTO
+## 4. 任务 2：项目认知 DTO
 
 **文件：**
 - 创建：`src/PoeStudio.Contracts/AgentProjectContextDtos.cs`
 - 修改：`tests/PoeStudio.Tests/AgentProjectContextServiceTests.cs`
 
-- [ ] **步骤 1：编写 DTO 序列化失败测试**
+- [x] **步骤 1：编写 DTO 序列化失败测试**
 
 测试 `AgentProjectContextDto` 序列化后包含：
 
@@ -205,7 +226,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL，DTO 类型不存在。
 
-- [ ] **步骤 2：创建 DTO**
+- [x] **步骤 2：创建 DTO**
 
 必须定义：
 
@@ -256,7 +277,7 @@ public sealed record AgentProjectPreflightDto(
     IReadOnlyList<string> Warnings);
 ```
 
-- [ ] **步骤 3：运行测试**
+- [x] **步骤 3：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~AgentProjectContextServiceTests
@@ -264,7 +285,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS 当前 DTO 测试。
 
-- [ ] **步骤 4：Commit**
+- [x] **步骤 4：Commit**
 
 ```powershell
 git add src\PoeStudio.Contracts\AgentProjectContextDtos.cs tests\PoeStudio.Tests\AgentProjectContextServiceTests.cs
@@ -273,13 +294,13 @@ git commit -m "feat(agent): define project context contracts"
 
 ---
 
-## 4. 任务 3：读取和摘要化项目知识底座
+## 5. 任务 3：读取和摘要化项目知识底座
 
 **文件：**
 - 创建：`src/PoeStudio.Core/Agent/AgentProjectContextService.cs`
 - 修改：`tests/PoeStudio.Tests/AgentProjectContextServiceTests.cs`
 
-- [ ] **步骤 1：编写服务失败测试**
+- [x] **步骤 1：编写服务失败测试**
 
 测试必须覆盖：
 
@@ -289,6 +310,7 @@ git commit -m "feat(agent): define project context contracts"
 - 缺失文档时不抛异常，`Unknowns` 记录 missing。
 - 摘要长度不超过 2500 字符。
 - section content 单条不超过 900 字符。
+- service 不返回任何单篇知识文档全文。
 
 运行：
 
@@ -298,7 +320,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL。
 
-- [ ] **步骤 2：实现 service**
+- [x] **步骤 2：实现 service**
 
 接口：
 
@@ -311,6 +333,7 @@ public sealed class AgentProjectContextService
         string taskKind,
         string goal,
         string? resourcePath,
+        string? repositoryRootCandidate,
         CancellationToken cancellationToken);
 }
 ```
@@ -324,13 +347,15 @@ public sealed class AgentProjectContextService
 实现要求：
 
 - 使用 repository root resolver，不使用 workspace root 当仓库根。
+- 使用 `repositoryRootCandidate` 作为第一候选；orchestrator 必须传入 `settings.WorkingDirectory`。
 - Markdown 章节提取只用标题切片，不引入新依赖。
 - source hash 使用 SHA-256。
 - 缺失文档返回成功 context，但写入 `Unknowns`。
 - 默认工具边界必须包含：`poe_get_workspace`、`poe_list_profiles`、`poe_get_index_status`、`poe_search_resources`、`poe_read_resource`、`poe_datc64_extract_translatable_cells`、`poe_get_project_context`。
 - 默认风险边界必须包含：读取资源、生成 proposal、写 overlay、批量写入、构建补丁、安装/回滚。
+- `AgentProjectContextServiceTests` 必须包含 budget 测试：构造一个 8000 字符以上的知识文档，断言 summary 和 sections 被截断，且 context 中不存在整篇原文。
 
-- [ ] **步骤 3：运行测试**
+- [x] **步骤 3：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~AgentProjectContextServiceTests
@@ -338,7 +363,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 4：Commit**
+- [x] **步骤 4：Commit**
 
 ```powershell
 git add src\PoeStudio.Core\Agent\AgentProjectContextService.cs tests\PoeStudio.Tests\AgentProjectContextServiceTests.cs
@@ -347,14 +372,14 @@ git commit -m "feat(agent): load project workflow context"
 
 ---
 
-## 5. 任务 4：任务相关章节选择
+## 6. 任务 4：任务相关章节选择
 
 **文件：**
 - 创建：`src/PoeStudio.Core/Agent/AgentProjectContextSelector.cs`
 - 创建：`tests/PoeStudio.Tests/AgentProjectContextSelectorTests.cs`
 - 修改：`src/PoeStudio.Core/Agent/AgentProjectContextService.cs`
 
-- [ ] **步骤 1：编写 selector 失败测试**
+- [x] **步骤 1：编写 selector 失败测试**
 
 测试必须覆盖：
 
@@ -371,7 +396,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL。
 
-- [ ] **步骤 2：实现 selector**
+- [x] **步骤 2：实现 selector**
 
 接口：
 
@@ -389,11 +414,11 @@ public static class AgentProjectContextSelector
 - `Native`、`GGPK`、`Oodle`、`Bundles2` 命中 native。
 - `找`、`搜索`、`资源`、`索引` 命中 index/resource。
 
-- [ ] **步骤 3：service 接入 selector**
+- [x] **步骤 3：service 接入 selector**
 
 `AgentProjectContextService.BuildAsync` 使用 selector 选择章节；未找到章节时保留 warnings/unknowns，不失败。
 
-- [ ] **步骤 4：运行测试**
+- [x] **步骤 4：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "FullyQualifiedName~AgentProjectContextSelectorTests|FullyQualifiedName~AgentProjectContextServiceTests"
@@ -401,7 +426,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：PASS。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add src\PoeStudio.Core\Agent\AgentProjectContextSelector.cs src\PoeStudio.Core\Agent\AgentProjectContextService.cs tests\PoeStudio.Tests\AgentProjectContextSelectorTests.cs tests\PoeStudio.Tests\AgentProjectContextServiceTests.cs
@@ -410,13 +435,13 @@ git commit -m "feat(agent): select relevant project context"
 
 ---
 
-## 6. 任务 5：PromptBuilder 注入项目认知
+## 7. 任务 5：PromptBuilder 注入项目认知
 
 **文件：**
 - 修改：`src/PoeStudio.Core/Agent/AgentPromptBuilder.cs`
 - 修改：`tests/PoeStudio.Tests/AgentPromptBuilderTests.cs`
 
-- [ ] **步骤 1：运行影响分析**
+- [x] **步骤 1：运行影响分析**
 
 通过 GitNexus MCP：
 
@@ -430,7 +455,7 @@ mcp__gitnexus__impact({
 
 若 HIGH 或 CRITICAL，先记录直接调用方和测试影响面。
 
-- [ ] **步骤 2：编写 prompt 失败测试**
+- [x] **步骤 2：编写 prompt 失败测试**
 
 新增测试断言 prompt 包含：
 
@@ -441,6 +466,8 @@ mcp__gitnexus__impact({
 - `No useOverlay parameter` 或等价工具限制
 - `Requires approval`
 - `unknowns`
+- 完整 prompt 长度小于 16000 字符。
+- prompt 不包含任一超过 1200 字符的知识底座章节全文。
 
 运行：
 
@@ -450,7 +477,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL。
 
-- [ ] **步骤 3：修改 Build 签名并保留兼容 overload**
+- [x] **步骤 3：修改 Build 签名并保留兼容 overload**
 
 新增主签名：
 
@@ -467,7 +494,7 @@ public string Build(
 
 保留当前签名作为 overload，内部传 `projectContext: null`，避免一次性破坏旧测试。
 
-- [ ] **步骤 4：追加 Project context prompt 段**
+- [x] **步骤 4：追加 Project context prompt 段**
 
 插入位置：`Task context` 之后，`Allowed MCP tools` 之前。
 
@@ -489,9 +516,10 @@ Project context:
 - context 为 null 时写 `Project context: unavailable`。
 - summary 最大 2500 字符。
 - 每个 section/tool/risk 最大 900 字符。
+- 完整 prompt 必须在测试中小于 16000 字符。
 - 保留原有 final JSON contract。
 
-- [ ] **步骤 5：运行测试**
+- [x] **步骤 5：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~AgentPromptBuilderTests
@@ -499,7 +527,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 6：Commit**
+- [x] **步骤 6：Commit**
 
 ```powershell
 git add src\PoeStudio.Core\Agent\AgentPromptBuilder.cs tests\PoeStudio.Tests\AgentPromptBuilderTests.cs
@@ -508,7 +536,7 @@ git commit -m "feat(agent): inject project context into prompts"
 
 ---
 
-## 7. 任务 6：Orchestrator preflight 与事件留痕
+## 8. 任务 6：Orchestrator preflight 与事件留痕
 
 **文件：**
 - 修改：`src/PoeStudio.Storage/Agent/AgentOrchestrator.cs`
@@ -516,7 +544,7 @@ git commit -m "feat(agent): inject project context into prompts"
 - 修改：`tests/PoeStudio.Tests/AgentOrchestratorTests.cs`
 - 修改：`tests/PoeStudio.Tests/AgentApiSmokeTests.cs`
 
-- [ ] **步骤 1：运行影响分析**
+- [x] **步骤 1：运行影响分析**
 
 通过 GitNexus MCP：
 
@@ -530,7 +558,7 @@ mcp__gitnexus__impact({
 
 记录风险。若 HIGH 或 CRITICAL，先说明影响面再继续。
 
-- [ ] **步骤 2：编写 orchestrator 失败测试**
+- [x] **步骤 2：编写 orchestrator 失败测试**
 
 测试必须断言：
 
@@ -548,7 +576,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL。
 
-- [ ] **步骤 3：修改 AgentOrchestrator 构造函数**
+- [x] **步骤 3：修改 AgentOrchestrator 构造函数**
 
 新增依赖：
 
@@ -558,11 +586,11 @@ private readonly AgentProjectContextService _projectContextService;
 
 构造函数新增参数，并更新所有测试 helper。
 
-- [ ] **步骤 4：在 ContinueRunAsync 构建 prompt 前加载 context**
+- [x] **步骤 4：在 ContinueRunAsync 构建 prompt 前加载 context**
 
 流程：
 
-1. 调用 `_projectContextService.BuildAsync(run.TaskKind, run.Goal, run.ResourcePath, cancellationToken)`。
+1. 先读取 `settings`，再调用 `_projectContextService.BuildAsync(run.TaskKind, run.Goal, run.ResourcePath, settings.WorkingDirectory, cancellationToken)`。
 2. 构造 `AgentProjectPreflightDto`。
 3. 写 `AgentEventType.PlanUpdated`，message 固定为 `Project context loaded`。
 4. 初始 plan 从 `Build prompt` 改为：
@@ -572,7 +600,7 @@ private readonly AgentProjectContextService _projectContextService;
    - `Store result / Request approval`
 5. 调用新签名 `_promptBuilder.Build(..., projectContext)`。
 
-- [ ] **步骤 5：Program 注册服务**
+- [x] **步骤 5：Program 注册服务**
 
 在现有 Agent DI 附近增加：
 
@@ -583,7 +611,7 @@ builder.Services.AddScoped<AgentProjectContextService>();
 
 不要使用 `WorkspaceRootProvider.CurrentRoot` 作为 repository root。
 
-- [ ] **步骤 6：运行测试**
+- [x] **步骤 6：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "FullyQualifiedName~AgentOrchestratorTests|FullyQualifiedName~AgentApiSmokeTests"
@@ -591,7 +619,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：PASS。
 
-- [ ] **步骤 7：Commit**
+- [x] **步骤 7：Commit**
 
 ```powershell
 git add src\PoeStudio.Storage\Agent\AgentOrchestrator.cs src\PoeStudio.Api\Program.cs tests\PoeStudio.Tests\AgentOrchestratorTests.cs tests\PoeStudio.Tests\AgentApiSmokeTests.cs
@@ -600,7 +628,7 @@ git commit -m "feat(agent): record project context preflight"
 
 ---
 
-## 8. 任务 7：MCP 只读项目上下文工具
+## 9. 任务 7：MCP 只读项目上下文工具
 
 **文件：**
 - 修改：`src/PoeStudio.Mcp/PoeMcpTools.cs`
@@ -609,7 +637,7 @@ git commit -m "feat(agent): record project context preflight"
 - 修改：`tests/PoeStudio.Tests/McpToolRegistryTests.cs`
 - 修改：`tests/PoeStudio.Tests/AgentCapabilitiesTests.cs`
 
-- [ ] **步骤 1：编写 MCP 工具失败测试**
+- [x] **步骤 1：编写 MCP 工具失败测试**
 
 测试必须覆盖：
 
@@ -618,6 +646,7 @@ git commit -m "feat(agent): record project context preflight"
 - 调用 `poe_get_project_context` 返回 JSON。
 - 返回内容包含 summary、sources、toolGuidance、riskBoundaries。
 - 缺失知识文档时返回成功，但 `unknowns` 包含 missing，不返回 MCP error。
+- 返回内容不包含整篇知识底座全文；summary 和 sections 遵守 budget。
 
 运行：
 
@@ -627,7 +656,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：FAIL。
 
-- [ ] **步骤 2：注册 `poe_get_project_context`**
+- [x] **步骤 2：注册 `poe_get_project_context`**
 
 schema 参数：
 
@@ -642,9 +671,9 @@ schema 参数：
 - 不读取 overlay，不写文件。
 - 使用 `AgentRepositoryRootResolver` + `AgentProjectContextService`。
 - 若 arguments 提供 `repositoryRoot`，作为 explicit root。
-- 若未提供，使用 resolver 默认候选。
+- 若未提供，使用 resolver 默认候选；MCP 工具没有 Agent settings，因此不能假设 POE Studio workspace root 是 repository root。
 
-- [ ] **步骤 3：更新 capabilities**
+- [x] **步骤 3：更新 capabilities**
 
 所有能力都必须包含 `poe_get_project_context`：
 
@@ -654,7 +683,7 @@ schema 参数：
 
 更新 `AgentCapabilitiesTests` 断言每个 capability 都包含该工具。
 
-- [ ] **步骤 4：运行测试**
+- [x] **步骤 4：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "FullyQualifiedName~McpProjectContextToolTests|FullyQualifiedName~McpToolRegistryTests|FullyQualifiedName~AgentCapabilitiesTests|FullyQualifiedName~AgentPromptBuilderTests"
@@ -662,7 +691,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：PASS。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add src\PoeStudio.Mcp\PoeMcpTools.cs src\PoeStudio.Core\Agent\AgentCapabilities.cs tests\PoeStudio.Tests\McpProjectContextToolTests.cs tests\PoeStudio.Tests\McpToolRegistryTests.cs tests\PoeStudio.Tests\AgentCapabilitiesTests.cs
@@ -671,13 +700,13 @@ git commit -m "feat(agent): expose project context through MCP"
 
 ---
 
-## 9. 任务 8：端到端行为验收
+## 10. 任务 8：端到端行为验收
 
 **文件：**
 - 修改：`tests/PoeStudio.Tests/AgentApiSmokeTests.cs`
 - 创建：`docs/superpowers/reports/2026-05-23-agent-project-cognition-integration-acceptance.md`
 
-- [ ] **步骤 1：fake Codex prompt 验证**
+- [x] **步骤 1：fake Codex prompt 验证**
 
 API smoke 或 orchestrator smoke 必须捕获 prompt，并断言：
 
@@ -686,8 +715,10 @@ API smoke 或 orchestrator smoke 必须捕获 prompt，并断言：
 - `poe_get_project_context`
 - `poe_read_resource` 的读取层限制
 - `Requires approval`
+- prompt 总长度小于 16000 字符。
+- prompt 没有携带 `docs/agent/poe-studio-project-workflows.md` 的整篇内容或任一长章节全文。
 
-- [ ] **步骤 2：fake Codex run event 验证**
+- [x] **步骤 2：fake Codex run event 验证**
 
 创建 run 后断言：
 
@@ -696,7 +727,7 @@ API smoke 或 orchestrator smoke 必须捕获 prompt，并断言：
 - plan 包含 `Load project context`。
 - Codex runner 失败时仍保留 project context event。
 
-- [ ] **步骤 3：真实 Codex question smoke**
+- [x] **步骤 3：真实 Codex question smoke**
 
 启动 API：
 
@@ -717,7 +748,7 @@ dotnet run --project src\PoeStudio.Api\PoeStudio.Api.csproj --urls http://localh
 - Codex 至少调用 `poe_get_project_context`，或最终回答明确引用项目上下文。
 - 回答能区分 UI PreferOverlay/current working state 与 MCP 当前无 `useOverlay` 参数。
 
-- [ ] **步骤 4：DATC64 认知样例 smoke**
+- [x] **步骤 4：DATC64 认知样例 smoke**
 
 发起只读或 proposal 前置任务：
 
@@ -731,7 +762,7 @@ dotnet run --project src\PoeStudio.Api\PoeStudio.Api.csproj --urls http://localh
 - Agent 提到必须确认目标 profile、来源 profile、目标读取层、来源表、overlay/current working state。
 - Agent 不把 DATC64 当成唯一项目能力。
 
-- [ ] **步骤 5：完整测试**
+- [x] **步骤 5：完整测试**
 
 ```powershell
 dotnet test PoeStudio.sln --no-restore
@@ -739,7 +770,7 @@ dotnet test PoeStudio.sln --no-restore
 
 预期：全部通过。
 
-- [ ] **步骤 6：写验收报告**
+- [x] **步骤 6：写验收报告**
 
 验收报告必须包含：
 
@@ -751,11 +782,12 @@ Agent project cognition integration status: PASS
 
 - 测试命令和结果。
 - fake Codex prompt 验证摘要。
+- prompt budget 验证摘要，包括捕获到的 prompt 字符数和“不含全文灌入”的断言结果。
 - run event 验证摘要。
 - 真实 Codex smoke 的 run id、event 摘要、最终回答摘要。
 - 未解决问题。
 
-- [ ] **步骤 7：Commit**
+- [x] **步骤 7：Commit**
 
 ```powershell
 git add tests\PoeStudio.Tests\AgentApiSmokeTests.cs docs\superpowers\reports\2026-05-23-agent-project-cognition-integration-acceptance.md
@@ -764,29 +796,33 @@ git commit -m "docs(agent): record project cognition integration acceptance"
 
 ---
 
-## 10. 完成判定
+## 11. 完成判定
 
-- [ ] `AgentRepositoryRootResolver` 能稳定区分 repository root 与 workspace root。
-- [ ] `AgentProjectContextService` 能读取知识底座并生成摘要。
-- [ ] `AgentProjectContextSelector` 能按任务选择相关项目知识。
-- [ ] `AgentPromptBuilder` 每次 run prompt 包含项目上下文摘要、工具边界和风险边界。
-- [ ] `AgentOrchestrator` 每次 run 前记录项目上下文 preflight 事件。
-- [ ] MCP 新增只读 `poe_get_project_context`。
-- [ ] `AgentCapabilities` 让所有能力都可使用 `poe_get_project_context`。
-- [ ] fake Codex 测试证明 prompt 注入生效。
-- [ ] API smoke 证明 run events 记录项目上下文加载。
-- [ ] 真实 Codex smoke 证明 Agent 知道 current working state 和 MCP 读取层限制。
-- [ ] 未实现 DATC64 业务修复，未新增正式 Agent Workspace UI，未新增任意 shell 工具。
-- [ ] `dotnet test PoeStudio.sln --no-restore` 通过。
+- [x] `AgentRepositoryRootResolver` 能稳定区分 repository root 与 workspace root。
+- [x] `AgentProjectContextService` 能读取知识底座并生成摘要。
+- [x] `AgentProjectContextSelector` 能按任务选择相关项目知识。
+- [x] `AgentPromptBuilder` 每次 run prompt 包含项目上下文摘要、工具边界和风险边界。
+- [x] `AgentOrchestrator` 每次 run 前记录项目上下文 preflight 事件。
+- [x] MCP 新增只读 `poe_get_project_context`。
+- [x] `AgentCapabilities` 让所有能力都可使用 `poe_get_project_context`。
+- [x] fake Codex 测试证明 prompt 注入生效。
+- [x] fake Codex 测试证明 prompt 长度受控，小于 16000 字符，且没有整篇知识底座灌入。
+- [x] MCP `poe_get_project_context` 返回摘要化内容，不返回整篇知识底座全文。
+- [x] API smoke 证明 run events 记录项目上下文加载。
+- [x] 真实 Codex smoke 证明 Agent 知道 current working state 和 MCP 读取层限制。
+- [x] 未实现 DATC64 业务修复，未新增正式 Agent Workspace UI，未新增任意 shell 工具。
+- [x] `dotnet test PoeStudio.sln --no-restore` 通过。
 
 ---
 
-## 11. 自检记录
+## 12. 自检记录
 
-- [ ] 覆盖最初目标：Agent 成为理解项目的全量助手，而不是工具入口。
-- [ ] 覆盖当前关键问题：Agent 缺少完整项目知识，无法自然理解任务。
-- [ ] 没有跑偏到 DATC64 修复。
-- [ ] 没有跑偏到 Stage 3 UI。
-- [ ] 没有把 workspace root 当 repository root。
-- [ ] 所有代码行为都有计划步骤、测试和 commit。
-- [ ] 知识底座从文档进入运行链路，并可被 run events 追踪。
+- [x] 覆盖最初目标：Agent 成为理解项目的全量助手，而不是工具入口。
+- [x] 覆盖当前关键问题：Agent 缺少完整项目知识，无法自然理解任务。
+- [x] 没有跑偏到 DATC64 修复。
+- [x] 没有跑偏到 Stage 3 UI。
+- [x] 没有把 workspace root 当 repository root。
+- [x] 没有引入 token 不可控风险；prompt budget 有测试和验收报告证据。
+- [x] 所有代码行为都有计划步骤、测试和 commit。
+- [x] 知识底座从文档进入运行链路，并可被 run events 追踪。
+

@@ -89,6 +89,16 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         var afterOverlay = await (await client.PostAsJsonAsync("/api/overlay/list", new OverlayListRequest(profileId))).Content.ReadFromJsonAsync<ApiResponse<OverlayListResponse>>();
 
         Assert.Equal(AgentRunStatus.WaitingForApproval, run.Status);
+        var prompt = Assert.Single(_runner.Prompts);
+        Assert.Contains("Project context", prompt);
+        Assert.Contains("current working state", prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("poe_get_project_context", prompt);
+        Assert.Contains("poe_read_resource", prompt);
+        Assert.Contains("useOverlay parameter", prompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Requires approval", prompt);
+        Assert.True(prompt.Length < 16_000);
+        var workflowDocument = await File.ReadAllTextAsync(Path.Combine(FindRepositoryRoot(), "docs", "agent", "poe-studio-project-workflows.md"));
+        Assert.DoesNotContain(workflowDocument, prompt);
         Assert.Empty(beforeOverlay!.Data!.Items);
         Assert.Equal(HttpStatusCode.OK, approveResponse.StatusCode);
         Assert.Equal(AgentApprovalStatus.Applied, approvePayload!.Data!.Status);
@@ -219,9 +229,13 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         var run = await CreateRunAsync(client, thread, "question", null);
         var failed = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.Failed);
         var events = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentEventDto>>>($"/api/agent/runs/{run.Id}/events");
+        var snapshot = await client.GetFromJsonAsync<ApiResponse<AgentThreadSnapshotDto>>($"/api/agent/threads/{thread.Id}");
 
         Assert.Equal("agent_background_failed", failed.ErrorCode);
         Assert.Contains("unexpected runner failure", failed.ErrorMessage);
+        Assert.Contains(events!.Data!, x => x.Type == AgentEventType.PlanUpdated && x.Message == "Project context loaded");
+        Assert.Contains(events.Data!, x => x.PayloadJson is not null && x.PayloadJson.Contains("\"projectContextLoaded\": true", StringComparison.Ordinal));
+        Assert.Equal("Load project context", snapshot!.Data!.LatestPlan[0].Title);
         Assert.Contains(events!.Data!, x => x.Type == AgentEventType.RunFailed && x.Message.Contains("unexpected runner failure", StringComparison.Ordinal));
     }
 
@@ -402,6 +416,22 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         throw new TimeoutException($"Run {runId} did not record {eventType}.");
     }
 
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "PoeStudio.sln")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("PoeStudio.sln was not found.");
+    }
+
     private async Task SaveResourceIndexAsync(string profileId, string resourcePath, string physicalPath)
     {
         await new ResourceIndexStore(_workspaceRoot).SaveAsync(
@@ -432,6 +462,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         public bool BlockAfterFirstEvent { get; set; }
         public bool SawCancellation { get; set; }
         public bool ThrowUnexpected { get; set; }
+        public List<string> Prompts { get; } = [];
 
         public async Task<CodexRunResult> RunAsync(
             AgentSettingsDto settings,
@@ -439,6 +470,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
             Func<CodexParsedEvent, Task>? onEvent,
             CancellationToken cancellationToken)
         {
+            Prompts.Add(prompt);
             if (ThrowUnexpected)
             {
                 throw new IOException("unexpected runner failure");
