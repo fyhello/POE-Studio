@@ -62,6 +62,56 @@ public sealed class AgentPromptBuilderTests
         Assert.Contains("Previous answer", prompt);
     }
 
+    [Fact]
+    public void Build_injects_bounded_project_context_before_mcp_tools()
+    {
+        var longSection = new string('x', 1_300);
+        var projectContext = new AgentProjectContextDto(
+            "2026-05-23",
+            [
+                new AgentProjectContextSourceDto(
+                    "docs/agent/poe-studio-project-workflows.md",
+                    true,
+                    "abc123",
+                    DateTimeOffset.Parse("2026-05-23T00:00:00Z"))
+            ],
+            "DATC64 tasks must inspect current working state, overlay, MCP limitations, and approval boundaries.",
+            [
+                new AgentProjectContextSectionDto("layering", "Current working state", "current working state overlay draft before base."),
+                new AgentProjectContextSectionDto("mcp", "MCP current limits", "poe_read_resource has No useOverlay parameter."),
+                new AgentProjectContextSectionDto("approval", "Approval", "Requires approval before writing overlay."),
+                new AgentProjectContextSectionDto("datc64", "DATC64", longSection)
+            ],
+            [
+                new AgentToolGuidanceDto("poe_get_project_context", "Read project context", "Returns summary only."),
+                new AgentToolGuidanceDto("poe_read_resource", "Read base resource", "No useOverlay parameter.")
+            ],
+            [
+                new AgentRiskBoundaryDto("write overlay", "high", true, "Requires approval.")
+            ],
+            ["unknowns: missing current UI selection"]);
+
+        var prompt = _builder.Build(
+            Settings(),
+            AgentCapabilities.GetRequired("datc64-translation"),
+            Thread("datc64-translation"),
+            [],
+            "Translate DATC64",
+            "metadata/items.datc64",
+            projectContext);
+
+        Assert.Contains("Project context", prompt);
+        Assert.Contains("current working state", prompt);
+        Assert.Contains("overlay", prompt);
+        Assert.Contains("poe_get_project_context", prompt);
+        Assert.Contains("No useOverlay parameter", prompt);
+        Assert.Contains("Requires approval", prompt);
+        Assert.Contains("unknowns", prompt);
+        Assert.True(prompt.Length < 16_000);
+        Assert.DoesNotContain(longSection, prompt);
+        Assert.True(prompt.IndexOf("Project context", StringComparison.Ordinal) < prompt.IndexOf("Allowed MCP tools", StringComparison.Ordinal));
+    }
+
     private string Build(string taskKind, string goal, string? resourcePath)
     {
         return _builder.Build(

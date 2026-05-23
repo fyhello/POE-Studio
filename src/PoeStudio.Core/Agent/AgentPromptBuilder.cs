@@ -5,6 +5,9 @@ namespace PoeStudio.Core.Agent;
 
 public sealed class AgentPromptBuilder
 {
+    private const int SummaryMaxLength = 2500;
+    private const int ItemMaxLength = 900;
+
     public string Build(
         AgentSettingsDto settings,
         AgentCapabilityDto capability,
@@ -12,6 +15,18 @@ public sealed class AgentPromptBuilder
         IReadOnlyList<AgentMessageDto> messages,
         string goal,
         string? resourcePath)
+    {
+        return Build(settings, capability, thread, messages, goal, resourcePath, projectContext: null);
+    }
+
+    public string Build(
+        AgentSettingsDto settings,
+        AgentCapabilityDto capability,
+        AgentThreadDto thread,
+        IReadOnlyList<AgentMessageDto> messages,
+        string goal,
+        string? resourcePath,
+        AgentProjectContextDto? projectContext)
     {
         var builder = new StringBuilder();
         builder.AppendLine("You are running inside POE Studio Stage 2 Codex Bridge.");
@@ -35,6 +50,8 @@ public sealed class AgentPromptBuilder
         {
             builder.AppendLine($"- resourcePath: {resourcePath}");
         }
+
+        AppendProjectContext(builder, projectContext);
 
         builder.AppendLine();
         builder.AppendLine("Allowed MCP tools:");
@@ -62,6 +79,57 @@ public sealed class AgentPromptBuilder
         AppendHistory(builder, messages);
         AppendOutputContract(builder, capability, thread.ProfileId, resourcePath);
         return builder.ToString();
+    }
+
+    private static void AppendProjectContext(StringBuilder builder, AgentProjectContextDto? projectContext)
+    {
+        builder.AppendLine();
+        if (projectContext is null)
+        {
+            builder.AppendLine("Project context: unavailable");
+            return;
+        }
+
+        builder.AppendLine("Project context:");
+        builder.AppendLine($"- version: {projectContext.Version}");
+        builder.AppendLine("- sources:");
+        foreach (var source in projectContext.Sources)
+        {
+            builder.AppendLine($"  - {source.Path}; exists={source.Exists}; hash={source.Hash ?? "none"}");
+        }
+
+        builder.AppendLine($"- summary: {Truncate(projectContext.Summary, SummaryMaxLength)}");
+        builder.AppendLine("- relevant sections:");
+        foreach (var section in projectContext.RelevantSections)
+        {
+            builder.AppendLine($"  - {section.Key}: {section.Title}: {Truncate(section.Content, ItemMaxLength)}");
+        }
+
+        builder.AppendLine("- tool guidance:");
+        foreach (var tool in projectContext.ToolGuidance)
+        {
+            builder.AppendLine($"  - {tool.ToolName}: {Truncate(tool.UseFor + " Limitation: " + tool.Limitation, ItemMaxLength)}");
+        }
+
+        builder.AppendLine("- risk boundaries:");
+        foreach (var risk in projectContext.RiskBoundaries)
+        {
+            var approval = risk.RequiresApproval ? "Requires approval" : "No approval required";
+            builder.AppendLine($"  - {risk.Action} [{risk.RiskLevel}]: {approval}. {Truncate(risk.Rule, ItemMaxLength)}");
+        }
+
+        builder.AppendLine("- unknowns:");
+        if (projectContext.Unknowns.Count == 0)
+        {
+            builder.AppendLine("  - none");
+        }
+        else
+        {
+            foreach (var unknown in projectContext.Unknowns)
+            {
+                builder.AppendLine($"  - {Truncate(unknown, ItemMaxLength)}");
+            }
+        }
     }
 
     private static void AppendHistory(StringBuilder builder, IReadOnlyList<AgentMessageDto> messages)
@@ -125,5 +193,15 @@ public sealed class AgentPromptBuilder
     private static string Escape(string value)
     {
         return value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        if (value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..Math.Max(0, maxLength - 14)].TrimEnd() + " [truncated]";
     }
 }
