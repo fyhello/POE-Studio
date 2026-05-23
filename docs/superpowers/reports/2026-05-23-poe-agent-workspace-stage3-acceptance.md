@@ -1,6 +1,6 @@
 # POE Studio Agent Workspace Stage 3 Acceptance
 
-Stage 3 status: **PASS**
+Stage 3 status: **待人工/浏览器验证 (返工中)**
 
 ## Scope
 - Agent Workspace UI — 侧边栏布局（VSCode 风格）

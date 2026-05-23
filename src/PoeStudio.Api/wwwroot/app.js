@@ -5418,6 +5418,20 @@ async function loadAgentSnapshot(threadId) {
   state.agent.snapshot = snapshot;
   state.agent.currentRun = snapshot.recentRuns?.[0] || null;
   localStorage.setItem("poeStudioAgentThreadId", threadId);
+
+  // Load historical events for latest run so they survive refresh
+  const latestRun = snapshot.recentRuns?.[0];
+  if (latestRun) {
+    const historicalEvents = await api(`/api/agent/runs/${encodeURIComponent(latestRun.id)}/events?afterSequence=0`);
+    snapshot.events = historicalEvents || [];
+    state.agent.lastEventSequence = historicalEvents.length > 0
+      ? Math.max(...historicalEvents.map((e) => e.sequence || 0))
+      : 0;
+  } else {
+    snapshot.events = [];
+    state.agent.lastEventSequence = 0;
+  }
+
   renderAgentThreads();
   renderAgentSnapshot(snapshot);
   startAgentEventPolling();
@@ -5457,7 +5471,7 @@ function renderAgentSnapshot(snapshot) {
   $("agentCurrentThreadStatus").textContent = `${snapshot.thread.title} (${snapshot.thread.taskKind})`;
   renderAgentRunStatus(snapshot.recentRuns?.[0] || null);
   renderAgentPlan(snapshot.latestPlan || []);
-  renderAgentEvents([]);
+  renderAgentEvents(snapshot.events || []);
   renderAgentApprovals(snapshot.pendingApprovals || []);
   renderAgentResult(snapshot.recentRuns?.[0] || null);
 }

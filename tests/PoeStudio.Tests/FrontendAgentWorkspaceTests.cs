@@ -31,6 +31,7 @@ public sealed class FrontendAgentWorkspaceTests
         Assert.Contains("localStorage.getItem(\"poeStudioAgentThreadId\")", js);
         Assert.Contains("renderAgentThreads", js);
         Assert.Contains("renderAgentSnapshot", js);
+        Assert.Contains("/api/agent/runs/${encodeURIComponent(latestRun.id)}/events?afterSequence=0", js);
     }
 
     [Fact]
