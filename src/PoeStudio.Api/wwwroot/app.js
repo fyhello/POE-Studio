@@ -39,7 +39,18 @@ const state = {
     module: null
   },
   csdTagIssues: [],
-  csdTagIssueCursor: -1
+  csdTagIssueCursor: -1,
+  agent: {
+    visible: false,
+    settings: null,
+    capabilities: [],
+    threads: [],
+    currentThreadId: localStorage.getItem("poeStudioAgentThreadId") || null,
+    snapshot: null,
+    currentRun: null,
+    eventTimer: null,
+    lastEventSequence: 0
+  }
 };
 
 let currentTheme = localStorage.getItem("poeStudioTheme") || "dark";
@@ -5318,6 +5329,355 @@ function bind() {
   $("syncExternalOverlayBtn").addEventListener("click", syncExternalOverlay);
   $("syncExternalOverlayQuickBtn").addEventListener("click", syncExternalOverlay);
   $("refreshOverlayBtn").addEventListener("click", refreshOverlayList);
+
+  // Agent Workspace bindings
+  $("openAgentWorkspaceBtn").addEventListener("click", async () => {
+    state.agent.visible = !state.agent.visible;
+    $("agentWorkspace").classList.toggle("hidden", !state.agent.visible);
+    if (state.agent.visible) {
+      await loadAgentWorkspace();
+    }
+  });
+  $("agentCloseBtn").addEventListener("click", () => {
+    state.agent.visible = false;
+    $("agentWorkspace").classList.add("hidden");
+    if (state.agent.eventTimer) {
+      clearInterval(state.agent.eventTimer);
+      state.agent.eventTimer = null;
+    }
+  });
+  $("agentRunBtn").addEventListener("click", () => startAgentRun().catch((error) => setStatus(error.message)));
+  $("agentCancelRunBtn").addEventListener("click", () => cancelAgentRun().catch((error) => setStatus(error.message)));
+  $("agentRetryRunBtn").addEventListener("click", () => retryAgentRun().catch((error) => setStatus(error.message)));
+  $("agentNewThreadBtn").addEventListener("click", () => {
+    state.agent.currentThreadId = null;
+    state.agent.snapshot = null;
+    state.agent.currentRun = null;
+    state.agent.lastEventSequence = 0;
+    localStorage.removeItem("poeStudioAgentThreadId");
+    renderAgentSnapshot(null);
+    renderAgentThreads();
+    $("agentGoalInput").value = "";
+    $("agentGoalInput").focus();
+  });
+  $("agentWorkspace").addEventListener("click", (event) => {
+    const approveBtn = event.target.closest("[data-agent-approve]");
+    if (approveBtn) {
+      approveAgentApproval(approveBtn.dataset.agentApprove).catch((error) => setStatus(error.message));
+      return;
+    }
+    const rejectBtn = event.target.closest("[data-agent-reject]");
+    if (rejectBtn) {
+      rejectAgentApproval(rejectBtn.dataset.agentReject).catch((error) => setStatus(error.message));
+      return;
+    }
+    const threadBtn = event.target.closest("[data-agent-thread]");
+    if (threadBtn) {
+      loadAgentSnapshot(threadBtn.dataset.agentThread).catch((error) => setStatus(error.message));
+      return;
+    }
+  });
+}
+
+// === Agent Workspace Functions ===
+
+function agentRunStatusText(status) {
+  const map = { 0: "Queued", 1: "Running", 2: "WaitingForApproval", 3: "Succeeded", 4: "Failed", 5: "Cancelled", 6: "Rejected" };
+  return typeof status === "string" ? status : (map[status] || String(status));
+}
+
+function escapeHtml(text) {
+  const div = document.createElement("div");
+  div.textContent = String(text ?? "");
+  return div.innerHTML;
+}
+
+async function loadAgentWorkspace() {
+  try {
+    state.agent.settings = await api("/api/agent/settings");
+    state.agent.capabilities = await api("/api/agent/capabilities");
+    state.agent.threads = await api("/api/agent/threads?take=30");
+    if (!state.agent.currentThreadId && state.agent.threads.length > 0) {
+      state.agent.currentThreadId = state.agent.threads[0].id;
+    }
+    renderAgentSettings();
+    renderAgentThreads();
+    if (state.agent.currentThreadId) {
+      await loadAgentSnapshot(state.agent.currentThreadId);
+    } else {
+      renderAgentSnapshot(null);
+    }
+  } catch (error) {
+    setStatus(`Agent 加载失败：${error.message}`);
+  }
+}
+
+async function loadAgentSnapshot(threadId) {
+  const snapshot = await api(`/api/agent/threads/${encodeURIComponent(threadId)}`);
+  state.agent.currentThreadId = threadId;
+  state.agent.snapshot = snapshot;
+  state.agent.currentRun = snapshot.recentRuns?.[0] || null;
+  localStorage.setItem("poeStudioAgentThreadId", threadId);
+  renderAgentThreads();
+  renderAgentSnapshot(snapshot);
+  startAgentEventPolling();
+}
+
+function renderAgentSettings() {
+  const settings = state.agent.settings;
+  $("agentSettingsSummary").textContent = settings
+    ? `${settings.model || "默认模型"} · ${settings.sandbox} · ${settings.mcpServerName}`
+    : "未加载设置";
+}
+
+function renderAgentThreads() {
+  const list = $("agentThreadList");
+  if (!state.agent.threads || state.agent.threads.length === 0) {
+    list.innerHTML = '<div class="agent-empty">没有会话记录</div>';
+    return;
+  }
+  list.innerHTML = state.agent.threads.map((thread) => `
+    <button type="button" class="agent-thread-item${thread.id === state.agent.currentThreadId ? " selected" : ""}" data-agent-thread="${escapeHtml(thread.id)}">
+      <strong>${escapeHtml(thread.title)}</strong>
+      <span>${escapeHtml(thread.taskKind)} · ${formatLocalTime(thread.updatedAt)}</span>
+    </button>
+  `).join("");
+}
+
+function renderAgentSnapshot(snapshot) {
+  if (!snapshot) {
+    $("agentCurrentThreadStatus").textContent = "未选择会话";
+    renderAgentRunStatus(null);
+    renderAgentPlan([]);
+    renderAgentEvents([]);
+    renderAgentApprovals([]);
+    renderAgentResult(null);
+    return;
+  }
+  $("agentCurrentThreadStatus").textContent = `${snapshot.thread.title} (${snapshot.thread.taskKind})`;
+  renderAgentRunStatus(snapshot.recentRuns?.[0] || null);
+  renderAgentPlan(snapshot.latestPlan || []);
+  renderAgentEvents([]);
+  renderAgentApprovals(snapshot.pendingApprovals || []);
+  renderAgentResult(snapshot.recentRuns?.[0] || null);
+}
+
+function renderAgentRunStatus(run) {
+  if (!run) {
+    $("agentCurrentRunStatus").textContent = "未运行";
+    $("agentCancelRunBtn").disabled = true;
+    $("agentRetryRunBtn").disabled = true;
+    return;
+  }
+  const statusName = agentRunStatusText(run.status);
+  $("agentCurrentRunStatus").textContent = `${statusName} · ${run.progressPercent}% · ${run.message}`;
+  $("agentCancelRunBtn").disabled = ![0, 1].includes(run.status);
+  $("agentRetryRunBtn").disabled = ![3, 4, 5, 6].includes(run.status);
+  if (run.errorMessage) {
+    $("agentCurrentRunStatus").textContent += ` · 错误: ${run.errorCode || ""} ${run.errorMessage}`;
+  }
+}
+
+function renderAgentPlan(steps) {
+  const panel = $("agentPlanList");
+  if (!steps || steps.length === 0) {
+    panel.innerHTML = '<div class="agent-empty">暂无计划</div>';
+    return;
+  }
+  panel.innerHTML = steps.map((step) => `
+    <div class="agent-plan-step">
+      <span class="agent-plan-status">${escapeHtml(step.status)}</span>
+      <span>${escapeHtml(step.title)}</span>
+    </div>
+  `).join("");
+}
+
+function renderAgentEvents(events, options) {
+  const panel = $("agentEventTimeline");
+  if (options?.append && events.length > 0) {
+    const fragment = events.map((evt) => `
+      <div class="agent-event">
+        <span class="agent-event-type">${escapeHtml(agentEventTypeName(evt.type))}</span>
+        <span>${escapeHtml(evt.message)}</span>
+        <time>${formatLocalTime(evt.createdAt)}</time>
+      </div>
+    `).join("");
+    panel.insertAdjacentHTML("beforeend", fragment);
+    panel.scrollTop = panel.scrollHeight;
+    return;
+  }
+  if (!events || events.length === 0) {
+    if (!options?.append) {
+      panel.innerHTML = '<div class="agent-empty">暂无事件</div>';
+    }
+    return;
+  }
+  panel.innerHTML = events.map((evt) => `
+    <div class="agent-event">
+      <span class="agent-event-type">${escapeHtml(agentEventTypeName(evt.type))}</span>
+      <span>${escapeHtml(evt.message)}</span>
+      <time>${formatLocalTime(evt.createdAt)}</time>
+    </div>
+  `).join("");
+}
+
+function agentEventTypeName(type) {
+  const map = { 0: "创建", 1: "计划", 2: "Codex", 3: "Codex错误", 4: "MCP工具", 5: "消息", 6: "审批请求", 7: "已批准", 8: "已拒绝", 9: "草稿写入", 10: "失败", 11: "已取消" };
+  return map[type] || String(type);
+}
+
+function renderAgentApprovals(approvals) {
+  const panel = $("agentApprovalsPanel");
+  if (!approvals || approvals.length === 0) {
+    panel.innerHTML = '<div class="agent-empty">没有待审批操作</div>';
+    return;
+  }
+  panel.innerHTML = approvals.map((approval) => `
+    <article class="agent-approval" data-approval-id="${escapeHtml(approval.id)}">
+      <div class="agent-approval-head">
+        <strong>${escapeHtml(approval.kind)}</strong>
+        <span>${escapeHtml(approval.status)}</span>
+      </div>
+      <p>${escapeHtml(approval.summary || "需要审批")}</p>
+      <pre>${escapeHtml(approval.proposalJson || "")}</pre>
+      <div class="agent-approval-actions">
+        <button type="button" data-agent-approve="${escapeHtml(approval.id)}">批准</button>
+        <button type="button" data-agent-reject="${escapeHtml(approval.id)}">拒绝</button>
+      </div>
+    </article>
+  `).join("");
+}
+
+function renderAgentResult(run) {
+  $("agentResultPanel").textContent = run
+    ? (run.resultJson || run.errorMessage || run.message || "暂无结果")
+    : "暂无运行结果";
+}
+
+async function startAgentRun() {
+  const goal = $("agentGoalInput").value.trim();
+  if (!goal) {
+    setStatus("请输入 Agent 任务目标");
+    return;
+  }
+
+  const taskKind = $("agentTaskKindSelect").value || "question";
+  const profileId = targetProfileId();
+  const resourcePath = $("agentResourcePathInput").value.trim() || state.selectedResource?.virtualPath || null;
+  const threadTitle = goal.length > 32 ? `${goal.slice(0, 32)}...` : goal;
+
+  let thread = state.agent.snapshot?.thread || null;
+  if (!thread || thread.taskKind !== taskKind) {
+    thread = await api("/api/agent/threads", {
+      profileId,
+      title: threadTitle,
+      goal,
+      taskKind
+    });
+    state.agent.currentThreadId = thread.id;
+    localStorage.setItem("poeStudioAgentThreadId", thread.id);
+  }
+
+  await api(`/api/agent/threads/${encodeURIComponent(thread.id)}/messages`, {
+    content: goal,
+    attachments: resourcePath ? [resourcePath] : null
+  });
+
+  const run = await api("/api/agent/runs", {
+    threadId: thread.id,
+    profileId,
+    goal,
+    taskKind,
+    resourcePath: taskKind === "datc64-translation" ? resourcePath : null
+  });
+
+  state.agent.currentRun = run;
+  state.agent.lastEventSequence = 0;
+  await loadAgentSnapshot(thread.id);
+  setStatus(`Agent 任务已启动：${run.id}`);
+}
+
+function startAgentEventPolling() {
+  if (state.agent.eventTimer) {
+    clearInterval(state.agent.eventTimer);
+    state.agent.eventTimer = null;
+  }
+
+  const run = state.agent.currentRun;
+  if (!run || ["Succeeded", "Failed", "Cancelled", "Rejected"].includes(agentRunStatusText(run.status))) {
+    return;
+  }
+
+  state.agent.eventTimer = setInterval(() => {
+    pollAgentEvents().catch((error) => {
+      setStatus(`Agent 事件刷新失败：${error.message}`);
+    });
+  }, 1200);
+}
+
+async function pollAgentEvents() {
+  const run = state.agent.currentRun;
+  if (!run) return;
+  const events = await api(`/api/agent/runs/${encodeURIComponent(run.id)}/events?afterSequence=${state.agent.lastEventSequence || 0}`);
+  if (events.length > 0) {
+    state.agent.lastEventSequence = Math.max(...events.map((event) => event.sequence || 0));
+    state.agent.snapshot = {
+      ...state.agent.snapshot,
+      events: [...(state.agent.snapshot?.events || []), ...events]
+    };
+    renderAgentEvents(events, { append: true });
+    // Check for Project context loaded event
+    for (const evt of events) {
+      if (evt.message === "Project context loaded") {
+        setStatus("Agent: 项目上下文已加载");
+      }
+    }
+  }
+  const freshRun = await api(`/api/agent/runs/${encodeURIComponent(run.id)}`);
+  state.agent.currentRun = freshRun;
+  renderAgentRunStatus(freshRun);
+  if ([2, 3, 4, 5, 6].includes(freshRun.status)) {
+    clearInterval(state.agent.eventTimer);
+    state.agent.eventTimer = null;
+    await loadAgentSnapshot(freshRun.threadId);
+  }
+}
+
+async function approveAgentApproval(approvalId) {
+  setStatus("正在批准...");
+  await api(`/api/agent/approvals/${encodeURIComponent(approvalId)}/approve`, {});
+  setStatus("已批准");
+  if (state.agent.currentThreadId) {
+    await loadAgentSnapshot(state.agent.currentThreadId);
+  }
+}
+
+async function rejectAgentApproval(approvalId) {
+  setStatus("正在拒绝...");
+  await api(`/api/agent/approvals/${encodeURIComponent(approvalId)}/reject`, {});
+  setStatus("已拒绝");
+  if (state.agent.currentThreadId) {
+    await loadAgentSnapshot(state.agent.currentThreadId);
+  }
+}
+
+async function cancelAgentRun() {
+  const run = state.agent.currentRun;
+  if (!run) return;
+  setStatus("正在取消...");
+  await api(`/api/agent/runs/${encodeURIComponent(run.id)}/cancel`, {});
+  setStatus("已取消");
+  await loadAgentSnapshot(run.threadId);
+}
+
+async function retryAgentRun() {
+  const run = state.agent.currentRun;
+  if (!run) return;
+  setStatus("正在重试...");
+  const retry = await api(`/api/agent/runs/${encodeURIComponent(run.id)}/retry`, {});
+  state.agent.currentRun = retry;
+  state.agent.lastEventSequence = 0;
+  await loadAgentSnapshot(retry.threadId);
 }
 
 applyTheme(currentTheme);
