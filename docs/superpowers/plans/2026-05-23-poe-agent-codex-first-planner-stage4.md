@@ -515,7 +515,7 @@ git commit -m "feat(agent): build codex-first planner prompt"
 - 创建：`src/PoeStudio.Storage/Agent/AgentPlanGuardService.cs`
 - 创建：`tests/PoeStudio.Tests/AgentPlanGuardServiceTests.cs`
 
-- [ ] **步骤 1：运行影响分析**
+- [x] **步骤 1：运行影响分析**
 
 ```text
 mcp__gitnexus__impact({
@@ -528,7 +528,7 @@ mcp__gitnexus__impact({
 
 本任务新增 service，但会读取 `ProfileStore`、`ResourceIndexStore`、`OverlayStore`。记录风险。
 
-- [ ] **步骤 2：编写失败测试：DATC64 ready 计划通过并提示 overlay warning**
+- [x] **步骤 2：编写失败测试：DATC64 ready 计划通过并提示 overlay warning**
 
 测试创建临时 workspace、profile、resource index、overlay entry，然后调用 guard。
 
@@ -555,7 +555,7 @@ public async Task ValidateAsync_accepts_datc64_plan_and_warns_existing_overlay()
 }
 ```
 
-- [ ] **步骤 3：编写失败测试：写入能力没有 approval 被阻断**
+- [x] **步骤 3：编写失败测试：写入能力没有 approval 被阻断**
 
 ```csharp
 [Fact]
@@ -576,7 +576,7 @@ public async Task ValidateAsync_blocks_write_capability_without_required_approva
 }
 ```
 
-- [ ] **步骤 4：实现 Guard**
+- [x] **步骤 4：实现 Guard**
 
 Guard 规则：
 
@@ -591,7 +591,7 @@ Guard 规则：
 - 发现已有 overlay 时只 warning，不阻断。
 - 不执行任何写入。
 
-- [ ] **步骤 5：运行测试验证通过**
+- [x] **步骤 5：运行测试验证通过**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~AgentPlanGuardServiceTests
@@ -599,7 +599,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 6：Commit**
+- [x] **步骤 6：Commit**
 
 ```powershell
 git add src\PoeStudio.Storage\Agent\AgentPlanGuardService.cs tests\PoeStudio.Tests\AgentPlanGuardServiceTests.cs
