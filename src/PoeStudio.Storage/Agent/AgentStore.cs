@@ -64,6 +64,32 @@ public sealed class AgentStore
         return await ReadJsonAsync<AgentThreadDto>(ThreadPath(threadId), cancellationToken);
     }
 
+    public async Task<IReadOnlyList<AgentThreadDto>> ListThreadsAsync(int take, CancellationToken cancellationToken)
+    {
+        var threadsRoot = Path.Combine(AgentRoot, "threads");
+        if (!Directory.Exists(threadsRoot))
+        {
+            return [];
+        }
+
+        var limit = Math.Clamp(take, 1, 100);
+        var threads = new List<AgentThreadDto>();
+        foreach (var path in Directory.EnumerateFiles(threadsRoot, "thread.json", SearchOption.AllDirectories))
+        {
+            var thread = await ReadJsonAsync<AgentThreadDto>(path, cancellationToken);
+            if (thread is not null)
+            {
+                threads.Add(thread);
+            }
+        }
+
+        return threads
+            .OrderByDescending(x => x.UpdatedAt)
+            .ThenByDescending(x => x.CreatedAt)
+            .Take(limit)
+            .ToArray();
+    }
+
     public async Task<AgentRunDto?> FindRunAsync(string runId, CancellationToken cancellationToken)
     {
         var threadsRoot = Path.Combine(AgentRoot, "threads");

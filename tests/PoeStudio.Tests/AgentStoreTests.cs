@@ -329,6 +329,20 @@ public sealed class AgentStoreTests
         Assert.True(approvals[0].UpdatedAt > approvals[0].CreatedAt);
     }
 
+    [Fact]
+    public async Task ListThreadsAsync_returns_recent_threads_ordered_by_updated_at()
+    {
+        var workspace = CreateWorkspace();
+        var store = new AgentStore(workspace);
+        var older = await store.SaveNewThreadAsync("profile-1", "Older", "Goal A", "question", CancellationToken.None);
+        await Task.Delay(5);
+        var newer = await store.SaveNewThreadAsync("profile-1", "Newer", "Goal B", "read-only-analysis", CancellationToken.None);
+
+        var threads = await store.ListThreadsAsync(10, CancellationToken.None);
+
+        Assert.Equal([newer.Id, older.Id], threads.Select(x => x.Id).ToArray());
+    }
+
     private static string CreateWorkspace()
     {
         var path = Path.Combine(Path.GetTempPath(), "poe-studio-agent-tests", Guid.NewGuid().ToString("N"));

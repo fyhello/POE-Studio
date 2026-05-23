@@ -354,6 +354,23 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         Assert.Equal(AgentApprovalStatus.Rejected, rejected!.Data!.Status);
     }
 
+    [Fact]
+    public async Task Agent_workspace_bootstrap_apis_return_capabilities_and_recent_threads()
+    {
+        var client = _factory.CreateClient();
+        var thread = await CreateThreadAsync(client, "question");
+
+        var capabilities = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentCapabilityDto>>>("/api/agent/capabilities");
+        var threads = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentThreadDto>>>("/api/agent/threads?take=20");
+
+        Assert.True(capabilities!.Ok);
+        Assert.Contains(capabilities.Data!, x => x.TaskKind == "question");
+        Assert.Contains(capabilities.Data!, x => x.TaskKind == "read-only-analysis");
+        Assert.Contains(capabilities.Data!, x => x.TaskKind == "datc64-translation" && x.RequiresApproval);
+        Assert.True(threads!.Ok);
+        Assert.Contains(threads.Data!, x => x.Id == thread.Id);
+    }
+
     private static async Task<AgentThreadDto> CreateThreadAsync(HttpClient client, string taskKind)
     {
         var response = await client.PostAsJsonAsync("/api/agent/threads", new AgentThreadCreateRequest("profile-1", "Thread", "Goal", taskKind));

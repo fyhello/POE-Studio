@@ -12,6 +12,17 @@ public static class AgentRoutes
 
     public static WebApplication MapAgentRoutes(this WebApplication app)
     {
+        app.MapGet("/api/agent/capabilities", () =>
+        {
+            return ApiResponse<IReadOnlyList<AgentCapabilityDto>>.Success(AgentCapabilities.All);
+        });
+
+        app.MapGet("/api/agent/threads", async (int? take, AgentStore store, CancellationToken cancellationToken) =>
+        {
+            var threads = await store.ListThreadsAsync(take ?? 30, cancellationToken);
+            return ApiResponse<IReadOnlyList<AgentThreadDto>>.Success(threads);
+        });
+
         app.MapGet("/api/agent/settings", async (AgentStore store, WorkspaceRootProvider workspace, CancellationToken cancellationToken) =>
         {
             var settings = await store.GetSettingsAsync(cancellationToken) ?? DefaultSettings(workspace.CurrentRoot);
