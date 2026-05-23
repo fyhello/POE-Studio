@@ -12,31 +12,31 @@
 
 ## 0. 固定硬约束
 
-- [ ] **H0.1：Codex 是判断与规划大脑**  
+- [x] **H0.1：Codex 是判断与规划大脑**  
   `auto` 模式必须先调用 Codex Planner 生成结构化计划。禁止新增或依赖 `AgentIntentResolver` 这类后端关键词规则判断器作为主路径。
 
-- [ ] **H0.2：POE Studio 是安全员和执行底座**  
+- [x] **H0.2：POE Studio 是安全员和执行底座**  
   POE Studio 可以校验、阻断、记录、审批、执行已批准的计划，但不能用本地规则静默替代 Codex 的任务理解。
 
-- [ ] **H0.3：自然语言优先**  
+- [x] **H0.3：自然语言优先**  
   默认入口是自然语言。用户不应必须知道 `question`、`read-only-analysis`、`datc64-translation`、MCP 工具名或 overlay 细节。
 
-- [ ] **H0.4：缺上下文先澄清**  
+- [x] **H0.4：缺上下文先澄清**  
   Planner 判断缺少必要信息时，返回 `needs_clarification`，UI 展示问题并允许用户在同一会话继续回答。不得把缺资源的翻译任务降级成普通问答。
 
-- [ ] **H0.5：写入审批门禁不变**  
+- [x] **H0.5：写入审批门禁不变**  
   Codex 可以提出写入计划和 DATC64 proposal，但任何 overlay draft 写入仍必须等待 POE Studio approval 通过。Stage 4 不新增无审批写入。
 
-- [ ] **H0.6：可追溯**  
+- [x] **H0.6：可追溯**  
   每次 auto run 必须保存：用户原始目标、Planner prompt 摘要、Planner 原始 JSON、Guard 校验结果、最终 resolved taskKind、继承的 profile/resource、warnings、clarification/blocker。刷新后必须可见。
 
-- [ ] **H0.7：不扩大 token 成本**  
+- [x] **H0.7：不扩大 token 成本**  
   Planner 使用项目认知摘要、会话摘要和轻量上下文，不把项目知识全文灌入 prompt。继续遵守项目认知层 prompt budget。
 
-- [ ] **H0.8：可恢复与可重试**  
+- [x] **H0.8：可恢复与可重试**  
   Planner 成功但执行失败时，重试必须复用同一 Planner 结果，除非用户修改目标或点击「重新规划」。
 
-- [ ] **H0.9：TDD 与 GitNexus**  
+- [x] **H0.9：TDD 与 GitNexus**  
   每个行为先写失败测试。修改任何现有函数、类、方法前必须运行 GitNexus impact；提交前必须运行 GitNexus detect_changes。
 
 ---
@@ -889,7 +889,7 @@ git commit -m "feat(agent): make workspace auto planner first"
 - 创建：`docs/superpowers/reports/2026-05-23-poe-agent-codex-first-planner-stage4-acceptance.md`
 - 修改：相关测试文件（仅当补充断言）
 
-- [ ] **步骤 1：运行定向测试**
+- [x] **步骤 1：运行定向测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "FullyQualifiedName~AgentTaskPlanParserTests|FullyQualifiedName~AgentPlannerPromptBuilderTests|FullyQualifiedName~AgentPlanGuardServiceTests|FullyQualifiedName~AgentOrchestratorTests|FullyQualifiedName~AgentApiSmokeTests|FullyQualifiedName~FrontendAgentWorkspaceTests"
@@ -897,7 +897,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：全部 PASS。
 
-- [ ] **步骤 2：运行 Agent/DATC64 相关测试**
+- [x] **步骤 2：运行 Agent/DATC64 相关测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "FullyQualifiedName~Agent|FullyQualifiedName~Mcp|FullyQualifiedName~Datc64"
@@ -905,7 +905,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：全部 PASS。
 
-- [ ] **步骤 3：运行全量测试**
+- [x] **步骤 3：运行全量测试**
 
 ```powershell
 dotnet test PoeStudio.sln --no-restore
@@ -913,7 +913,7 @@ dotnet test PoeStudio.sln --no-restore
 
 预期：全部 PASS。
 
-- [ ] **步骤 4：运行 GitNexus 变更检测**
+- [x] **步骤 4：运行 GitNexus 变更检测**
 
 ```text
 mcp__gitnexus__detect_changes({
@@ -924,7 +924,7 @@ mcp__gitnexus__detect_changes({
 
 预期：只影响 Agent Planner、Agent API、Agent Workspace 相关流程。若 HIGH/CRITICAL，报告并补充风险说明。
 
-- [ ] **步骤 5：实机验收 1：自然语言翻译**
+- [x] **步骤 5：实机验收 1：自然语言翻译**
 
 条件：
 
@@ -947,7 +947,7 @@ mcp__gitnexus__detect_changes({
 - run 进入 `WaitingForApproval`。
 - approval proposal 中包含候选，不自动写 overlay。
 
-- [ ] **步骤 6：实机验收 2：缺资源澄清**
+- [x] **步骤 6：实机验收 2：缺资源澄清**
 
 操作：
 
@@ -962,7 +962,7 @@ mcp__gitnexus__detect_changes({
 - 没有 DATC64 proposal。
 - 没有 overlay 写入。
 
-- [ ] **步骤 7：实机验收 3：普通项目问题**
+- [x] **步骤 7：实机验收 3：普通项目问题**
 
 输入：
 
@@ -976,7 +976,7 @@ POE Studio 当前工作态和 MCP 读取层有什么区别？
 - run 不产生 approval。
 - 回答引用项目认知层。
 
-- [ ] **步骤 8：写验收报告**
+- [x] **步骤 8：写验收报告**
 
 报告必须包含：
 
@@ -987,7 +987,7 @@ POE Studio 当前工作态和 MCP 读取层有什么区别？
 - Guard warnings/blockers 摘要。
 - 明确说明 Stage 4 仍不是「全能自动写代码 Agent」，只是把判断和规划主路径改回 Codex-first。
 
-- [ ] **步骤 9：Commit**
+- [x] **步骤 9：Commit**
 
 ```powershell
 git add docs\superpowers\reports\2026-05-23-poe-agent-codex-first-planner-stage4-acceptance.md
@@ -998,11 +998,11 @@ git commit -m "docs(agent): record codex-first planner stage4 acceptance"
 
 ## 11. 非目标
 
-- [ ] 本阶段不实现 Codex 自动创建新工具或脚本。
-- [ ] 本阶段不新增任意 shell 执行能力。
-- [ ] 本阶段不允许 Codex 直接写项目代码或游戏资源。
-- [ ] 本阶段不实现长期记忆向量库。
-- [ ] 本阶段不替代后续「缺能力 -> 提案 -> 用户批准 -> 创建工具 -> 验收工具」完整能力闭环。
+- [x] 本阶段不实现 Codex 自动创建新工具或脚本。
+- [x] 本阶段不新增任意 shell 执行能力。
+- [x] 本阶段不允许 Codex 直接写项目代码或游戏资源。
+- [x] 本阶段不实现长期记忆向量库。
+- [x] 本阶段不替代后续「缺能力 -> 提案 -> 用户批准 -> 创建工具 -> 验收工具」完整能力闭环。
 
 ---
 
@@ -1027,12 +1027,12 @@ Stage 4 完成后，后续阶段应基于 Planner 输出扩展：
 
 ## 13. 自检清单
 
-- [ ] 计划没有让 POE Studio 后端关键词规则替代 Codex 判断。
-- [ ] `auto` 是默认主路径，不再等同 `question`。
-- [ ] Planner 与 Guard 分层明确：Codex 判断，POE Studio 校验。
-- [ ] 缺上下文不会误跑普通问答。
-- [ ] 写入仍走 approval。
-- [ ] Planner/Guard/执行结果全部可追溯。
-- [ ] prompt budget 没有全文灌入。
-- [ ] 保留 Stage1/2/3 基础设施，不推倒重来。
-- [ ] 每个任务都有测试、实现、验证、commit 步骤。
+- [x] 计划没有让 POE Studio 后端关键词规则替代 Codex 判断。
+- [x] `auto` 是默认主路径，不再等同 `question`。
+- [x] Planner 与 Guard 分层明确：Codex 判断，POE Studio 校验。
+- [x] 缺上下文不会误跑普通问答。
+- [x] 写入仍走 approval。
+- [x] Planner/Guard/执行结果全部可追溯。
+- [x] prompt budget 没有全文灌入。
+- [x] 保留 Stage1/2/3 基础设施，不推倒重来。
+- [x] 每个任务都有测试、实现、验证、commit 步骤。
