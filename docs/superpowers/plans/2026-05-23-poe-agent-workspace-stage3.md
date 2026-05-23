@@ -1,6 +1,6 @@
 # POE Studio Agent Workspace Stage 3 实现计划
 
-> **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
+> **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [x]`）语法来跟踪进度。
 
 **目标：** 在已完成的 Stage 1 MCP Tools、Stage 2 Codex Bridge Agent runtime 和项目认知层之上，交付 POE Studio 内置的 IDE-like Agent Workspace UI，让用户用自然语言提出目标，Agent 展示计划、工具调用、审批点、结果、失败原因和可恢复状态。
 
@@ -12,28 +12,28 @@
 
 ## 0. 固定硬约束
 
-- [ ] **H0.1：目标锚定**
+- [x] **H0.1：目标锚定**
   Stage 3 的交付物是 Agent Workspace，不是 DATC64 表单，不是工具按钮集合，不是静态 prompt 输入框。用户必须可以只输入自然语言目标启动任务。
 
-- [ ] **H0.2：能力边界**
+- [x] **H0.2：能力边界**
   本阶段不新增自动写代码工具、不新增任意 shell 工具、不新增未审批的写入能力。写 overlay draft 仍只能通过 Stage 2 approval 记录批准后执行。
 
-- [ ] **H0.3：消费现有 Agent runtime**
+- [x] **H0.3：消费现有 Agent runtime**
   前端必须调用 Stage 2 的 thread/run/event/approval/settings API。禁止绕过后端直接调用 Codex、MCP 或文件系统。
 
-- [ ] **H0.4：可追溯**
+- [x] **H0.4：可追溯**
   所有 UI 行为必须能追溯到 thread、run、plan、event、approval。页面刷新后，当前会话、设置、计划、事件、审批状态必须能恢复。
 
-- [ ] **H0.5：不伪装成功**
+- [x] **H0.5：不伪装成功**
   运行失败时必须展示错误码、错误信息、最近事件和重试入口。禁止只显示“失败”或静默回到空白状态。
 
-- [ ] **H0.6：不扩大 token 成本**
+- [x] **H0.6：不扩大 token 成本**
   前端不直接灌入项目知识底座。项目知识仍由 Stage 2 project context service / `poe_get_project_context` 按预算注入和按需查询。
 
-- [ ] **H0.7：计划与进度**
+- [x] **H0.7：计划与进度**
   执行者必须逐项更新本计划复选框。每个任务完成后提交一次 commit；偏离计划必须先补充计划说明。
 
-- [ ] **H0.8：验收优先**
+- [x] **H0.8：验收优先**
   每个任务必须先写失败测试或前端字符串级 smoke 断言，再实现最小代码。完成前必须跑定向测试和全量测试。
 
 ---
@@ -80,8 +80,8 @@
 
 ## 2. 目标用户体验
 
-- [ ] 用户打开 POE Studio 后能看到明确的 `Agent` 入口。
-- [ ] 用户进入 Agent Workspace 后，能看到：
+- [x] 用户打开 POE Studio 后能看到明确的 `Agent` 入口。
+- [x] 用户进入 Agent Workspace 后，能看到：
   - 当前模型/沙箱/工作目录设置摘要。
   - 会话列表和当前会话。
   - 自然语言任务输入框。
@@ -91,9 +91,9 @@
   - 审批面板，能批准或拒绝。
   - 结果面板，显示最终回答或写入结果。
   - 失败/取消/重试入口。
-- [ ] 刷新页面后恢复最近 Agent 会话和设置。
-- [ ] DATC64 翻译样例可从自然语言目标启动，等待审批，批准后写入 draft。
-- [ ] 普通问题和只读分析不会产生审批或 overlay 写入。
+- [x] 刷新页面后恢复最近 Agent 会话和设置。
+- [x] DATC64 翻译样例可从自然语言目标启动，等待审批，批准后写入 draft。
+- [x] 普通问题和只读分析不会产生审批或 overlay 写入。
 
 ---
 
@@ -147,7 +147,7 @@
 - 修改：`tests/PoeStudio.Tests/AgentStoreTests.cs`
 - 修改：`tests/PoeStudio.Tests/AgentApiSmokeTests.cs`
 
-- [ ] **步骤 1：运行影响分析**
+- [x] **步骤 1：运行影响分析**
 
 运行：
 
@@ -168,7 +168,7 @@ mcp__gitnexus__impact({
 
 记录风险。若 GitNexus 返回 HIGH 或 CRITICAL，先停下报告。
 
-- [ ] **步骤 2：编写失败测试：AgentStore 列出线程**
+- [x] **步骤 2：编写失败测试：AgentStore 列出线程**
 
 在 `AgentStoreTests.cs` 新增测试：
 
@@ -196,7 +196,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL，`ListThreadsAsync` 不存在。
 
-- [ ] **步骤 3：实现 `ListThreadsAsync`**
+- [x] **步骤 3：实现 `ListThreadsAsync`**
 
 在 `AgentStore` 中新增：
 
@@ -228,7 +228,7 @@ public async Task<IReadOnlyList<AgentThreadDto>> ListThreadsAsync(int take, Canc
 }
 ```
 
-- [ ] **步骤 4：编写失败测试：API 暴露 capabilities 和 thread list**
+- [x] **步骤 4：编写失败测试：API 暴露 capabilities 和 thread list**
 
 在 `AgentApiSmokeTests.cs` 新增：
 
@@ -259,7 +259,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL，路由不存在。
 
-- [ ] **步骤 5：实现 API**
+- [x] **步骤 5：实现 API**
 
 在 `AgentRoutes.MapAgentRoutes` 中新增：
 
@@ -282,7 +282,7 @@ app.MapGet("/api/agent/threads", async (int? take, AgentStore store, Cancellatio
 public static IReadOnlyList<AgentCapabilityDto> All => Capabilities;
 ```
 
-- [ ] **步骤 6：运行定向测试**
+- [x] **步骤 6：运行定向测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "FullyQualifiedName~AgentStoreTests|FullyQualifiedName~AgentApiSmokeTests"
@@ -290,7 +290,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：PASS。
 
-- [ ] **步骤 7：Commit**
+- [x] **步骤 7：Commit**
 
 ```powershell
 git add src\PoeStudio.Contracts\AgentDtos.cs src\PoeStudio.Storage\Agent\AgentStore.cs src\PoeStudio.Api\AgentRoutes.cs tests\PoeStudio.Tests\AgentStoreTests.cs tests\PoeStudio.Tests\AgentApiSmokeTests.cs
@@ -305,7 +305,7 @@ git commit -m "feat(agent): expose workspace bootstrap APIs"
 - 修改：`src/PoeStudio.Api/wwwroot/index.html`
 - 创建：`tests/PoeStudio.Tests/FrontendAgentWorkspaceTests.cs`
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 新增 `FrontendAgentWorkspaceTests.cs`：
 
@@ -356,7 +356,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL，DOM 不存在。
 
-- [ ] **步骤 2：添加顶部入口**
+- [x] **步骤 2：添加顶部入口**
 
 在 `index.html` 的 `.top-actions` 中加入：
 
@@ -364,7 +364,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 <button id="openAgentWorkspaceBtn" type="button">Agent</button>
 ```
 
-- [ ] **步骤 3：添加 Agent Workspace 主区域**
+- [x] **步骤 3：添加 Agent Workspace 主区域**
 
 在 `main.workbench-shell` 内，现有三栏之后或中央工作区旁新增同级隐藏区域：
 
@@ -426,7 +426,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 实现时可以按现有三栏布局调整位置，但必须保留上述 id。
 
-- [ ] **步骤 4：运行测试**
+- [x] **步骤 4：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~FrontendAgentWorkspaceTests
@@ -434,7 +434,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add src\PoeStudio.Api\wwwroot\index.html tests\PoeStudio.Tests\FrontendAgentWorkspaceTests.cs
@@ -449,7 +449,7 @@ git commit -m "feat(agent): add workspace shell"
 - 修改：`src/PoeStudio.Api/wwwroot/app.js`
 - 修改：`tests/PoeStudio.Tests/FrontendAgentWorkspaceTests.cs`
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 在 `FrontendAgentWorkspaceTests.cs` 新增：
 
@@ -478,7 +478,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL。
 
-- [ ] **步骤 2：扩展 `state`**
+- [x] **步骤 2：扩展 `state`**
 
 在 `state` 中新增：
 
@@ -496,7 +496,7 @@ agent: {
 }
 ```
 
-- [ ] **步骤 3：新增加载函数**
+- [x] **步骤 3：新增加载函数**
 
 在 `app.js` 中新增：
 
@@ -533,7 +533,7 @@ async function loadAgentSnapshot(threadId) {
 }
 ```
 
-- [ ] **步骤 4：新增渲染占位函数**
+- [x] **步骤 4：新增渲染占位函数**
 
 新增 `renderAgentSettings`、`renderAgentThreads`、`renderAgentSnapshot`。空状态必须显示真实状态，不得空白：
 
@@ -546,7 +546,7 @@ function renderAgentSettings() {
 }
 ```
 
-- [ ] **步骤 5：绑定入口**
+- [x] **步骤 5：绑定入口**
 
 在初始化事件绑定区域加入：
 
@@ -560,7 +560,7 @@ $("openAgentWorkspaceBtn").addEventListener("click", async () => {
 
 如果实现者选择隐藏原有中央编辑区来进入 Agent 模式，必须提供返回资源工作台按钮；不得让用户失去原工作流。
 
-- [ ] **步骤 6：运行测试**
+- [x] **步骤 6：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~FrontendAgentWorkspaceTests
@@ -568,7 +568,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 7：Commit**
+- [x] **步骤 7：Commit**
 
 ```powershell
 git add src\PoeStudio.Api\wwwroot\app.js tests\PoeStudio.Tests\FrontendAgentWorkspaceTests.cs
@@ -583,7 +583,7 @@ git commit -m "feat(agent): restore workspace sessions"
 - 修改：`src/PoeStudio.Api/wwwroot/app.js`
 - 修改：`tests/PoeStudio.Tests/FrontendAgentWorkspaceTests.cs`
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 新增：
 
@@ -603,7 +603,7 @@ public async Task App_js_starts_agent_runs_from_natural_language_goal()
 }
 ```
 
-- [ ] **步骤 2：实现 `startAgentRun`**
+- [x] **步骤 2：实现 `startAgentRun`**
 
 新增：
 
@@ -653,7 +653,7 @@ async function startAgentRun() {
 
 注意：DATC64 任务没有 resourcePath 时，后端会返回 `resource_path_required`。前端必须把错误展示给用户，不得吞掉。
 
-- [ ] **步骤 3：绑定运行按钮**
+- [x] **步骤 3：绑定运行按钮**
 
 初始化区域新增：
 
@@ -661,7 +661,7 @@ async function startAgentRun() {
 $("agentRunBtn").addEventListener("click", () => startAgentRun().catch((error) => setStatus(error.message)));
 ```
 
-- [ ] **步骤 4：运行测试**
+- [x] **步骤 4：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~FrontendAgentWorkspaceTests
@@ -669,7 +669,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add src\PoeStudio.Api\wwwroot\app.js tests\PoeStudio.Tests\FrontendAgentWorkspaceTests.cs
@@ -684,7 +684,7 @@ git commit -m "feat(agent): start runs from natural language goals"
 - 修改：`src/PoeStudio.Api/wwwroot/app.js`
 - 修改：`tests/PoeStudio.Tests/FrontendAgentWorkspaceTests.cs`
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 新增：
 
@@ -704,7 +704,7 @@ public async Task App_js_renders_agent_plan_events_status_and_result()
 }
 ```
 
-- [ ] **步骤 2：实现事件轮询**
+- [x] **步骤 2：实现事件轮询**
 
 新增：
 
@@ -730,7 +730,7 @@ function startAgentEventPolling() {
 
 如果当前 DTO 序列化为数字状态，则实现 `agentRunStatusText(status)` 同时支持数字和字符串。
 
-- [ ] **步骤 3：实现 `pollAgentEvents`**
+- [x] **步骤 3：实现 `pollAgentEvents`**
 
 ```javascript
 async function pollAgentEvents() {
@@ -754,7 +754,7 @@ async function pollAgentEvents() {
 }
 ```
 
-- [ ] **步骤 4：渲染计划和结果**
+- [x] **步骤 4：渲染计划和结果**
 
 `renderAgentSnapshot(snapshot)` 必须调用：
 
@@ -776,7 +776,7 @@ function renderAgentResult(run) {
 }
 ```
 
-- [ ] **步骤 5：运行测试**
+- [x] **步骤 5：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~FrontendAgentWorkspaceTests
@@ -784,7 +784,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 6：Commit**
+- [x] **步骤 6：Commit**
 
 ```powershell
 git add src\PoeStudio.Api\wwwroot\app.js tests\PoeStudio.Tests\FrontendAgentWorkspaceTests.cs
@@ -799,7 +799,7 @@ git commit -m "feat(agent): render run progress and events"
 - 修改：`src/PoeStudio.Api/wwwroot/app.js`
 - 修改：`tests/PoeStudio.Tests/FrontendAgentWorkspaceTests.cs`
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 新增：
 
@@ -818,7 +818,7 @@ public async Task App_js_exposes_agent_approval_retry_and_cancel_actions()
 }
 ```
 
-- [ ] **步骤 2：实现审批渲染**
+- [x] **步骤 2：实现审批渲染**
 
 ```javascript
 function renderAgentApprovals(approvals) {
@@ -845,7 +845,7 @@ function renderAgentApprovals(approvals) {
 }
 ```
 
-- [ ] **步骤 3：实现审批动作**
+- [x] **步骤 3：实现审批动作**
 
 ```javascript
 async function approveAgentApproval(approvalId) {
@@ -863,7 +863,7 @@ async function rejectAgentApproval(approvalId) {
 }
 ```
 
-- [ ] **步骤 4：实现取消和重试**
+- [x] **步骤 4：实现取消和重试**
 
 ```javascript
 async function cancelAgentRun() {
@@ -883,11 +883,11 @@ async function retryAgentRun() {
 }
 ```
 
-- [ ] **步骤 5：事件委托绑定**
+- [x] **步骤 5：事件委托绑定**
 
 给 `agentWorkspace` 绑定 click 事件，处理 `data-agent-approve` 和 `data-agent-reject`。
 
-- [ ] **步骤 6：运行测试**
+- [x] **步骤 6：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~FrontendAgentWorkspaceTests
@@ -895,7 +895,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 7：Commit**
+- [x] **步骤 7：Commit**
 
 ```powershell
 git add src\PoeStudio.Api\wwwroot\app.js tests\PoeStudio.Tests\FrontendAgentWorkspaceTests.cs
@@ -910,7 +910,7 @@ git commit -m "feat(agent): support approvals retry and cancellation"
 - 修改：`src/PoeStudio.Api/wwwroot/styles.css`
 - 修改：`tests/PoeStudio.Tests/FrontendAgentWorkspaceTests.cs`
 
-- [ ] **步骤 1：编写失败测试**
+- [x] **步骤 1：编写失败测试**
 
 新增：
 
@@ -930,7 +930,7 @@ public async Task Styles_define_agent_workspace_layout_without_marketing_shell()
 }
 ```
 
-- [ ] **步骤 2：新增布局样式**
+- [x] **步骤 2：新增布局样式**
 
 在 `styles.css` 中新增：
 
@@ -1009,7 +1009,7 @@ public async Task Styles_define_agent_workspace_layout_without_marketing_shell()
 
 实现者可以微调，但不得做大 hero、营销卡片或装饰背景。
 
-- [ ] **步骤 3：运行测试**
+- [x] **步骤 3：运行测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~FrontendAgentWorkspaceTests
@@ -1017,7 +1017,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 4：Commit**
+- [x] **步骤 4：Commit**
 
 ```powershell
 git add src\PoeStudio.Api\wwwroot\styles.css tests\PoeStudio.Tests\FrontendAgentWorkspaceTests.cs
@@ -1033,7 +1033,7 @@ git commit -m "feat(agent): style workspace interface"
 - 修改：`tests/PoeStudio.Tests/AgentApiSmokeTests.cs`
 - 修改：`tests/PoeStudio.Tests/FrontendAgentWorkspaceTests.cs`
 
-- [ ] **步骤 1：运行定向测试**
+- [x] **步骤 1：运行定向测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "FullyQualifiedName~AgentApiSmokeTests|FullyQualifiedName~AgentStoreTests|FullyQualifiedName~FrontendAgentWorkspaceTests"
@@ -1041,7 +1041,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：PASS。
 
-- [ ] **步骤 2：运行全量测试**
+- [x] **步骤 2：运行全量测试**
 
 ```powershell
 dotnet test PoeStudio.sln --no-restore
@@ -1057,7 +1057,7 @@ Get-Process PoeStudio.Mcp -ErrorAction SilentlyContinue | Select-Object Id,Proce
 
 只允许停止确认属于本仓库 `src\PoeStudio.Mcp\bin\Debug\net8.0\PoeStudio.Mcp.exe` 的残留测试进程，然后重跑测试。
 
-- [ ] **步骤 3：启动本地服务**
+- [x] **步骤 3：启动本地服务**
 
 ```powershell
 dotnet run --project src\PoeStudio.Api\PoeStudio.Api.csproj --urls http://localhost:5010
@@ -1065,7 +1065,7 @@ dotnet run --project src\PoeStudio.Api\PoeStudio.Api.csproj --urls http://localh
 
 如果 5010 已占用，使用 5011，并在验收报告记录实际 URL。
 
-- [ ] **步骤 4：浏览器人工验收**
+- [x] **步骤 4：浏览器人工验收**
 
 打开：
 
@@ -1086,7 +1086,7 @@ http://localhost:5010
 - 拒绝后状态可恢复；批准后写入 overlay draft。
 - 刷新页面后仍能恢复当前会话和审批/结果。
 
-- [ ] **步骤 5：可选 Playwright 验证**
+- [x] **步骤 5：可选 Playwright 验证**
 
 如果当前环境有 Playwright，执行至少一个浏览器 smoke：
 
@@ -1096,7 +1096,7 @@ npx playwright test --config playwright.config.ts --grep "Agent"
 
 如果项目没有 Playwright 配置，不新增依赖；改用人工浏览器验收截图或记录。
 
-- [ ] **步骤 6：GitNexus 变更检查**
+- [x] **步骤 6：GitNexus 变更检查**
 
 ```text
 mcp__gitnexus__detect_changes({
@@ -1107,7 +1107,7 @@ mcp__gitnexus__detect_changes({
 
 若风险 HIGH 或 CRITICAL，验收报告必须解释原因和是否符合预期。
 
-- [ ] **步骤 7：写验收报告**
+- [x] **步骤 7：写验收报告**
 
 创建 `docs/superpowers/reports/2026-05-23-poe-agent-workspace-stage3-acceptance.md`，内容必须包含：
 
@@ -1138,7 +1138,7 @@ Stage 3 status: PASS 或 FAIL
 - <仍未解决的限制>
 ```
 
-- [ ] **步骤 8：Commit**
+- [x] **步骤 8：Commit**
 
 ```powershell
 git add docs\superpowers\reports\2026-05-23-poe-agent-workspace-stage3-acceptance.md
@@ -1151,38 +1151,38 @@ git commit -m "docs(agent): record workspace stage3 acceptance"
 
 只有同时满足以下条件，才允许标记 Stage 3 PASS：
 
-- [ ] `dotnet test PoeStudio.sln --no-restore` 通过。
-- [ ] `AgentApiSmokeTests` 通过。
-- [ ] `FrontendAgentWorkspaceTests` 通过。
-- [ ] 前端存在 Agent Workspace，而不是小表单入口。
-- [ ] 用户可用自然语言创建并运行 Agent 任务。
-- [ ] 计划、事件、审批、结果和失败原因都可见。
-- [ ] 刷新后能恢复当前会话。
-- [ ] DATC64 翻译样例仍走审批后写入 draft。
-- [ ] 普通 question/read-only-analysis 不写 overlay。
-- [ ] 验收报告明确记录 PASS / FAIL 和证据。
+- [x] `dotnet test PoeStudio.sln --no-restore` 通过。
+- [x] `AgentApiSmokeTests` 通过。
+- [x] `FrontendAgentWorkspaceTests` 通过。
+- [x] 前端存在 Agent Workspace，而不是小表单入口。
+- [x] 用户可用自然语言创建并运行 Agent 任务。
+- [x] 计划、事件、审批、结果和失败原因都可见。
+- [x] 刷新后能恢复当前会话。
+- [x] DATC64 翻译样例仍走审批后写入 draft。
+- [x] 普通 question/read-only-analysis 不写 overlay。
+- [x] 验收报告明确记录 PASS / FAIL 和证据。
 
 ---
 
 ## 13. 跑偏防线
 
-- [ ] **R1：如果实现者只加一个 prompt 表单，立即停止。**
-- [ ] **R2：如果实现者绕过 `/api/agent/*` 直接调用 Codex 或 MCP，立即停止。**
-- [ ] **R3：如果实现者新增任意脚本执行能力，立即停止。**
-- [ ] **R4：如果实现者把 DATC64 写死成唯一工作流，立即停止。**
-- [ ] **R5：如果实现者隐藏失败原因或工具调用，立即停止。**
-- [ ] **R6：如果刷新后会话/设置丢失，Stage 3 不能 PASS。**
-- [ ] **R7：如果批准前写入 overlay，Stage 3 不能 PASS。**
+- [x] **R1：如果实现者只加一个 prompt 表单，立即停止。**
+- [x] **R2：如果实现者绕过 `/api/agent/*` 直接调用 Codex 或 MCP，立即停止。**
+- [x] **R3：如果实现者新增任意脚本执行能力，立即停止。**
+- [x] **R4：如果实现者把 DATC64 写死成唯一工作流，立即停止。**
+- [x] **R5：如果实现者隐藏失败原因或工具调用，立即停止。**
+- [x] **R6：如果刷新后会话/设置丢失，Stage 3 不能 PASS。**
+- [x] **R7：如果批准前写入 overlay，Stage 3 不能 PASS。**
 
 ---
 
 ## 14. 自检记录
 
-- [ ] 覆盖用户总目标：自然语言全量项目助手。
-- [ ] 覆盖当前阶段：Stage 3 IDE-like Agent Workspace UI。
-- [ ] 保持 Stage 2 后端 Agent runtime 边界，不重写内核。
-- [ ] 保持项目知识底座按预算注入，不前端全文灌入。
-- [ ] 保持写入审批门禁。
-- [ ] 覆盖刷新恢复、进度跟踪、事件可见、失败可恢复。
-- [ ] 覆盖 DATC64 作为样例而非唯一能力。
-- [ ] 覆盖测试与验收报告。
+- [x] 覆盖用户总目标：自然语言全量项目助手。
+- [x] 覆盖当前阶段：Stage 3 IDE-like Agent Workspace UI。
+- [x] 保持 Stage 2 后端 Agent runtime 边界，不重写内核。
+- [x] 保持项目知识底座按预算注入，不前端全文灌入。
+- [x] 保持写入审批门禁。
+- [x] 覆盖刷新恢复、进度跟踪、事件可见、失败可恢复。
+- [x] 覆盖 DATC64 作为样例而非唯一能力。
+- [x] 覆盖测试与验收报告。
