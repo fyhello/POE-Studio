@@ -142,6 +142,26 @@ public sealed class Datc64DraftApplyServiceTests
         Assert.Single((await fixture.Overlay.ListAsync(fixture.ProfileId, CancellationToken.None)).Items);
     }
 
+    [Fact]
+    public async Task ApplyAsync_passes_run_oodle_path_when_reading_resource()
+    {
+        var fixture = await CreateFixtureAsync(runOodlePath: "C:/Game/oo2core.dll");
+        string? observedOodlePath = null;
+        var service = new Datc64DraftApplyService(
+            fixture.Store,
+            fixture.Overlay,
+            (profileId, resourcePath, oodlePath, cancellationToken) =>
+            {
+                observedOodlePath = oodlePath;
+                return fixture.ReadResourceAsync(profileId, resourcePath, oodlePath, cancellationToken);
+            });
+
+        var result = await service.ApplyAsync(fixture.ThreadId, fixture.RunId, fixture.Approval.Id, CancellationToken.None);
+
+        Assert.True(result.Applied);
+        Assert.Equal("C:/Game/oo2core.dll", observedOodlePath);
+    }
+
     private static async Task<Fixture> CreateFixtureAsync(
         int rowIndex = 0,
         int columnIndex = 3,
@@ -149,6 +169,7 @@ public sealed class Datc64DraftApplyServiceTests
         string translatedText = "魔力不足",
         string profileId = "profile-1",
         string resourcePath = "data/balance/traditional chinese/combatuiprompts.datc64",
+        string? runOodlePath = null,
         byte[]? baseBytes = null,
         IReadOnlyList<Datc64TranslationCandidate>? candidates = null)
     {
@@ -178,7 +199,9 @@ public sealed class Datc64DraftApplyServiceTests
             0,
             null,
             null,
-            null);
+            null,
+            resourcePath,
+            runOodlePath);
         await store.SaveRunAsync(run, CancellationToken.None);
         var proposal = new Datc64TranslationDraftProposal(
             "datc64-translation",
@@ -215,7 +238,7 @@ public sealed class Datc64DraftApplyServiceTests
             thread.Id,
             run.Id,
             approval,
-            (_, _, cancellationToken) => Task.FromResult(new Datc64DraftResourceReadResult(
+            (_, _, _, cancellationToken) => Task.FromResult(new Datc64DraftResourceReadResult(
                 new ResourceSummaryDto(
                     Guid.NewGuid().ToString("N"),
                     profileId,
@@ -320,5 +343,5 @@ public sealed class Datc64DraftApplyServiceTests
         string ThreadId,
         string RunId,
         AgentApprovalDto Approval,
-        Func<string, string, CancellationToken, Task<Datc64DraftResourceReadResult>> ReadResourceAsync);
+        Func<string, string, string?, CancellationToken, Task<Datc64DraftResourceReadResult>> ReadResourceAsync);
 }

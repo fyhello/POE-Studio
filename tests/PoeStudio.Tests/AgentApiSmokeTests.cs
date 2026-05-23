@@ -107,6 +107,40 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     [Fact]
+    public async Task Datc64_run_passes_request_oodle_path_to_runner_and_persists_it_for_retry()
+    {
+        var client = _factory.CreateClient();
+        var profileId = "profile-1";
+        var resourcePath = "metadata/example.datc64";
+        var oodlePath = Path.Combine(_workspaceRoot, "tools", "oo2core.dll");
+        var basePath = Path.Combine(_workspaceRoot, "fixtures", "oodle-pass-through.datc64");
+        Directory.CreateDirectory(Path.GetDirectoryName(oodlePath)!);
+        await File.WriteAllTextAsync(oodlePath, "fake");
+        Directory.CreateDirectory(Path.GetDirectoryName(basePath)!);
+        await File.WriteAllBytesAsync(basePath, BuildDatc64PointerTableData([("NoMana", "法力不足")]));
+        await SaveResourceIndexAsync(profileId, resourcePath, basePath);
+        var thread = await CreateThreadAsync(client, "datc64-translation");
+
+        var response = await client.PostAsJsonAsync("/api/agent/runs", new AgentRunCreateRequest(
+            thread.Id,
+            profileId,
+            "Goal",
+            "datc64-translation",
+            resourcePath,
+            oodlePath));
+        var payload = await response.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
+        var run = await WaitForRunStatusAsync(client, payload!.Data!.Id, AgentRunStatus.WaitingForApproval);
+        var retryResponse = await client.PostAsync($"/api/agent/runs/{run.Id}/retry", null);
+        var retryPayload = await retryResponse.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
+        var retry = await WaitForRunStatusAsync(client, retryPayload!.Data!.Id, AgentRunStatus.WaitingForApproval);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(oodlePath, run.OodlePath);
+        Assert.Equal(oodlePath, retry.OodlePath);
+        Assert.Equal([oodlePath, oodlePath], _runner.OodlePaths);
+    }
+
+    [Fact]
     public async Task Agent_settings_roundtrip()
     {
         var client = _factory.CreateClient();
@@ -480,6 +514,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         public bool SawCancellation { get; set; }
         public bool ThrowUnexpected { get; set; }
         public List<string> Prompts { get; } = [];
+        public List<string?> OodlePaths { get; } = [];
 
         public async Task<CodexRunResult> RunAsync(
             AgentSettingsDto settings,
@@ -488,6 +523,7 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
             CancellationToken cancellationToken)
         {
             Prompts.Add(prompt);
+            OodlePaths.Add(settings.OodlePath);
             if (ThrowUnexpected)
             {
                 throw new IOException("unexpected runner failure");

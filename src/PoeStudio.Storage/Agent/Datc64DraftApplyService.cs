@@ -13,12 +13,12 @@ public sealed class Datc64DraftApplyService
 
     private readonly AgentStore _store;
     private readonly OverlayStore _overlay;
-    private readonly Func<string, string, CancellationToken, Task<Datc64DraftResourceReadResult>> _readResourceAsync;
+    private readonly Func<string, string, string?, CancellationToken, Task<Datc64DraftResourceReadResult>> _readResourceAsync;
 
     public Datc64DraftApplyService(
         AgentStore store,
         OverlayStore overlay,
-        Func<string, string, CancellationToken, Task<Datc64DraftResourceReadResult>> readResourceAsync)
+        Func<string, string, string?, CancellationToken, Task<Datc64DraftResourceReadResult>> readResourceAsync)
     {
         _store = store;
         _overlay = overlay;
@@ -51,7 +51,8 @@ public sealed class Datc64DraftApplyService
                 return Datc64DraftApplyResult.Fail("proposal_invalid");
             }
 
-            var read = await _readResourceAsync(proposal.ProfileId, proposal.ResourcePath, cancellationToken);
+            var run = await _store.GetRunAsync(threadId, runId, cancellationToken);
+            var read = await _readResourceAsync(proposal.ProfileId, proposal.ResourcePath, run?.OodlePath, cancellationToken);
             var inspector = new TableInspector();
             var inspect = inspector.Inspect(read.Resource, read.Content, 4096);
             var warnings = new List<string>();

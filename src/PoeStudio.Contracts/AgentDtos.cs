@@ -97,7 +97,8 @@ public sealed record AgentRunDto(
     string? ErrorCode,
     string? ErrorMessage,
     string? ResultJson,
-    string? ResourcePath = null);
+    string? ResourcePath = null,
+    string? OodlePath = null);
 
 public sealed record AgentEventDto(
     string Id,
@@ -151,7 +152,8 @@ public sealed record AgentRunCreateRequest(
     string ProfileId,
     string Goal,
     string TaskKind,
-    string? ResourcePath);
+    string? ResourcePath,
+    string? OodlePath = null);
 
 public sealed record AgentThreadSnapshotDto(
     AgentThreadDto Thread,

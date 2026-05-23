@@ -156,6 +156,39 @@ public sealed class AgentOrchestratorTests
     }
 
     [Fact]
+    public async Task RetryAsync_preserves_original_oodle_path()
+    {
+        var workspace = CreateWorkspace();
+        var store = new AgentStore(workspace);
+        await store.SaveSettingsAsync(Settings(workspace), CancellationToken.None);
+        var runner = new RecordingRunner("""
+            ```json
+            {
+              "taskKind": "datc64-translation",
+              "profileId": "profile-1",
+              "resourcePath": "metadata/example.datc64",
+              "candidates": []
+            }
+            ```
+            """);
+        var orchestrator = CreateOrchestrator(store, workspace, runner);
+        var thread = await store.SaveNewThreadAsync("profile-1", "Task", "Goal", "datc64-translation", CancellationToken.None);
+        var first = await orchestrator.StartRunAsync(
+            thread.Id,
+            "profile-1",
+            "Goal",
+            "datc64-translation",
+            "metadata/example.datc64",
+            "C:/Game/oo2core.dll",
+            CancellationToken.None);
+
+        var retry = await orchestrator.RetryAsync(first.Id, CancellationToken.None);
+
+        Assert.Equal(AgentRunStatus.WaitingForApproval, retry.Status);
+        Assert.Equal(["C:/Game/oo2core.dll", "C:/Game/oo2core.dll"], runner.OodlePaths);
+    }
+
+    [Fact]
     public async Task StartRunAsync_loads_project_context_before_runner_and_records_preflight()
     {
         var workspace = CreateWorkspace();
@@ -290,6 +323,7 @@ public sealed class AgentOrchestratorTests
         }
 
         public List<string> Prompts { get; } = [];
+        public List<string?> OodlePaths { get; } = [];
 
         public async Task<CodexRunResult> RunAsync(
             AgentSettingsDto settings,
@@ -298,6 +332,7 @@ public sealed class AgentOrchestratorTests
             CancellationToken cancellationToken)
         {
             Prompts.Add(prompt);
+            OodlePaths.Add(settings.OodlePath);
             var events = new[]
             {
                 new CodexParsedEvent("{}", CodexParsedEventType.AgentMessage, _message, "{}", true, false, null)

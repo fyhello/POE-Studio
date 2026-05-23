@@ -69,14 +69,14 @@ builder.Services.AddScoped<AgentOrchestrator>();
 builder.Services.AddScoped(sp => new Datc64DraftApplyService(
     sp.GetRequiredService<AgentStore>(),
     sp.GetRequiredService<OverlayStore>(),
-    async (profileId, resourcePath, cancellationToken) =>
+    async (profileId, resourcePath, oodlePath, cancellationToken) =>
     {
         var resourceIndex = sp.GetRequiredService<ResourceIndexStore>();
         var profiles = sp.GetRequiredService<ProfileStore>();
         var nativeContentResolver = sp.GetRequiredService<NativeBundleResourceContentResolver>();
         var resource = await resourceIndex.GetByPathAsync(profileId, resourcePath, cancellationToken)
             ?? throw new InvalidOperationException("resource_not_found");
-        var read = await ReadResourceBytesAsync(profileId, null, resource, profiles, nativeContentResolver, cancellationToken);
+        var read = await ReadResourceBytesAsync(profileId, oodlePath, resource, profiles, nativeContentResolver, cancellationToken);
         if (!read.Ok)
         {
             throw new InvalidOperationException(read.ErrorCode);

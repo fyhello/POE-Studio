@@ -49,6 +49,15 @@ public sealed class FrontendAgentWorkspaceTests
     }
 
     [Fact]
+    public async Task App_js_passes_current_oodle_path_to_agent_runs()
+    {
+        var js = await File.ReadAllTextAsync(Path.Combine(FindRepositoryRoot(), "src", "PoeStudio.Api", "wwwroot", "app.js"));
+
+        Assert.Contains("oodlePath: currentOodlePath()", js);
+        Assert.Contains("resourcePath: taskKind === \"datc64-translation\" ? resourcePath : null", js);
+    }
+
+    [Fact]
     public async Task App_js_renders_agent_plan_events_status_and_result()
     {
         var js = await File.ReadAllTextAsync(Path.Combine(FindRepositoryRoot(), "src", "PoeStudio.Api", "wwwroot", "app.js"));

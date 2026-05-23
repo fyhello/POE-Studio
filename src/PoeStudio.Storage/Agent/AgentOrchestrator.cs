@@ -37,10 +37,22 @@ public sealed class AgentOrchestrator
         string goal,
         string taskKind,
         string? resourcePath,
+        string? oodlePath,
         CancellationToken cancellationToken)
     {
-        var run = await StartRunShellAsync(threadId, profileId, goal, taskKind, resourcePath, cancellationToken);
+        var run = await StartRunShellAsync(threadId, profileId, goal, taskKind, resourcePath, oodlePath, cancellationToken);
         return await ContinueRunAsync(run.Id, cancellationToken);
+    }
+
+    public Task<AgentRunDto> StartRunAsync(
+        string threadId,
+        string profileId,
+        string goal,
+        string taskKind,
+        string? resourcePath,
+        CancellationToken cancellationToken)
+    {
+        return StartRunAsync(threadId, profileId, goal, taskKind, resourcePath, null, cancellationToken);
     }
 
     public async Task<AgentRunDto> StartRunShellAsync(
@@ -49,6 +61,7 @@ public sealed class AgentOrchestrator
         string goal,
         string taskKind,
         string? resourcePath,
+        string? oodlePath,
         CancellationToken cancellationToken)
     {
         var thread = await _store.GetThreadAsync(threadId, cancellationToken)
@@ -79,13 +92,25 @@ public sealed class AgentOrchestrator
             null,
             null,
             null,
-            resourcePath);
+            resourcePath,
+            NormalizeOodlePath(oodlePath));
         await _store.SaveRunAsync(run, cancellationToken);
         await _store.AppendEventAsync(threadId, run.Id, AgentEventType.RunCreated, "Run created", null, cancellationToken);
         var plan = CreateInitialPlan(run.Id);
         await _store.SavePlanAsync(threadId, run.Id, plan, cancellationToken);
         await _store.AppendEventAsync(threadId, run.Id, AgentEventType.PlanUpdated, "Initial plan created", null, cancellationToken);
         return run;
+    }
+
+    public Task<AgentRunDto> StartRunShellAsync(
+        string threadId,
+        string profileId,
+        string goal,
+        string taskKind,
+        string? resourcePath,
+        CancellationToken cancellationToken)
+    {
+        return StartRunShellAsync(threadId, profileId, goal, taskKind, resourcePath, null, cancellationToken);
     }
 
     public async Task<AgentRunDto> ContinueRunAsync(string runId, CancellationToken cancellationToken)
@@ -98,6 +123,7 @@ public sealed class AgentOrchestrator
                 ?? throw new ArgumentException("thread_not_found", nameof(run.ThreadId));
             var settings = await _store.GetSettingsAsync(CancellationToken.None)
                 ?? DefaultSettings();
+            settings = EffectiveSettingsForRun(settings, run);
             var capability = AgentCapabilities.GetRequired(run.TaskKind);
             var messages = await _store.ListMessagesAsync(run.ThreadId, CancellationToken.None);
             var resourcePath = run.ResourcePath;
@@ -215,6 +241,7 @@ public sealed class AgentOrchestrator
             previous.Goal,
             previous.TaskKind,
             previous.ResourcePath,
+            previous.OodlePath,
             cancellationToken);
     }
 
@@ -228,6 +255,7 @@ public sealed class AgentOrchestrator
             previous.Goal,
             previous.TaskKind,
             previous.ResourcePath,
+            previous.OodlePath,
             cancellationToken);
     }
 
@@ -339,6 +367,21 @@ public sealed class AgentOrchestrator
     private static AgentSettingsDto DefaultSettings()
     {
         return new AgentSettingsDto("codex", null, null, "workspace-write", "poe-studio", Environment.CurrentDirectory, "manual", null);
+    }
+
+    private static AgentSettingsDto EffectiveSettingsForRun(AgentSettingsDto settings, AgentRunDto run)
+    {
+        if (string.IsNullOrWhiteSpace(run.OodlePath))
+        {
+            return settings;
+        }
+
+        return settings with { OodlePath = run.OodlePath };
+    }
+
+    private static string? NormalizeOodlePath(string? oodlePath)
+    {
+        return string.IsNullOrWhiteSpace(oodlePath) ? null : oodlePath.Trim();
     }
 
     private static string NewId(string prefix) => $"{prefix}-{Guid.NewGuid():N}";

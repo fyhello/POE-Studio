@@ -5602,7 +5602,8 @@ async function startAgentRun() {
     profileId,
     goal,
     taskKind,
-    resourcePath: taskKind === "datc64-translation" ? resourcePath : null
+    resourcePath: taskKind === "datc64-translation" ? resourcePath : null,
+    oodlePath: currentOodlePath()
   });
 
   state.agent.currentRun = run;

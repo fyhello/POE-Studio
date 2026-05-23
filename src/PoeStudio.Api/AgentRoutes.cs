@@ -130,7 +130,7 @@ public static class AgentRoutes
                     return Results.BadRequest(ApiResponse<AgentRunDto>.Failure("resource_path_required", "resourcePath is required for datc64-translation."));
                 }
 
-                var run = await orchestrator.StartRunShellAsync(request.ThreadId, request.ProfileId, request.Goal, request.TaskKind, request.ResourcePath, cancellationToken);
+                var run = await orchestrator.StartRunShellAsync(request.ThreadId, request.ProfileId, request.Goal, request.TaskKind, request.ResourcePath, request.OodlePath, cancellationToken);
                 StartBackgroundRun(run.Id, cancellations, scopeFactory);
                 return Results.Ok(ApiResponse<AgentRunDto>.Success(run));
             }
