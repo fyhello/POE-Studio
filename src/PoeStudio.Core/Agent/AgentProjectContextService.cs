@@ -203,19 +203,14 @@ public sealed class AgentProjectContextService
     private static string CreateSectionKey(string title)
     {
         var normalized = title.ToLowerInvariant();
-        if (normalized.Contains("当前工作态") || normalized.Contains("草稿") || normalized.Contains("overlay"))
-        {
-            return "layering";
-        }
-
         if (normalized.Contains("项目总览") || normalized.Contains("项目定位") || normalized.Contains("文档目标"))
         {
             return "overview";
         }
 
-        if (normalized.Contains("工作流") || normalized.Contains("闭环"))
+        if (normalized.Contains("native") || normalized.Contains("ggpk") || normalized.Contains("oodle"))
         {
-            return "workflow";
+            return "native";
         }
 
         if (normalized.Contains("补丁") || normalized.Contains("构建") || normalized.Contains("安装") || normalized.Contains("回滚"))
@@ -226,6 +221,11 @@ public sealed class AgentProjectContextService
         if (normalized.Contains("datc64") || normalized.Contains("表格"))
         {
             return "datc64";
+        }
+
+        if (normalized.Contains("当前工作态") || normalized.Contains("草稿") || normalized.Contains("overlay"))
+        {
+            return "layering";
         }
 
         if (normalized.Contains("mcp") || normalized.Contains("agent"))
@@ -248,9 +248,9 @@ public sealed class AgentProjectContextService
             return "resource";
         }
 
-        if (normalized.Contains("native") || normalized.Contains("ggpk") || normalized.Contains("oodle"))
+        if (normalized.Contains("工作流") || normalized.Contains("闭环"))
         {
-            return "native";
+            return "workflow";
         }
 
         return "overview-" + Math.Abs(title.GetHashCode()).ToString("x");

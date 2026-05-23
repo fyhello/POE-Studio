@@ -137,6 +137,83 @@ public sealed class AgentProjectContextServiceTests
     }
 
     [Fact]
+    public async Task BuildAsync_classifies_overlay_review_and_patch_build_heading_as_patch()
+    {
+        using var repo = CreateRepositoryRoot(
+            workflowContent:
+            """
+            # Workflow
+
+            ## 10. Overlay 审核与补丁构建
+            Patch readiness, overlay audit, dry-run, build and install approval guidance.
+            """);
+        var service = new AgentProjectContextService(new AgentRepositoryRootResolver());
+
+        var context = await service.BuildAsync(
+            "read-only-analysis",
+            "构建补丁",
+            null,
+            repo.Root,
+            CancellationToken.None);
+
+        var section = Assert.Single(context.RelevantSections, section => section.Title == "10. Overlay 审核与补丁构建");
+        Assert.Equal("patch", section.Key);
+    }
+
+    [Fact]
+    public async Task BuildAsync_classifies_native_ggpk_oodle_workflow_heading_as_native()
+    {
+        using var repo = CreateRepositoryRoot(
+            workflowContent:
+            """
+            # Workflow
+
+            ## 12. Native / GGPK / Oodle 工作流
+            Native Bundles2, GGPK resources and Oodle dependency guidance.
+            """);
+        var service = new AgentProjectContextService(new AgentRepositoryRootResolver());
+
+        var context = await service.BuildAsync(
+            "read-only-analysis",
+            "检查 Oodle Bundles2 Native",
+            null,
+            repo.Root,
+            CancellationToken.None);
+
+        var section = Assert.Single(context.RelevantSections, section => section.Title == "12. Native / GGPK / Oodle 工作流");
+        Assert.Equal("native", section.Key);
+    }
+
+    [Fact]
+    public async Task BuildAsync_for_patch_native_goal_includes_real_patch_and_native_sections()
+    {
+        using var repo = CreateRepositoryRoot(
+            workflowContent:
+            """
+            # Workflow
+
+            ## 10. Overlay 审核与补丁构建
+            Patch readiness, overlay audit, dry-run, build and install approval guidance.
+
+            ## 12. Native / GGPK / Oodle 工作流
+            Native Bundles2, GGPK resources and Oodle dependency guidance.
+            """);
+        var service = new AgentProjectContextService(new AgentRepositoryRootResolver());
+
+        var context = await service.BuildAsync(
+            "read-only-analysis",
+            "构建补丁并检查 Oodle Bundles2 Native",
+            null,
+            repo.Root,
+            CancellationToken.None);
+
+        Assert.Contains(context.RelevantSections, section => section.Key == "patch" && section.Content.Contains("Patch readiness", StringComparison.Ordinal));
+        Assert.Contains(context.RelevantSections, section => section.Key == "native" && section.Content.Contains("Native Bundles2", StringComparison.Ordinal));
+        Assert.DoesNotContain(context.Unknowns, unknown => unknown.Contains("missing project context section patch", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(context.Unknowns, unknown => unknown.Contains("missing project context section native", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task BuildAsync_includes_default_tool_guidance_and_risk_boundaries()
     {
         using var repo = CreateRepositoryRoot();
