@@ -418,11 +418,11 @@ git commit -m "feat(agent): add codex planner plan contract"
 - 创建：`src/PoeStudio.Core/Agent/AgentPlannerPromptBuilder.cs`
 - 创建：`tests/PoeStudio.Tests/AgentPlannerPromptBuilderTests.cs`
 
-- [ ] **步骤 1：运行影响分析**
+- [x] **步骤 1：运行影响分析**
 
 本任务新增类，不修改现有符号。记录：`Impact: new planner prompt builder only`。
 
-- [ ] **步骤 2：编写失败测试：prompt 明确让 Codex 判断**
+- [x] **步骤 2：编写失败测试：prompt 明确让 Codex 判断**
 
 ```csharp
 using PoeStudio.Contracts;
@@ -469,7 +469,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：FAIL，类型不存在。
 
-- [ ] **步骤 3：实现 Planner prompt**
+- [x] **步骤 3：实现 Planner prompt**
 
 `AgentPlannerPromptBuilder.Build(...)` 必须包含：
 
@@ -492,7 +492,7 @@ Your job is to understand the user's natural-language request, decide what kind 
 POE Studio will validate your plan before execution.
 ```
 
-- [ ] **步骤 4：运行测试验证通过**
+- [x] **步骤 4：运行测试验证通过**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~AgentPlannerPromptBuilderTests
@@ -500,7 +500,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 5：Commit**
+- [x] **步骤 5：Commit**
 
 ```powershell
 git add src\PoeStudio.Core\Agent\AgentPlannerPromptBuilder.cs tests\PoeStudio.Tests\AgentPlannerPromptBuilderTests.cs
