@@ -13,6 +13,9 @@ public sealed class AgentOrchestrator
 
     private readonly AgentStore _store;
     private readonly AgentPromptBuilder _promptBuilder;
+    private readonly AgentPlannerPromptBuilder _plannerPromptBuilder;
+    private readonly AgentTaskPlanParser _taskPlanParser;
+    private readonly AgentPlanGuardService _planGuardService;
     private readonly Datc64TranslationDraftParser _datc64Parser;
     private readonly ICodexProcessRunner _runner;
     private readonly AgentProjectContextService _projectContextService;
@@ -20,12 +23,18 @@ public sealed class AgentOrchestrator
     public AgentOrchestrator(
         AgentStore store,
         AgentPromptBuilder promptBuilder,
+        AgentPlannerPromptBuilder plannerPromptBuilder,
+        AgentTaskPlanParser taskPlanParser,
+        AgentPlanGuardService planGuardService,
         Datc64TranslationDraftParser datc64Parser,
         ICodexProcessRunner runner,
         AgentProjectContextService projectContextService)
     {
         _store = store;
         _promptBuilder = promptBuilder;
+        _plannerPromptBuilder = plannerPromptBuilder;
+        _taskPlanParser = taskPlanParser;
+        _planGuardService = planGuardService;
         _datc64Parser = datc64Parser;
         _runner = runner;
         _projectContextService = projectContextService;
@@ -66,7 +75,11 @@ public sealed class AgentOrchestrator
     {
         var thread = await _store.GetThreadAsync(threadId, cancellationToken)
             ?? throw new ArgumentException("thread_not_found", nameof(threadId));
-        AgentCapabilities.GetRequired(taskKind);
+        if (!AgentTaskKindPolicy.IsExecutableTaskKind(taskKind))
+        {
+            throw new ArgumentException("unsupported_task_kind", nameof(taskKind));
+        }
+
         var now = DateTimeOffset.UtcNow;
         var userMessage = new AgentMessageDto(
             NewId("message"),
@@ -93,7 +106,9 @@ public sealed class AgentOrchestrator
             null,
             null,
             resourcePath,
-            NormalizeOodlePath(oodlePath));
+            NormalizeOodlePath(oodlePath),
+            taskKind,
+            taskKind);
         await _store.SaveRunAsync(run, cancellationToken);
         await _store.AppendEventAsync(threadId, run.Id, AgentEventType.RunCreated, "Run created", null, cancellationToken);
         var plan = CreateInitialPlan(run.Id);
@@ -113,12 +128,64 @@ public sealed class AgentOrchestrator
         return StartRunShellAsync(threadId, profileId, goal, taskKind, resourcePath, null, cancellationToken);
     }
 
+    public async Task<AgentRunDto> StartAutoRunShellAsync(
+        string threadId,
+        string profileId,
+        string goal,
+        string? selectedResourcePath,
+        string? oodlePath,
+        CancellationToken cancellationToken)
+    {
+        var thread = await _store.GetThreadAsync(threadId, cancellationToken)
+            ?? throw new ArgumentException("thread_not_found", nameof(threadId));
+        var now = DateTimeOffset.UtcNow;
+        var userMessage = new AgentMessageDto(
+            NewId("message"),
+            threadId,
+            AgentMessageRole.User,
+            goal,
+            selectedResourcePath is null ? null : JsonSerializer.Serialize(new { selectedResourcePath }, JsonOptions),
+            now);
+        await _store.AppendMessageAsync(userMessage, cancellationToken);
+
+        var run = new AgentRunDto(
+            NewId("run"),
+            threadId,
+            profileId,
+            goal,
+            AgentTaskKindPolicy.Auto,
+            AgentRunStatus.Running,
+            5,
+            "Auto run created",
+            now,
+            now,
+            0,
+            null,
+            null,
+            null,
+            selectedResourcePath,
+            NormalizeOodlePath(oodlePath),
+            AgentTaskKindPolicy.Auto,
+            null);
+        await _store.SaveRunAsync(run, cancellationToken);
+        await _store.AppendEventAsync(threadId, run.Id, AgentEventType.RunCreated, "Auto run created", null, cancellationToken);
+        await _store.SavePlanAsync(threadId, run.Id, CreateAutoInitialPlan(run.Id), cancellationToken);
+        await _store.AppendEventAsync(threadId, run.Id, AgentEventType.PlanUpdated, "Initial auto plan created", null, cancellationToken);
+        _ = thread;
+        return run;
+    }
+
     public async Task<AgentRunDto> ContinueRunAsync(string runId, CancellationToken cancellationToken)
     {
         var run = await _store.FindRunAsync(runId, CancellationToken.None)
             ?? throw new ArgumentException("run_not_found", nameof(runId));
         try
         {
+            if (AgentTaskKindPolicy.IsAuto(run.TaskKind))
+            {
+                return await ContinueAutoRunAsync(run, cancellationToken);
+            }
+
             var thread = await _store.GetThreadAsync(run.ThreadId, CancellationToken.None)
                 ?? throw new ArgumentException("thread_not_found", nameof(run.ThreadId));
             var settings = await _store.GetSettingsAsync(CancellationToken.None)
@@ -157,25 +224,7 @@ public sealed class AgentOrchestrator
                 JsonSerializer.Serialize(preflight, JsonOptions),
                 CancellationToken.None);
             var prompt = _promptBuilder.Build(settings, capability, thread, messages, goal, resourcePath, projectContext);
-            var persistedEventKeys = new HashSet<string>(StringComparer.Ordinal);
-            var result = await _runner.RunAsync(
-                settings,
-                prompt,
-                async parsedEvent =>
-                {
-                    await PersistParsedEventAsync(run.ThreadId, run.Id, parsedEvent, CancellationToken.None);
-                    persistedEventKeys.Add(EventKey(parsedEvent));
-                },
-                cancellationToken);
-            foreach (var parsedEvent in result.Events)
-            {
-                if (persistedEventKeys.Contains(EventKey(parsedEvent)))
-                {
-                    continue;
-                }
-
-                await PersistParsedEventAsync(run.ThreadId, run.Id, parsedEvent, CancellationToken.None);
-            }
+            var result = await RunCodexAndPersistEventsAsync(run, settings, prompt, cancellationToken);
 
             if (result.Cancelled)
             {
@@ -229,6 +278,160 @@ public sealed class AgentOrchestrator
             await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunFailed, ex.Message, null, CancellationToken.None);
             return await CompleteRunAsync(run, AgentRunStatus.Failed, 0, "Failed", "agent_run_failed", ex.Message, null, CancellationToken.None);
         }
+    }
+
+    private async Task<CodexRunResult> RunCodexAndPersistEventsAsync(
+        AgentRunDto run,
+        AgentSettingsDto settings,
+        string prompt,
+        CancellationToken cancellationToken)
+    {
+        var persistedEventKeys = new HashSet<string>(StringComparer.Ordinal);
+        var result = await _runner.RunAsync(
+            settings,
+            prompt,
+            async parsedEvent =>
+            {
+                await PersistParsedEventAsync(run.ThreadId, run.Id, parsedEvent, CancellationToken.None);
+                persistedEventKeys.Add(EventKey(parsedEvent));
+            },
+            cancellationToken);
+        foreach (var parsedEvent in result.Events)
+        {
+            if (persistedEventKeys.Contains(EventKey(parsedEvent)))
+            {
+                continue;
+            }
+
+            await PersistParsedEventAsync(run.ThreadId, run.Id, parsedEvent, CancellationToken.None);
+        }
+
+        return result;
+    }
+
+    private async Task<AgentRunDto> ContinueAutoRunAsync(AgentRunDto run, CancellationToken cancellationToken)
+    {
+        var thread = await _store.GetThreadAsync(run.ThreadId, CancellationToken.None)
+            ?? throw new ArgumentException("thread_not_found", nameof(run.ThreadId));
+        var settings = await _store.GetSettingsAsync(CancellationToken.None)
+            ?? DefaultSettings();
+        settings = EffectiveSettingsForRun(settings, run);
+        var messages = await _store.ListMessagesAsync(run.ThreadId, CancellationToken.None);
+        var recentRuns = (await _store.ListRunsAsync(run.ThreadId, CancellationToken.None))
+            .Where(x => !string.Equals(x.Id, run.Id, StringComparison.Ordinal))
+            .Take(5)
+            .ToArray();
+        var projectContext = await _projectContextService.BuildAsync(
+            AgentTaskKindPolicy.Auto,
+            run.Goal,
+            run.ResourcePath,
+            settings.WorkingDirectory,
+            CancellationToken.None);
+        var plannerPrompt = _plannerPromptBuilder.Build(
+            settings,
+            thread,
+            messages,
+            run.Goal,
+            run.ResourcePath,
+            recentRuns,
+            AgentCapabilities.All,
+            projectContext);
+        var plannerResult = await RunCodexAndPersistEventsAsync(run, settings, plannerPrompt, cancellationToken);
+        if (plannerResult.Cancelled)
+        {
+            return await CompleteRunAsync(run, AgentRunStatus.Cancelled, 0, "Cancelled", "cancelled", "Run cancelled", null, CancellationToken.None);
+        }
+
+        if (plannerResult.Failed)
+        {
+            await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunFailed, plannerResult.StderrSummary ?? "Codex planner failed", null, CancellationToken.None);
+            return await CompleteRunAsync(run, AgentRunStatus.Failed, 0, "Failed", plannerResult.ErrorCode ?? "planner_failed", plannerResult.StderrSummary ?? "Codex planner failed", null, CancellationToken.None);
+        }
+
+        var taskPlan = _taskPlanParser.Parse(LastAgentMessage(plannerResult.Events));
+        var plannerJson = JsonSerializer.Serialize(taskPlan, JsonOptions);
+        await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.PlanUpdated, "Planner completed", plannerJson, CancellationToken.None);
+
+        var guard = await _planGuardService.ValidateAsync(taskPlan, settings.OodlePath, CancellationToken.None);
+        var guardJson = JsonSerializer.Serialize(guard, JsonOptions);
+        await _store.AppendEventAsync(
+            run.ThreadId,
+            run.Id,
+            AgentEventType.PlanUpdated,
+            guard.Ok ? "Plan guard passed" : "Plan guard blocked",
+            guardJson,
+            CancellationToken.None);
+        run = await SavePlannerTraceAsync(run, taskPlan, guard, plannerJson, guardJson, CancellationToken.None);
+
+        if (!guard.Ok)
+        {
+            if (string.Equals(guard.ErrorCode, "needs_clarification", StringComparison.Ordinal))
+            {
+                foreach (var question in guard.Blockers)
+                {
+                    await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.AgentMessage, question, null, CancellationToken.None);
+                }
+
+                return await CompleteRunAsync(run, AgentRunStatus.WaitingForInput, 40, "Waiting for input", guard.ErrorCode, guard.ErrorMessage, null, CancellationToken.None);
+            }
+
+            var blocker = guard.Blockers.Count > 0 ? string.Join(Environment.NewLine, guard.Blockers) : guard.ErrorMessage;
+            await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunFailed, blocker ?? "Plan guard blocked", guardJson, CancellationToken.None);
+            return await CompleteRunAsync(run, AgentRunStatus.Failed, 40, "Failed", guard.ErrorCode ?? "plan_guard_blocked", blocker, null, CancellationToken.None);
+        }
+
+        var resolvedTaskKind = guard.ResolvedTaskKind ?? throw new InvalidOperationException("resolved_task_kind_missing");
+        var capability = AgentCapabilities.GetRequired(resolvedTaskKind);
+        var executionRun = run with { ResolvedTaskKind = resolvedTaskKind, ResourcePath = guard.ResourcePath };
+        var executionContext = await _projectContextService.BuildAsync(
+            resolvedTaskKind,
+            run.Goal,
+            guard.ResourcePath,
+            settings.WorkingDirectory,
+            CancellationToken.None);
+        var executionPrompt = _promptBuilder.Build(settings, capability, thread, messages, run.Goal, guard.ResourcePath, executionContext, taskPlan);
+        var executionResult = await RunCodexAndPersistEventsAsync(run, settings, executionPrompt, cancellationToken);
+        if (executionResult.Cancelled)
+        {
+            return await CompleteRunAsync(executionRun, AgentRunStatus.Cancelled, 0, "Cancelled", "cancelled", "Run cancelled", null, CancellationToken.None);
+        }
+
+        if (executionResult.Failed)
+        {
+            await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.RunFailed, executionResult.StderrSummary ?? "Codex failed", null, CancellationToken.None);
+            return await CompleteRunAsync(executionRun, AgentRunStatus.Failed, 0, "Failed", executionResult.ErrorCode ?? "codex_failed", executionResult.StderrSummary ?? "Codex failed", null, CancellationToken.None);
+        }
+
+        var finalMessage = LastAgentMessage(executionResult.Events);
+        if (string.Equals(resolvedTaskKind, "datc64-translation", StringComparison.Ordinal))
+        {
+            if (string.IsNullOrWhiteSpace(guard.ResourcePath))
+            {
+                throw new ArgumentException("resource_path_required");
+            }
+
+            var proposal = _datc64Parser.Parse(finalMessage, run.ProfileId, guard.ResourcePath);
+            var proposalJson = JsonSerializer.Serialize(proposal, JsonOptions);
+            var approval = new AgentApprovalDto(
+                NewId("approval"),
+                run.Id,
+                run.ProfileId,
+                resolvedTaskKind,
+                AgentApprovalStatus.Pending,
+                $"{proposal.Candidates.Count} DATC64 translation candidate(s)",
+                proposalJson,
+                DateTimeOffset.UtcNow,
+                DateTimeOffset.UtcNow,
+                null);
+            await _store.SaveApprovalsAsync(run.ThreadId, run.Id, [approval], cancellationToken);
+            await _store.AppendEventAsync(run.ThreadId, run.Id, AgentEventType.ApprovalRequested, approval.Summary, proposalJson, cancellationToken);
+            await _store.SavePlanAsync(run.ThreadId, run.Id, CompleteAutoPlan(run.Id, waitingForApproval: true), cancellationToken);
+            return await CompleteRunAsync(executionRun, AgentRunStatus.WaitingForApproval, 90, "Waiting for approval", null, null, null, cancellationToken);
+        }
+
+        var resultJson = ExtractFinalJsonOrWrap(resolvedTaskKind, run.ProfileId, finalMessage);
+        await _store.SavePlanAsync(run.ThreadId, run.Id, CompleteAutoPlan(run.Id, waitingForApproval: false), cancellationToken);
+        return await CompleteRunAsync(executionRun, AgentRunStatus.Succeeded, 100, "Succeeded", null, null, resultJson, cancellationToken);
     }
 
     public async Task<AgentRunDto> RetryAsync(string runId, CancellationToken cancellationToken)
@@ -326,6 +529,16 @@ public sealed class AgentOrchestrator
         ];
     }
 
+    private static IReadOnlyList<AgentPlanStepDto> CreateAutoInitialPlan(string runId)
+    {
+        return
+        [
+            new AgentPlanStepDto(NewId("step"), runId, 1, "Ask Codex Planner", "pending", null),
+            new AgentPlanStepDto(NewId("step"), runId, 2, "Validate plan", "pending", null),
+            new AgentPlanStepDto(NewId("step"), runId, 3, "Execute approved plan", "pending", null)
+        ];
+    }
+
     private static IReadOnlyList<AgentPlanStepDto> CompletePlan(string runId, bool waitingForApproval)
     {
         return
@@ -335,6 +548,37 @@ public sealed class AgentOrchestrator
             new AgentPlanStepDto(NewId("step"), runId, 3, "Run Codex", "completed", "Codex events recorded"),
             new AgentPlanStepDto(NewId("step"), runId, 4, waitingForApproval ? "Request approval" : "Store result", "completed", waitingForApproval ? "Pending approval created" : "Result saved")
         ];
+    }
+
+    private static IReadOnlyList<AgentPlanStepDto> CompleteAutoPlan(string runId, bool waitingForApproval)
+    {
+        return
+        [
+            new AgentPlanStepDto(NewId("step"), runId, 1, "Ask Codex Planner", "completed", "Planner JSON recorded"),
+            new AgentPlanStepDto(NewId("step"), runId, 2, "Validate plan", "completed", "Guard JSON recorded"),
+            new AgentPlanStepDto(NewId("step"), runId, 3, waitingForApproval ? "Request approval" : "Store result", "completed", waitingForApproval ? "Pending approval created" : "Result saved")
+        ];
+    }
+
+    private async Task<AgentRunDto> SavePlannerTraceAsync(
+        AgentRunDto run,
+        AgentTaskPlanDto taskPlan,
+        AgentPlanGuardResultDto guard,
+        string plannerJson,
+        string guardJson,
+        CancellationToken cancellationToken)
+    {
+        var updated = run with
+        {
+            RequestedTaskKind = taskPlan.RequestedTaskKind,
+            ResolvedTaskKind = guard.ResolvedTaskKind ?? taskPlan.ResolvedTaskKind,
+            ResourcePath = guard.ResourcePath ?? taskPlan.ResourcePath ?? run.ResourcePath,
+            PlannerJson = plannerJson,
+            GuardJson = guardJson,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        await _store.SaveRunAsync(updated, cancellationToken);
+        return updated;
     }
 
     private static string LastAgentMessage(IReadOnlyList<CodexParsedEvent> events)

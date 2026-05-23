@@ -615,7 +615,7 @@ git commit -m "feat(agent): validate codex planner output"
 - 修改：`src/PoeStudio.Core/Agent/AgentPromptBuilder.cs`
 - 修改：`tests/PoeStudio.Tests/AgentOrchestratorTests.cs`
 
-- [ ] **步骤 1：运行影响分析**
+- [x] **步骤 1：运行影响分析**
 
 ```text
 mcp__gitnexus__impact({
@@ -628,7 +628,7 @@ mcp__gitnexus__impact({
 
 若风险 HIGH/CRITICAL，先报告再继续。
 
-- [ ] **步骤 2：编写失败测试：auto 先规划再执行 DATC64**
+- [x] **步骤 2：编写失败测试：auto 先规划再执行 DATC64**
 
 在 `AgentOrchestratorTests.cs` 新增 fake runner：第一次返回 planner JSON，第二次返回 DATC64 proposal JSON。测试必须调用 `StartAutoRunShellAsync(...)` 后再调用 `ContinueRunAsync(run.Id, ...)`，对齐当前 API「先返回 shell run，再后台继续」模型。断言：
 
@@ -649,7 +649,7 @@ Assert.Contains(events, x => x.Message.Contains("Planner completed", StringCompa
 Assert.Contains(events, x => x.Message.Contains("Plan guard passed", StringComparison.OrdinalIgnoreCase));
 ```
 
-- [ ] **步骤 3：编写失败测试：needs clarification 不启动执行 runner 第二次**
+- [x] **步骤 3：编写失败测试：needs clarification 不启动执行 runner 第二次**
 
 fake runner 第一次返回 `needs_clarification`。断言：
 
@@ -658,7 +658,7 @@ fake runner 第一次返回 `needs_clarification`。断言：
 - runner 调用次数为 1。
 - 没有 approval。
 
-- [ ] **步骤 4：实现 `StartAutoRunShellAsync`**
+- [x] **步骤 4：实现 `StartAutoRunShellAsync`**
 
 `StartAutoRunShellAsync` 只创建 shell run，不在 HTTP 请求线程里调用 Codex。实现路径：
 
@@ -667,7 +667,7 @@ fake runner 第一次返回 `needs_clarification`。断言：
 3. 保存初始 plan：`Ask Codex Planner`、`Validate plan`、`Execute approved plan`。
 4. 返回 run，由现有 `StartBackgroundRun(run.Id, ...)` 调用 `ContinueRunAsync` 后台继续。
 
-- [ ] **步骤 4.5：修改 `ContinueRunAsync`，让 auto 走 Planner 分支**
+- [x] **步骤 4.5：修改 `ContinueRunAsync`，让 auto 走 Planner 分支**
 
 `ContinueRunAsync` 开头读取 run 后：
 
@@ -695,7 +695,7 @@ if (AgentTaskKindPolicy.IsAuto(run.TaskKind))
 
 禁止把 `auto` 传给 `AgentCapabilities.GetRequired`。
 
-- [ ] **步骤 5：让执行 prompt 接收 Planner 计划**
+- [x] **步骤 5：让执行 prompt 接收 Planner 计划**
 
 `AgentPromptBuilder.Build(...)` 增加 optional 参数：
 
@@ -713,7 +713,7 @@ Planner-approved task plan:
 Follow this plan unless tool evidence proves it unsafe; if unsafe, stop and explain.
 ```
 
-- [ ] **步骤 6：运行定向测试**
+- [x] **步骤 6：运行定向测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~AgentOrchestratorTests
@@ -721,7 +721,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 7：Commit**
+- [x] **步骤 7：Commit**
 
 ```powershell
 git add src\PoeStudio.Storage\Agent\AgentOrchestrator.cs src\PoeStudio.Core\Agent\AgentPromptBuilder.cs tests\PoeStudio.Tests\AgentOrchestratorTests.cs

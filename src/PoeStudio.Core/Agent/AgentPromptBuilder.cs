@@ -14,9 +14,10 @@ public sealed class AgentPromptBuilder
         AgentThreadDto thread,
         IReadOnlyList<AgentMessageDto> messages,
         string goal,
-        string? resourcePath)
+        string? resourcePath,
+        AgentTaskPlanDto? taskPlan = null)
     {
-        return Build(settings, capability, thread, messages, goal, resourcePath, projectContext: null);
+        return Build(settings, capability, thread, messages, goal, resourcePath, projectContext: null, taskPlan);
     }
 
     public string Build(
@@ -26,7 +27,8 @@ public sealed class AgentPromptBuilder
         IReadOnlyList<AgentMessageDto> messages,
         string goal,
         string? resourcePath,
-        AgentProjectContextDto? projectContext)
+        AgentProjectContextDto? projectContext,
+        AgentTaskPlanDto? taskPlan = null)
     {
         var builder = new StringBuilder();
         builder.AppendLine("You are running inside POE Studio Stage 2 Codex Bridge.");
@@ -52,6 +54,7 @@ public sealed class AgentPromptBuilder
         }
 
         AppendProjectContext(builder, projectContext);
+        AppendTaskPlan(builder, taskPlan);
 
         builder.AppendLine();
         builder.AppendLine("Allowed MCP tools:");
@@ -79,6 +82,32 @@ public sealed class AgentPromptBuilder
         AppendHistory(builder, messages);
         AppendOutputContract(builder, capability, thread.ProfileId, resourcePath);
         return builder.ToString();
+    }
+
+    private static void AppendTaskPlan(StringBuilder builder, AgentTaskPlanDto? taskPlan)
+    {
+        if (taskPlan is null)
+        {
+            return;
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("Planner-approved task plan:");
+        builder.AppendLine($"- summary: {Truncate(taskPlan.Summary, ItemMaxLength)}");
+        builder.AppendLine($"- resolved taskKind: {taskPlan.ResolvedTaskKind ?? "none"}");
+        builder.AppendLine("- user constraints:");
+        foreach (var constraint in taskPlan.UserConstraints)
+        {
+            builder.AppendLine($"  - {Truncate(constraint, ItemMaxLength)}");
+        }
+
+        builder.AppendLine("- steps:");
+        foreach (var step in taskPlan.Steps.OrderBy(x => x.Order))
+        {
+            builder.AppendLine($"  - {step.Order}. {Truncate(step.Title, ItemMaxLength)}: {Truncate(step.Reason, ItemMaxLength)}");
+        }
+
+        builder.AppendLine("Follow this plan unless tool evidence proves it unsafe; if unsafe, stop and explain.");
     }
 
     private static void AppendProjectContext(StringBuilder builder, AgentProjectContextDto? projectContext)

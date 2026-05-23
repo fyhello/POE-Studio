@@ -217,6 +217,107 @@ public sealed class AgentOrchestratorTests
         Assert.Equal("Load project context", plan[0].Title);
     }
 
+    [Fact]
+    public async Task ContinueRunAsync_auto_plans_guards_and_executes_datc64_translation()
+    {
+        var workspace = CreateWorkspace();
+        var store = new AgentStore(workspace);
+        await store.SaveSettingsAsync(Settings(workspace) with { OodlePath = await CreateOodleAsync(workspace) }, CancellationToken.None);
+        await SaveProfileAndIndexedResourceAsync(workspace, "profile-1", "data/balance/traditional chinese/activeskills.datc64");
+        var runner = new QueueRunner(
+            """
+            ```json
+            {
+              "status": "ready",
+              "requestedTaskKind": "auto",
+              "resolvedTaskKind": "datc64-translation",
+              "profileId": "profile-1",
+              "resourcePath": "data/balance/traditional chinese/activeskills.datc64",
+              "summary": "Translate selected DATC64 table.",
+              "userConstraints": ["only changed simplified source cells"],
+              "steps": [],
+              "requiredApprovals": ["overlay_draft"],
+              "warnings": [],
+              "questions": [],
+              "missingCapability": null
+            }
+            ```
+            """,
+            """
+            ```json
+            {
+              "taskKind": "datc64-translation",
+              "profileId": "profile-1",
+              "resourcePath": "data/balance/traditional chinese/activeskills.datc64",
+              "candidates": [
+                {
+                  "locator": "row:1;column:3;name:text_3 @12",
+                  "rowIndex": 0,
+                  "columnIndex": 3,
+                  "sourceText": "NoMana",
+                  "translatedText": "法力不足",
+                  "confidence": 0.86,
+                  "notes": "test"
+                }
+              ]
+            }
+            ```
+            """);
+        var orchestrator = CreateOrchestrator(store, workspace, runner);
+        var thread = await store.SaveNewThreadAsync("profile-1", "Task", "Goal", "auto", CancellationToken.None);
+
+        var shell = await orchestrator.StartAutoRunShellAsync(thread.Id, "profile-1", "重新翻译刚才的表", "data/balance/traditional chinese/activeskills.datc64", null, CancellationToken.None);
+        var run = await orchestrator.ContinueRunAsync(shell.Id, CancellationToken.None);
+
+        Assert.Equal(AgentRunStatus.WaitingForApproval, run.Status);
+        Assert.Equal("auto", run.RequestedTaskKind);
+        Assert.Equal("auto", run.TaskKind);
+        Assert.Equal("datc64-translation", run.ResolvedTaskKind);
+        var events = await store.ListEventsAsync(thread.Id, run.Id, 0, CancellationToken.None);
+        Assert.Contains(events, x => x.Message.Contains("Planner completed", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(events, x => x.Message.Contains("Plan guard passed", StringComparison.OrdinalIgnoreCase));
+        Assert.Single(await store.ListApprovalsAsync(thread.Id, run.Id, CancellationToken.None));
+        Assert.Equal(2, runner.CallCount);
+        Assert.Contains("Planner-approved task plan", runner.Prompts[1]);
+    }
+
+    [Fact]
+    public async Task ContinueRunAsync_auto_waits_for_input_when_planner_needs_clarification()
+    {
+        var workspace = CreateWorkspace();
+        var store = new AgentStore(workspace);
+        await store.SaveSettingsAsync(Settings(workspace), CancellationToken.None);
+        var runner = new QueueRunner("""
+            ```json
+            {
+              "status": "needs_clarification",
+              "requestedTaskKind": "auto",
+              "resolvedTaskKind": null,
+              "profileId": "profile-1",
+              "resourcePath": null,
+              "summary": "Need a resource.",
+              "userConstraints": [],
+              "steps": [],
+              "requiredApprovals": [],
+              "warnings": [],
+              "questions": ["请告诉我要翻译哪个资源路径，或先在资源列表中选中它。"],
+              "missingCapability": null
+            }
+            ```
+            """);
+        var orchestrator = CreateOrchestrator(store, workspace, runner);
+        var thread = await store.SaveNewThreadAsync("profile-1", "Task", "Goal", "auto", CancellationToken.None);
+
+        var shell = await orchestrator.StartAutoRunShellAsync(thread.Id, "profile-1", "翻译这个表", null, null, CancellationToken.None);
+        var run = await orchestrator.ContinueRunAsync(shell.Id, CancellationToken.None);
+
+        Assert.Equal(AgentRunStatus.WaitingForInput, run.Status);
+        Assert.Equal(1, runner.CallCount);
+        Assert.Empty(await store.ListApprovalsAsync(thread.Id, run.Id, CancellationToken.None));
+        var events = await store.ListEventsAsync(thread.Id, run.Id, 0, CancellationToken.None);
+        Assert.Contains(events, x => x.Message.Contains("请告诉我要翻译哪个资源路径", StringComparison.Ordinal));
+    }
+
     private static AgentSettingsDto Settings(string workspace)
     {
         return new AgentSettingsDto("codex", null, null, "workspace-write", "poe-studio", workspace, "manual");
@@ -230,9 +331,59 @@ public sealed class AgentOrchestratorTests
         return new AgentOrchestrator(
             store,
             new AgentPromptBuilder(),
+            new AgentPlannerPromptBuilder(),
+            new AgentTaskPlanParser(),
+            new AgentPlanGuardService(
+                new PoeStudio.Storage.Profiles.ProfileStore(repositoryRoot),
+                new PoeStudio.Storage.Resources.ResourceIndexStore(repositoryRoot),
+                new PoeStudio.Storage.Overlay.OverlayStore(repositoryRoot)),
             new Datc64TranslationDraftParser(),
             runner,
             new AgentProjectContextService(new AgentRepositoryRootResolver(repositoryRoot)));
+    }
+
+    private static async Task<string> CreateOodleAsync(string workspace)
+    {
+        var path = Path.Combine(workspace, "oo2core.dll");
+        await File.WriteAllBytesAsync(path, [], CancellationToken.None);
+        return path;
+    }
+
+    private static async Task SaveProfileAndIndexedResourceAsync(string root, string profileId, string resourcePath)
+    {
+        var now = DateTimeOffset.UtcNow;
+        await new PoeStudio.Storage.Profiles.ProfileStore(root).SaveAsync(
+            new ClientProfileDto(
+                profileId,
+                "Target",
+                ClientPlatform.Official,
+                ClientEntryKind.Ggpk,
+                root,
+                Path.Combine(root, "Content.ggpk"),
+                null,
+                null,
+                OodleStatus.Found,
+                "fingerprint",
+                now,
+                now),
+            CancellationToken.None);
+        await new PoeStudio.Storage.Resources.ResourceIndexStore(root).SaveAsync(
+            profileId,
+            [
+                new ResourceSummaryDto(
+                    "resource-1",
+                    profileId,
+                    resourcePath,
+                    resourcePath,
+                    ".datc64",
+                    ResourceKind.Table,
+                    10,
+                    Path.Combine(root, "base.datc64"),
+                    ResourceSourceLayer.Base,
+                    now)
+            ],
+            [],
+            CancellationToken.None);
     }
 
     private static TemporaryDirectory CreateRepositoryRoot()
@@ -336,6 +487,43 @@ public sealed class AgentOrchestratorTests
             var events = new[]
             {
                 new CodexParsedEvent("{}", CodexParsedEventType.AgentMessage, _message, "{}", true, false, null)
+            };
+            if (onEvent is not null)
+            {
+                foreach (var parsedEvent in events)
+                {
+                    await onEvent(parsedEvent);
+                }
+            }
+
+            return new CodexRunResult(0, false, false, events, null);
+        }
+    }
+
+    private sealed class QueueRunner : ICodexProcessRunner
+    {
+        private readonly Queue<string> _messages;
+
+        public QueueRunner(params string[] messages)
+        {
+            _messages = new Queue<string>(messages);
+        }
+
+        public int CallCount { get; private set; }
+        public List<string> Prompts { get; } = [];
+
+        public async Task<CodexRunResult> RunAsync(
+            AgentSettingsDto settings,
+            string prompt,
+            Func<CodexParsedEvent, Task>? onEvent,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            Prompts.Add(prompt);
+            var message = _messages.Dequeue();
+            var events = new[]
+            {
+                new CodexParsedEvent("{}", CodexParsedEventType.AgentMessage, message, "{}", true, false, null)
             };
             if (onEvent is not null)
             {
