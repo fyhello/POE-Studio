@@ -69,7 +69,8 @@ public sealed class AgentProjectContextService
             documents.Add(new ProjectDocument(NormalizePath(sourcePath), content, ExtractSections(content)));
         }
 
-        var selectedSections = SelectRelevantSections(documents, taskKind, goal, resourcePath);
+        var selectedKeys = AgentProjectContextSelector.SelectKeys(taskKind, goal, resourcePath);
+        var selectedSections = SelectRelevantSections(documents, selectedKeys, unknowns);
         var relevantSections = selectedSections
             .Select(section => new AgentProjectContextSectionDto(
                 section.Key,
@@ -90,22 +91,23 @@ public sealed class AgentProjectContextService
 
     private static IReadOnlyList<ProjectSection> SelectRelevantSections(
         IReadOnlyList<ProjectDocument> documents,
-        string taskKind,
-        string goal,
-        string? resourcePath)
+        IReadOnlyList<string> selectedKeys,
+        List<string> unknowns)
     {
-        var query = $"{taskKind} {goal} {resourcePath}".ToLowerInvariant();
         var matches = new List<ProjectSection>();
-        foreach (var document in documents)
+        foreach (var key in selectedKeys)
         {
-            foreach (var section in document.Sections)
+            var keyedMatches = documents
+                .SelectMany(document => document.Sections)
+                .Where(section => section.Key == key)
+                .ToArray();
+            if (keyedMatches.Length == 0)
             {
-                var searchable = $"{section.Title} {section.Content}".ToLowerInvariant();
-                if (ShouldIncludeSection(query, searchable))
-                {
-                    matches.Add(section);
-                }
+                unknowns.Add($"missing project context section {key}");
+                continue;
             }
+
+            matches.AddRange(keyedMatches);
         }
 
         if (matches.Count == 0)
@@ -118,31 +120,6 @@ public sealed class AgentProjectContextService
             .Select(group => group.First())
             .Take(8)
             .ToArray();
-    }
-
-    private static bool ShouldIncludeSection(string query, string section)
-    {
-        if (section.Contains("项目总览") || section.Contains("工作流") || section.Contains("风险") || section.Contains("审批"))
-        {
-            return true;
-        }
-
-        if (query.Contains("datc64") || query.Contains("翻译") || query.Contains("当前") || query.Contains(".datc64"))
-        {
-            return section.Contains("datc64") ||
-                   section.Contains("当前工作态") ||
-                   section.Contains("草稿") ||
-                   section.Contains("overlay") ||
-                   section.Contains("mcp") ||
-                   section.Contains("审批");
-        }
-
-        if (query.Contains("资源") || query.Contains("索引") || query.Contains("search"))
-        {
-            return section.Contains("资源") || section.Contains("索引");
-        }
-
-        return false;
     }
 
     private static string BuildSummary(
@@ -231,6 +208,21 @@ public sealed class AgentProjectContextService
             return "layering";
         }
 
+        if (normalized.Contains("项目总览") || normalized.Contains("项目定位") || normalized.Contains("文档目标"))
+        {
+            return "overview";
+        }
+
+        if (normalized.Contains("工作流") || normalized.Contains("闭环"))
+        {
+            return "workflow";
+        }
+
+        if (normalized.Contains("补丁") || normalized.Contains("构建") || normalized.Contains("安装") || normalized.Contains("回滚"))
+        {
+            return "patch";
+        }
+
         if (normalized.Contains("datc64") || normalized.Contains("表格"))
         {
             return "datc64";
@@ -241,9 +233,9 @@ public sealed class AgentProjectContextService
             return "mcp";
         }
 
-        if (normalized.Contains("审批") || normalized.Contains("风险"))
+        if (normalized.Contains("审批") || normalized.Contains("风险") || normalized.Contains("高风险"))
         {
-            return "approval";
+            return normalized.Contains("审批") ? "approval" : "risk";
         }
 
         if (normalized.Contains("索引"))
