@@ -131,7 +131,8 @@ public static class McpProtocol
             {
                 name = tool.Name,
                 description = tool.Description,
-                inputSchema = tool.InputSchema
+                inputSchema = tool.InputSchema,
+                annotations = tool.Annotations
             }).ToArray()
         };
     }

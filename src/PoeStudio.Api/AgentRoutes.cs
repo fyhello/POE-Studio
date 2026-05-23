@@ -30,10 +30,16 @@ public static class AgentRoutes
                 return Results.BadRequest(ApiResponse<AgentSettingsDto>.Failure("invalid_sandbox", "sandbox must be read-only, workspace-write, or danger-full-access."));
             }
 
+            if (!string.IsNullOrWhiteSpace(request.OodlePath) && !File.Exists(request.OodlePath))
+            {
+                return Results.BadRequest(ApiResponse<AgentSettingsDto>.Failure("invalid_oodle_path", "oodlePath must point to an existing oo2core.dll."));
+            }
+
             var settings = request with
             {
                 McpServerName = string.IsNullOrWhiteSpace(request.McpServerName) ? "poe-studio" : request.McpServerName,
-                ApprovalMode = string.IsNullOrWhiteSpace(request.ApprovalMode) ? "manual" : request.ApprovalMode
+                ApprovalMode = string.IsNullOrWhiteSpace(request.ApprovalMode) ? "manual" : request.ApprovalMode,
+                OodlePath = string.IsNullOrWhiteSpace(request.OodlePath) ? null : request.OodlePath.Trim()
             };
             await store.SaveSettingsAsync(settings, cancellationToken);
             return Results.Ok(ApiResponse<AgentSettingsDto>.Success(settings));
@@ -258,7 +264,7 @@ public static class AgentRoutes
 
     private static AgentSettingsDto DefaultSettings(string workspaceRoot)
     {
-        return new AgentSettingsDto("codex", null, null, "workspace-write", "poe-studio", workspaceRoot, "manual");
+        return new AgentSettingsDto("codex", null, null, "workspace-write", "poe-studio", workspaceRoot, "manual", null);
     }
 
     private static bool IsValidCodexPath(string codexPath)

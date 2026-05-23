@@ -156,7 +156,7 @@ public sealed class AgentStore
     {
         var path = EventsPath(threadId, runId);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var fileLock = FileLocks.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
+        var fileLock = GetFileLock(path);
         await fileLock.WaitAsync(cancellationToken);
         try
         {
@@ -170,7 +170,7 @@ public sealed class AgentStore
                 payloadJson,
                 DateTimeOffset.UtcNow);
             var line = JsonSerializer.Serialize(evt, JsonLineOptions);
-            await AppendLineAsync(path, line, cancellationToken);
+            await AppendLineUnlockedAsync(path, line, cancellationToken);
             return evt;
         }
         finally
@@ -246,21 +246,31 @@ public sealed class AgentStore
         string? appliedOverlayPath,
         CancellationToken cancellationToken)
     {
-        var approvals = (await ListApprovalsAsync(threadId, runId, cancellationToken)).ToArray();
-        var index = Array.FindIndex(approvals, x => string.Equals(x.Id, approvalId, StringComparison.Ordinal));
-        if (index < 0 || approvals[index].Status != expectedStatus)
+        var path = ApprovalsPath(threadId, runId);
+        var fileLock = GetFileLock(path);
+        await fileLock.WaitAsync(cancellationToken);
+        try
         {
-            return false;
-        }
+            var approvals = (await ReadJsonUnlockedAsync<IReadOnlyList<AgentApprovalDto>>(path, cancellationToken) ?? []).ToArray();
+            var index = Array.FindIndex(approvals, x => string.Equals(x.Id, approvalId, StringComparison.Ordinal));
+            if (index < 0 || approvals[index].Status != expectedStatus)
+            {
+                return false;
+            }
 
-        approvals[index] = approvals[index] with
+            approvals[index] = approvals[index] with
+            {
+                Status = nextStatus,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                AppliedOverlayPath = appliedOverlayPath ?? approvals[index].AppliedOverlayPath
+            };
+            await WriteJsonUnlockedAsync(path, approvals, cancellationToken);
+            return true;
+        }
+        finally
         {
-            Status = nextStatus,
-            UpdatedAt = DateTimeOffset.UtcNow,
-            AppliedOverlayPath = appliedOverlayPath ?? approvals[index].AppliedOverlayPath
-        };
-        await SaveApprovalsAsync(threadId, runId, approvals, cancellationToken);
-        return true;
+            fileLock.Release();
+        }
     }
 
     private string AgentRoot => Path.Combine(_workspaceRoot, "agent");
@@ -312,6 +322,20 @@ public sealed class AgentStore
 
     private static async Task WriteJsonAsync<T>(string path, T value, CancellationToken cancellationToken)
     {
+        var fileLock = GetFileLock(path);
+        await fileLock.WaitAsync(cancellationToken);
+        try
+        {
+            await WriteJsonUnlockedAsync(path, value, cancellationToken);
+        }
+        finally
+        {
+            fileLock.Release();
+        }
+    }
+
+    private static async Task WriteJsonUnlockedAsync<T>(string path, T value, CancellationToken cancellationToken)
+    {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
         await File.WriteAllTextAsync(
@@ -324,6 +348,20 @@ public sealed class AgentStore
 
     private static async Task<T?> ReadJsonAsync<T>(string path, CancellationToken cancellationToken)
     {
+        var fileLock = GetFileLock(path);
+        await fileLock.WaitAsync(cancellationToken);
+        try
+        {
+            return await ReadJsonUnlockedAsync<T>(path, cancellationToken);
+        }
+        finally
+        {
+            fileLock.Release();
+        }
+    }
+
+    private static async Task<T?> ReadJsonUnlockedAsync<T>(string path, CancellationToken cancellationToken)
+    {
         if (!File.Exists(path))
         {
             return default;
@@ -334,6 +372,20 @@ public sealed class AgentStore
     }
 
     private static async Task<IReadOnlyList<T>> ReadJsonLinesAsync<T>(string path, CancellationToken cancellationToken)
+    {
+        var fileLock = GetFileLock(path);
+        await fileLock.WaitAsync(cancellationToken);
+        try
+        {
+            return await ReadJsonLinesUnlockedAsync<T>(path, cancellationToken);
+        }
+        finally
+        {
+            fileLock.Release();
+        }
+    }
+
+    private static async Task<IReadOnlyList<T>> ReadJsonLinesUnlockedAsync<T>(string path, CancellationToken cancellationToken)
     {
         if (!File.Exists(path))
         {
@@ -360,9 +412,28 @@ public sealed class AgentStore
 
     private static async Task AppendLineAsync(string path, string line, CancellationToken cancellationToken)
     {
+        var fileLock = GetFileLock(path);
+        await fileLock.WaitAsync(cancellationToken);
+        try
+        {
+            await AppendLineUnlockedAsync(path, line, cancellationToken);
+        }
+        finally
+        {
+            fileLock.Release();
+        }
+    }
+
+    private static async Task AppendLineUnlockedAsync(string path, string line, CancellationToken cancellationToken)
+    {
         var bytes = Encoding.UTF8.GetBytes(line + Environment.NewLine);
         await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
         await stream.WriteAsync(bytes, cancellationToken);
+    }
+
+    private static SemaphoreSlim GetFileLock(string path)
+    {
+        return FileLocks.GetOrAdd(Path.GetFullPath(path), _ => new SemaphoreSlim(1, 1));
     }
 
     private static async IAsyncEnumerable<string> ReadLinesSharedAsync(

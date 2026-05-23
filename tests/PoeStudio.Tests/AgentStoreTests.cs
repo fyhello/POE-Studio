@@ -19,7 +19,8 @@ public sealed class AgentStoreTests
             "workspace-write",
             "poe-studio",
             "C:/workspace",
-            "manual");
+            "manual",
+            "C:/Game/oo2core.dll");
         var thread = new AgentThreadDto(
             "thread-1",
             "profile-1",
@@ -91,6 +92,7 @@ public sealed class AgentStoreTests
 
         Assert.Contains("\"threadId\"", json);
         Assert.Contains("\"approvalMode\"", json);
+        Assert.Contains("\"oodlePath\"", json);
         Assert.Contains("\"taskKind\"", json);
     }
 

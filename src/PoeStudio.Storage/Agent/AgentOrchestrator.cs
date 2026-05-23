@@ -307,7 +307,7 @@ public sealed class AgentOrchestrator
 
     private static AgentSettingsDto DefaultSettings()
     {
-        return new AgentSettingsDto("codex", null, null, "workspace-write", "poe-studio", Environment.CurrentDirectory, "manual");
+        return new AgentSettingsDto("codex", null, null, "workspace-write", "poe-studio", Environment.CurrentDirectory, "manual", null);
     }
 
     private static string NewId(string prefix) => $"{prefix}-{Guid.NewGuid():N}";

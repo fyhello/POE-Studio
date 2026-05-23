@@ -71,7 +71,9 @@ public sealed class CodexJsonEventParser
         var server = GetString(item, "server") ?? "unknown-server";
         var tool = GetString(item, "tool") ?? "unknown-tool";
         var status = GetString(item, "status") ?? "unknown";
-        var error = GetString(item, "error") ?? GetString(item, "message");
+        var error = GetErrorMessage(item)
+            ?? GetString(item, "message")
+            ?? (IsFailedStatus(status) ? GetResultContentText(item) : null);
         var payload = new
         {
             server,
@@ -80,8 +82,7 @@ public sealed class CodexJsonEventParser
             status,
             error
         };
-        var failed = string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(status, "cancelled", StringComparison.OrdinalIgnoreCase)
+        var failed = IsFailedStatus(status)
             || !string.IsNullOrWhiteSpace(error);
         return new CodexParsedEvent(
             rawJson,
@@ -137,6 +138,53 @@ public sealed class CodexJsonEventParser
         return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
             : null;
+    }
+
+    private static string? GetErrorMessage(JsonElement element)
+    {
+        if (!element.TryGetProperty("error", out var property))
+        {
+            return null;
+        }
+
+        if (property.ValueKind == JsonValueKind.String)
+        {
+            return property.GetString();
+        }
+
+        if (property.ValueKind == JsonValueKind.Object)
+        {
+            return GetString(property, "message")
+                ?? GetString(property, "error")
+                ?? property.GetRawText();
+        }
+
+        return property.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+            ? null
+            : property.GetRawText();
+    }
+
+    private static bool IsFailedStatus(string status)
+    {
+        return string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, "cancelled", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? GetResultContentText(JsonElement element)
+    {
+        if (!element.TryGetProperty("result", out var result)
+            || result.ValueKind != JsonValueKind.Object
+            || !result.TryGetProperty("content", out var content)
+            || content.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        var messages = content.EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.Object ? GetString(item, "text") : null)
+            .Where(text => !string.IsNullOrWhiteSpace(text))
+            .ToArray();
+        return messages.Length == 0 ? null : string.Join(Environment.NewLine, messages);
     }
 
     private static string? TryGetRaw(JsonElement element, string propertyName)

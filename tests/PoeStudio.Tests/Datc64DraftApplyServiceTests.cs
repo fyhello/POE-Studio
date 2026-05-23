@@ -46,6 +46,62 @@ public sealed class Datc64DraftApplyServiceTests
     }
 
     [Fact]
+    public async Task ApplyAsync_writes_overlay_for_verified_offset_locator()
+    {
+        var fixture = await CreateFixtureAsync(locator: "offset:92;stringIndex:1", rowIndex: 0, columnIndex: 0);
+        var service = new Datc64DraftApplyService(fixture.Store, fixture.Overlay, fixture.ReadResourceAsync);
+
+        var result = await service.ApplyAsync(fixture.ThreadId, fixture.RunId, fixture.Approval.Id, CancellationToken.None);
+
+        Assert.True(result.Applied);
+        var entry = Assert.Single((await fixture.Overlay.ListAsync(fixture.ProfileId, CancellationToken.None)).Items);
+        var overlayBytes = await File.ReadAllBytesAsync(entry.OverlayPath);
+        var inspected = new PoeStudio.Core.Tables.TableInspector().Inspect(ReadResource(fixture.ProfileId, entry.NormalizedPath, overlayBytes.Length, entry.OverlayPath), overlayBytes, 4096);
+        Assert.Equal("魔力不足", inspected.Rows[0].Cells[3]);
+        var approvals = await fixture.Store.ListApprovalsAsync(fixture.ThreadId, fixture.RunId, CancellationToken.None);
+        Assert.Equal(AgentApprovalStatus.Applied, approvals[0].Status);
+    }
+
+    [Theory]
+    [InlineData("offset")]
+    [InlineData("raw-string")]
+    [InlineData("byte-cstring")]
+    public async Task ApplyAsync_writes_overlay_for_real_agent_ui_raw_string_candidates(string locatorKind)
+    {
+        var profileId = "e95b69836d7645689dd26496603bf8ae";
+        var resourcePath = "metadata/agent-ui.datc64";
+        var candidates = locatorKind == "offset"
+            ? new[]
+            {
+                Candidate("offset:40;stringIndex:0", 0, 0, "NoMana", "法力不足"),
+                Candidate("offset:47;stringIndex:1", 0, 0, "Not enough mana", "法力不足")
+            }
+            : new[]
+            {
+                Candidate(locatorKind == "raw-string" ? "raw-string:NoMana" : "byte:44;cstring:0;name:NoMana", 0, 0, "NoMana", "法力不足"),
+                Candidate(locatorKind == "raw-string" ? "raw-string:Not enough mana" : "byte:51;cstring:1;name:Not enough mana", 0, 0, "Not enough mana", "法力不足")
+            };
+        var fixture = await CreateFixtureAsync(
+            profileId: profileId,
+            resourcePath: resourcePath,
+            baseBytes: BuildAgentUiDatc64Data(),
+            candidates: candidates);
+        var service = new Datc64DraftApplyService(fixture.Store, fixture.Overlay, fixture.ReadResourceAsync);
+
+        var beforeOverlay = await fixture.Overlay.ListAsync(profileId, CancellationToken.None);
+        var result = await service.ApplyAsync(fixture.ThreadId, fixture.RunId, fixture.Approval.Id, CancellationToken.None);
+
+        Assert.True(result.Applied);
+        Assert.Empty(beforeOverlay.Items);
+        var entry = Assert.Single((await fixture.Overlay.ListAsync(profileId, CancellationToken.None)).Items);
+        Assert.Equal(resourcePath, entry.NormalizedPath);
+        var approvals = await fixture.Store.ListApprovalsAsync(fixture.ThreadId, fixture.RunId, CancellationToken.None);
+        Assert.Equal(AgentApprovalStatus.Applied, approvals[0].Status);
+        var events = await fixture.Store.ListEventsAsync(fixture.ThreadId, fixture.RunId, 0, CancellationToken.None);
+        Assert.Contains(events, item => item.Type == AgentEventType.OverlayDraftWritten);
+    }
+
+    [Fact]
     public async Task ApplyAsync_returns_locator_not_found_without_writing_overlay()
     {
         var fixture = await CreateFixtureAsync(rowIndex: 10);
@@ -56,6 +112,21 @@ public sealed class Datc64DraftApplyServiceTests
         Assert.False(result.Applied);
         Assert.Equal("locator_not_found", result.ErrorCode);
         Assert.Empty((await fixture.Overlay.ListAsync(fixture.ProfileId, CancellationToken.None)).Items);
+    }
+
+    [Fact]
+    public async Task ApplyAsync_returns_stable_error_and_keeps_pending_for_unwritable_offset_locator()
+    {
+        var fixture = await CreateFixtureAsync(locator: "offset:9999;stringIndex:1", rowIndex: 0, columnIndex: 0);
+        var service = new Datc64DraftApplyService(fixture.Store, fixture.Overlay, fixture.ReadResourceAsync);
+
+        var result = await service.ApplyAsync(fixture.ThreadId, fixture.RunId, fixture.Approval.Id, CancellationToken.None);
+
+        Assert.False(result.Applied);
+        Assert.Equal("locator_not_found", result.ErrorCode);
+        Assert.Empty((await fixture.Overlay.ListAsync(fixture.ProfileId, CancellationToken.None)).Items);
+        var approvals = await fixture.Store.ListApprovalsAsync(fixture.ThreadId, fixture.RunId, CancellationToken.None);
+        Assert.Equal(AgentApprovalStatus.Pending, approvals[0].Status);
     }
 
     [Fact]
@@ -71,13 +142,19 @@ public sealed class Datc64DraftApplyServiceTests
         Assert.Single((await fixture.Overlay.ListAsync(fixture.ProfileId, CancellationToken.None)).Items);
     }
 
-    private static async Task<Fixture> CreateFixtureAsync(int rowIndex = 0, string translatedText = "魔力不足")
+    private static async Task<Fixture> CreateFixtureAsync(
+        int rowIndex = 0,
+        int columnIndex = 3,
+        string? locator = null,
+        string translatedText = "魔力不足",
+        string profileId = "profile-1",
+        string resourcePath = "data/balance/traditional chinese/combatuiprompts.datc64",
+        byte[]? baseBytes = null,
+        IReadOnlyList<Datc64TranslationCandidate>? candidates = null)
     {
         var workspace = Path.Combine(Path.GetTempPath(), "poe-studio-datc64-apply-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workspace);
-        var profileId = "profile-1";
-        var resourcePath = "data/balance/traditional chinese/combatuiprompts.datc64";
-        var baseBytes = BuildDatc64PointerTableData([
+        baseBytes ??= BuildDatc64PointerTableData([
             ("NoMana", "法力不足"),
             ("OnCooldown", "冷却中")
         ]);
@@ -107,11 +184,12 @@ public sealed class Datc64DraftApplyServiceTests
             "datc64-translation",
             profileId,
             resourcePath,
+            candidates ??
             [
                 new Datc64TranslationCandidate(
-                    $"row:{rowIndex + 1};column:3;name:text_3 @12",
+                    locator ?? $"row:{rowIndex + 1};column:{columnIndex};name:text_{columnIndex} @{columnIndex * 4}",
                     rowIndex,
-                    3,
+                    columnIndex,
                     "法力不足",
                     translatedText,
                     0.9,
@@ -196,6 +274,43 @@ public sealed class Datc64DraftApplyServiceTests
         data[offset + 1] = (byte)((value >> 8) & 0xff);
         data[offset + 2] = (byte)((value >> 16) & 0xff);
         data[offset + 3] = (byte)((value >> 24) & 0xff);
+    }
+
+    private static Datc64TranslationCandidate Candidate(
+        string locator,
+        int rowIndex,
+        int columnIndex,
+        string sourceText,
+        string translatedText)
+    {
+        return new Datc64TranslationCandidate(locator, rowIndex, columnIndex, sourceText, translatedText, 0.9, null);
+    }
+
+    private static byte[] BuildAgentUiDatc64Data()
+    {
+        var data = new byte[67];
+        WriteUInt32(data, 0, 1);
+        WriteUInt32(data, 8, 8);
+        WriteUInt32(data, 16, 15);
+        Array.Fill(data, (byte)0xbb, 36, 8);
+        Encoding.ASCII.GetBytes("NoMana").CopyTo(data, 44);
+        Encoding.ASCII.GetBytes("Not enough mana").CopyTo(data, 51);
+        return data;
+    }
+
+    private static ResourceSummaryDto ReadResource(string profileId, string resourcePath, long size, string physicalPath)
+    {
+        return new ResourceSummaryDto(
+            Guid.NewGuid().ToString("N"),
+            profileId,
+            resourcePath,
+            resourcePath,
+            ".datc64",
+            ResourceKind.Table,
+            size,
+            physicalPath,
+            ResourceSourceLayer.Overlay,
+            DateTimeOffset.UtcNow);
     }
 
     private sealed record Fixture(

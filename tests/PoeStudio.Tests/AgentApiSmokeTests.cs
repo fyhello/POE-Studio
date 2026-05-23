@@ -313,7 +313,9 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
     public async Task Approval_apply_failure_keeps_approval_pending_so_user_can_reject()
     {
         var client = _factory.CreateClient();
-        _runner.Datc64RowIndex = 10;
+        _runner.Datc64Locator = "offset:9999;stringIndex:1";
+        _runner.Datc64RowIndex = 0;
+        _runner.Datc64ColumnIndex = 0;
         var profileId = "profile-1";
         var resourcePath = "metadata/example.datc64";
         var basePath = Path.Combine(_workspaceRoot, "fixtures", "bad-locator.datc64");
@@ -327,10 +329,13 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         var approval = Assert.Single(snapshot!.Data!.PendingApprovals);
 
         var approveResponse = await client.PostAsync($"/api/agent/approvals/{approval.Id}/approve", null);
+        var approvePayload = await approveResponse.Content.ReadFromJsonAsync<ApiResponse<AgentApprovalDto>>();
         var rejectResponse = await client.PostAsync($"/api/agent/approvals/{approval.Id}/reject", null);
         var rejected = await rejectResponse.Content.ReadFromJsonAsync<ApiResponse<AgentApprovalDto>>();
 
         Assert.Equal(HttpStatusCode.BadRequest, approveResponse.StatusCode);
+        Assert.False(approvePayload!.Ok);
+        Assert.Equal("locator_not_found", approvePayload.ErrorCode);
         Assert.Equal(HttpStatusCode.OK, rejectResponse.StatusCode);
         Assert.Equal(AgentApprovalStatus.Rejected, rejected!.Data!.Status);
     }
@@ -421,6 +426,8 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
     private sealed class FakeRunner : ICodexProcessRunner
     {
         public int Datc64RowIndex { get; set; }
+        public int Datc64ColumnIndex { get; set; } = 3;
+        public string? Datc64Locator { get; set; }
         public bool BlockUntilCancelled { get; set; }
         public bool BlockAfterFirstEvent { get; set; }
         public bool SawCancellation { get; set; }
@@ -457,6 +464,8 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
 
             var isDatc64 = prompt.Contains("datc64-translation", StringComparison.Ordinal);
             var rowIndex = Datc64RowIndex;
+            var columnIndex = Datc64ColumnIndex;
+            var locator = Datc64Locator ?? $"row:{rowIndex + 1};column:{columnIndex};name:text_{columnIndex} @{columnIndex * 4}";
             var final = isDatc64
                 ? $$"""
                   ```json
@@ -466,10 +475,10 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
                     "resourcePath": "metadata/example.datc64",
                     "candidates": [
                       {
-                        "locator": "row:{{rowIndex + 1}};column:3;name:text_3 @12",
+                        "locator": "{{locator}}",
                         "rowIndex": {{rowIndex}},
-                        "columnIndex": 3,
-                        "sourceText": "NoMana",
+                        "columnIndex": {{columnIndex}},
+                        "sourceText": "法力不足",
                         "translatedText": "法力不足",
                         "confidence": 0.86,
                         "notes": "test"

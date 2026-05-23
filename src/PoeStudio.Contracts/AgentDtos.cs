@@ -61,7 +61,8 @@ public sealed record AgentSettingsDto(
     string Sandbox,
     string McpServerName,
     string WorkingDirectory,
-    string ApprovalMode);
+    string ApprovalMode,
+    string? OodlePath = null);
 
 public sealed record AgentThreadDto(
     string Id,

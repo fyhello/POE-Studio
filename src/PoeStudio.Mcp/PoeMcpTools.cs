@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
+using PoeStudio.Core.Oodle;
 using PoeStudio.Core.Tables;
 using PoeStudio.Core.Workspace;
 using PoeStudio.Storage.Profiles;
@@ -10,61 +12,75 @@ namespace PoeStudio.Mcp;
 
 public static class PoeMcpTools
 {
+    private const int Datc64ExtractMaxBytes = 16 * 1024 * 1024;
+    private static readonly McpToolAnnotations ReadOnlyAnnotations = new(true, false);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public static void RegisterAll(McpToolRegistry registry, PoeWorkspaceResolution workspace)
+    public static void RegisterAll(
+        McpToolRegistry registry,
+        PoeWorkspaceResolution workspace,
+        NativeBundleResourceContentResolver? nativeContentResolver = null)
     {
+        nativeContentResolver ??= new NativeBundleResourceContentResolver(new MissingOodleCodec());
+
         registry.Register(
             new McpToolDefinition(
                 "poe_get_workspace",
                 "Return POE Studio workspace root, resolution source, data directory, and current process directory.",
-                ObjectSchema()),
+                ObjectSchema(),
+                ReadOnlyAnnotations),
             (_, _) => Task.FromResult(GetWorkspace(workspace)));
 
         registry.Register(
             new McpToolDefinition(
                 "poe_list_profiles",
                 "List POE Studio client profiles with ids, display names, client type, and workspace binding summary.",
-                ObjectSchema()),
+                ObjectSchema(),
+                ReadOnlyAnnotations),
             (_, cancellationToken) => ListProfilesAsync(workspace, cancellationToken));
 
         registry.Register(
             new McpToolDefinition(
                 "poe_get_profile",
                 "Return details for a single POE Studio client profile by profileId.",
-                ObjectSchema(("profileId", "string"))),
+                ObjectSchema(("profileId", "string")),
+                ReadOnlyAnnotations),
             (arguments, cancellationToken) => GetProfileAsync(workspace, arguments, cancellationToken));
 
         registry.Register(
             new McpToolDefinition(
                 "poe_get_index_status",
                 "Return resource index existence, resource count, index path, and last update details.",
-                ObjectSchema(("profileId", "string"))),
+                ObjectSchema(("profileId", "string")),
+                ReadOnlyAnnotations),
             (arguments, cancellationToken) => GetIndexStatusAsync(workspace, arguments, cancellationToken));
 
         registry.Register(
             new McpToolDefinition(
                 "poe_search_resources",
                 "Search indexed POE Studio resources by query and limit. Does not scan disk.",
-                ObjectSchema(("profileId", "string"), ("query", "string"), ("limit", "integer"))),
+                ObjectSchema(("profileId", "string"), ("query", "string"), ("limit", "integer")),
+                ReadOnlyAnnotations),
             (arguments, cancellationToken) => SearchResourcesAsync(workspace, arguments, cancellationToken));
 
         registry.Register(
             new McpToolDefinition(
                 "poe_read_resource",
-                "Read an indexed physical resource through the Stage 1 read-only boundary with maxBytes limits.",
-                ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("maxBytes", "integer"))),
-            (arguments, cancellationToken) => ReadResourceAsync(workspace, arguments, cancellationToken));
+                "Read an indexed physical, native-bundles2://, or ggpk-bundles2:// resource through the Stage 1 read-only boundary with maxBytes limits.",
+                ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("maxBytes", "integer"), ("oodlePath", "string")),
+                ReadOnlyAnnotations),
+            (arguments, cancellationToken) => ReadResourceAsync(workspace, nativeContentResolver, arguments, cancellationToken));
 
         registry.Register(
             new McpToolDefinition(
                 "poe_datc64_extract_translatable_cells",
                 "Extract translatable DATC64 or string-candidate cells through the Stage 1 read-only resource boundary.",
-                ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("limit", "integer"))),
-            (arguments, cancellationToken) => ExtractDatc64TranslatableCellsAsync(workspace, arguments, cancellationToken));
+                ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("limit", "integer"), ("oodlePath", "string")),
+                ReadOnlyAnnotations),
+            (arguments, cancellationToken) => ExtractDatc64TranslatableCellsAsync(workspace, nativeContentResolver, arguments, cancellationToken));
     }
 
     private static McpToolResult GetWorkspace(PoeWorkspaceResolution workspace)
@@ -195,6 +211,7 @@ public static class PoeMcpTools
 
     private static async Task<McpToolResult> ReadResourceAsync(
         PoeWorkspaceResolution workspace,
+        NativeBundleResourceContentResolver nativeContentResolver,
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
@@ -220,8 +237,13 @@ public static class PoeMcpTools
             return McpToolResult.Error($"Profile '{profileId}' was not found.");
         }
 
-        var read = await new PoeResourceContentReader(new ResourceIndexStore(workspaceRoot), GetAllowedPhysicalRoots(profile))
-            .ReadAsync(profileId, resourcePath, maxBytes, cancellationToken);
+        var oodlePath = ResolveOodlePath(arguments, profile);
+        var read = await new PoeResourceContentReader(
+                new ResourceIndexStore(workspaceRoot),
+                GetAllowedPhysicalRoots(profile),
+                profile,
+                nativeContentResolver)
+            .ReadAsync(profileId, resourcePath, maxBytes, oodlePath, cancellationToken);
 
         if (read.IsError)
         {
@@ -247,6 +269,7 @@ public static class PoeMcpTools
 
     private static async Task<McpToolResult> ExtractDatc64TranslatableCellsAsync(
         PoeWorkspaceResolution workspace,
+        NativeBundleResourceContentResolver nativeContentResolver,
         JsonElement arguments,
         CancellationToken cancellationToken)
     {
@@ -277,8 +300,13 @@ public static class PoeMcpTools
             return McpToolResult.Error($"Profile '{profileId}' was not found.");
         }
 
-        var read = await new PoeResourceContentReader(new ResourceIndexStore(workspaceRoot), GetAllowedPhysicalRoots(profile))
-            .ReadAsync(profileId, resourcePath, PoeResourceContentReader.AbsoluteMaxBytes, cancellationToken);
+        var oodlePath = ResolveOodlePath(arguments, profile);
+        var read = await new PoeResourceContentReader(
+                new ResourceIndexStore(workspaceRoot),
+                GetAllowedPhysicalRoots(profile),
+                profile,
+                nativeContentResolver)
+            .ReadAsync(profileId, resourcePath, Datc64ExtractMaxBytes, oodlePath, Datc64ExtractMaxBytes, cancellationToken);
         if (read.IsError)
         {
             return McpToolResult.Error($"{read.ErrorCode}: {read.ErrorMessage}");
@@ -463,6 +491,12 @@ public static class PoeMcpTools
                     }
 
                     var columnName = columnIndex < columns.Count ? columns[columnIndex] : $"column_{columnIndex}";
+                    if (!IsTranslatableColumn(columnName))
+                    {
+                        skipped++;
+                        continue;
+                    }
+
                     cells.Add(new
                     {
                         rowIndex = Math.Max(0, row.RowNumber - 1),
@@ -524,9 +558,45 @@ public static class PoeMcpTools
             return false;
         }
 
+        if (IsDatc64ReferenceSummary(trimmed))
+        {
+            return false;
+        }
+
         return !trimmed.Contains("://", StringComparison.Ordinal)
             && !trimmed.Contains('\\', StringComparison.Ordinal)
             && !(trimmed.Contains('/', StringComparison.Ordinal) && trimmed.Contains('.', StringComparison.Ordinal));
+    }
+
+    private static bool IsTranslatableColumn(string columnName)
+    {
+        var name = columnName.Split(' ', 2)[0].Trim();
+        return name.Equals("DisplayedName", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Description", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("WebsiteDescription", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Text", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("Name", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("text_", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("Name", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("Text", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith("Description", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDatc64ReferenceSummary(string value)
+    {
+        if (!value.StartsWith("[", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var close = value.IndexOf(']');
+        if (close <= 1 || close + 2 >= value.Length || value[close + 1] != ' ' || value[close + 2] != '@')
+        {
+            return false;
+        }
+
+        return value[1..close].All(char.IsDigit)
+            && value[(close + 3)..].All(char.IsDigit);
     }
 
     private static DateTimeOffset? GetDateTimeOffset(JsonElement root, string propertyName)
@@ -558,8 +628,25 @@ public static class PoeMcpTools
         JsonElement inputSchema)
     {
         registry.Register(
-            new McpToolDefinition(name, description, inputSchema),
+            new McpToolDefinition(name, description, inputSchema, ReadOnlyAnnotations),
             (_, _) => Task.FromResult(McpToolResult.Error($"Tool '{name}' is not implemented yet.")));
+    }
+
+    private static string? ResolveOodlePath(JsonElement arguments, ClientProfileDto profile)
+    {
+        if (TryGetString(arguments, "oodlePath", out var explicitOodlePath))
+        {
+            return explicitOodlePath;
+        }
+
+        var environmentOodlePath = Environment.GetEnvironmentVariable("POE_STUDIO_OODLE_PATH");
+        if (!string.IsNullOrWhiteSpace(environmentOodlePath))
+        {
+            return environmentOodlePath;
+        }
+
+        var detected = OodleDetector.Detect(profile.RootPath);
+        return detected.Status == OodleStatus.Found ? detected.Path : null;
     }
 
     private static JsonElement ObjectSchema(params (string Name, string Type)[] properties)

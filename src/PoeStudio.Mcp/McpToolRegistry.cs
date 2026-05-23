@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PoeStudio.Core.Native;
 
 namespace PoeStudio.Mcp;
 
@@ -43,11 +44,13 @@ public sealed class McpToolRegistry
         }
     }
 
-    public static McpToolRegistry CreateDefault(PoeWorkspaceResolution? workspace = null)
+    public static McpToolRegistry CreateDefault(
+        PoeWorkspaceResolution? workspace = null,
+        NativeBundleResourceContentResolver? nativeContentResolver = null)
     {
         workspace ??= new PoeWorkspaceResolution(false, null, "unresolved", "POE Studio workspace root is not configured.");
         var registry = new McpToolRegistry();
-        PoeMcpTools.RegisterAll(registry, workspace);
+        PoeMcpTools.RegisterAll(registry, workspace, nativeContentResolver);
         return registry;
     }
 
@@ -59,7 +62,12 @@ public sealed class McpToolRegistry
 public sealed record McpToolDefinition(
     string Name,
     string Description,
-    JsonElement InputSchema);
+    JsonElement InputSchema,
+    McpToolAnnotations? Annotations = null);
+
+public sealed record McpToolAnnotations(
+    bool ReadOnlyHint,
+    bool OpenWorldHint);
 
 public sealed record McpToolResult(
     IReadOnlyList<McpContent> Content,

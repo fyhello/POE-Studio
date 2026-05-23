@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
 using PoeStudio.Mcp;
 using PoeStudio.Storage.Profiles;
 using PoeStudio.Storage.Resources;
@@ -37,6 +38,67 @@ public sealed class McpDatc64ToolTests
         Assert.True(first.TryGetProperty("sourceText", out _));
         Assert.True(first.TryGetProperty("locator", out _));
         Assert.Contains("法力不足", payload.RootElement.GetProperty("cells").EnumerateArray().Select(cell => cell.GetProperty("sourceText").GetString()));
+        Assert.DoesNotContain("[2] @226", payload.RootElement.GetProperty("cells").EnumerateArray().Select(cell => cell.GetProperty("sourceText").GetString()));
+    }
+
+    [Fact]
+    public async Task Extract_translatable_cells_reads_native_bundles2_resource()
+    {
+        var root = CreateTempDirectory();
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var profile = CreateProfile("profile-1", root, bundles);
+        var resourcePath = "data/balance/traditional chinese/activeskills.datc64";
+        var data = BuildDatc64PointerTableData([
+            ("NoMana", "法力不足"),
+            ("OnCooldown", "冷却中")
+        ]);
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "skills.bundle.bin"), NativeBundleTestData.CreateBundle(data));
+        await SaveProfileAndResourcesAsync(
+            root,
+            profile,
+            Resource(profile.Id, resourcePath, ".datc64", ResourceKind.Table, data.Length, $"native-bundles2://skills.bundle.bin#offset=0&size={data.Length}"));
+        var registry = McpToolRegistry.CreateDefault(
+            new PoeWorkspaceResolution(true, root, "argument", null),
+            new NativeBundleResourceContentResolver(new CopyOodleCodec()));
+
+        var result = await registry.CallToolAsync(
+            "poe_datc64_extract_translatable_cells",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, resourcePath, limit = 10 }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal(resourcePath, payload.RootElement.GetProperty("resourcePath").GetString());
+        Assert.Contains("法力不足", payload.RootElement.GetProperty("cells").EnumerateArray().Select(cell => cell.GetProperty("sourceText").GetString()));
+    }
+
+    [Fact]
+    public async Task Extract_translatable_cells_reads_native_datc64_larger_than_read_resource_summary_limit()
+    {
+        var root = CreateTempDirectory();
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        var profile = CreateProfile("profile-1", root, bundles);
+        var resourcePath = "data/balance/traditional chinese/activeskills.datc64";
+        var data = BuildLargeDatc64PointerTableData("TailSkill", "尾部技能文本");
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "large-skills.bundle.bin"), NativeBundleTestData.CreateBundle(data));
+        await SaveProfileAndResourcesAsync(
+            root,
+            profile,
+            Resource(profile.Id, resourcePath, ".datc64", ResourceKind.Table, data.Length, $"native-bundles2://large-skills.bundle.bin#offset=0&size={data.Length}"));
+        var registry = McpToolRegistry.CreateDefault(
+            new PoeWorkspaceResolution(true, root, "argument", null),
+            new NativeBundleResourceContentResolver(new CopyOodleCodec()));
+
+        var result = await registry.CallToolAsync(
+            "poe_datc64_extract_translatable_cells",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, resourcePath, limit = 10 }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Contains("尾部技能文本", payload.RootElement.GetProperty("cells").EnumerateArray().Select(cell => cell.GetProperty("sourceText").GetString()));
     }
 
     [Fact]
@@ -100,18 +162,18 @@ public sealed class McpDatc64ToolTests
         return path;
     }
 
-    private static ClientProfileDto CreateProfile(string id, string root)
+    private static ClientProfileDto CreateProfile(string id, string root, string? bundles = null)
     {
         return new ClientProfileDto(
             Id: id,
             DisplayName: "Official",
             Platform: ClientPlatform.Official,
-            EntryKind: ClientEntryKind.Ggpk,
+            EntryKind: bundles is null ? ClientEntryKind.Ggpk : ClientEntryKind.Bundles2,
             RootPath: root,
-            ContentGgpkPath: Path.Combine(root, "Content.ggpk"),
-            Bundles2Path: null,
-            IndexPath: null,
-            OodleStatus: OodleStatus.Missing,
+            ContentGgpkPath: bundles is null ? Path.Combine(root, "Content.ggpk") : null,
+            Bundles2Path: bundles,
+            IndexPath: bundles is null ? null : Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: bundles is null ? OodleStatus.Missing : OodleStatus.Found,
             ClientFingerprint: "abc",
             CreatedAt: DateTimeOffset.UtcNow,
             UpdatedAt: DateTimeOffset.UtcNow);
@@ -187,5 +249,37 @@ public sealed class McpDatc64ToolTests
         var path = Path.Combine(Path.GetTempPath(), "poe-mcp-datc64-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    private static byte[] BuildLargeDatc64PointerTableData(string id, string text)
+    {
+        const int rowLength = 32;
+        var fixedData = new byte[rowLength];
+        using var variable = new MemoryStream();
+        variable.Write(new byte[] { 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb });
+        variable.Write(new byte[PoeResourceContentReader.AbsoluteMaxBytes + 4096]);
+
+        WriteUInt32(fixedData, 0, 0);
+        WriteUInt32(fixedData, 4, AppendDatc64String(variable, id));
+        WriteUInt32(fixedData, 8, 0);
+        WriteUInt32(fixedData, 12, AppendDatc64String(variable, text));
+
+        var variableData = variable.ToArray();
+        var data = new byte[4 + fixedData.Length + variableData.Length];
+        WriteUInt32(data, 0, 1);
+        fixedData.CopyTo(data, 4);
+        variableData.CopyTo(data, 4 + fixedData.Length);
+        return data;
+    }
+
+    private sealed class CopyOodleCodec : IOodleCodec
+    {
+        public bool IsAvailable => true;
+
+        public int Decompress(ReadOnlySpan<byte> compressed, Span<byte> output, int compressor)
+        {
+            compressed.CopyTo(output);
+            return compressed.Length;
+        }
     }
 }

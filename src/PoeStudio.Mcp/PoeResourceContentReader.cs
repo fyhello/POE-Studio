@@ -1,4 +1,5 @@
 using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
 using PoeStudio.Core.Patching;
 using PoeStudio.Storage.Resources;
 
@@ -11,8 +12,19 @@ public sealed class PoeResourceContentReader
 
     private readonly ResourceIndexStore resourceIndexStore;
     private readonly string[] allowedRoots;
+    private readonly ClientProfileDto? profile;
+    private readonly NativeBundleResourceContentResolver? nativeContentResolver;
 
     public PoeResourceContentReader(ResourceIndexStore resourceIndexStore, IEnumerable<string> allowedRoots)
+        : this(resourceIndexStore, allowedRoots, profile: null, nativeContentResolver: null)
+    {
+    }
+
+    public PoeResourceContentReader(
+        ResourceIndexStore resourceIndexStore,
+        IEnumerable<string> allowedRoots,
+        ClientProfileDto? profile,
+        NativeBundleResourceContentResolver? nativeContentResolver)
     {
         this.resourceIndexStore = resourceIndexStore;
         this.allowedRoots = allowedRoots
@@ -20,6 +32,8 @@ public sealed class PoeResourceContentReader
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+        this.profile = profile;
+        this.nativeContentResolver = nativeContentResolver;
     }
 
     public async Task<PoeResourceContentReadResult> ReadAsync(
@@ -28,11 +42,37 @@ public sealed class PoeResourceContentReader
         int maxBytes,
         CancellationToken cancellationToken)
     {
-        if (maxBytes is <= 0 or > AbsoluteMaxBytes)
+        return await ReadAsync(profileId, resourcePath, maxBytes, oodlePath: null, cancellationToken);
+    }
+
+    public async Task<PoeResourceContentReadResult> ReadAsync(
+        string profileId,
+        string resourcePath,
+        int maxBytes,
+        string? oodlePath,
+        CancellationToken cancellationToken)
+    {
+        return await ReadAsync(profileId, resourcePath, maxBytes, oodlePath, AbsoluteMaxBytes, cancellationToken);
+    }
+
+    public async Task<PoeResourceContentReadResult> ReadAsync(
+        string profileId,
+        string resourcePath,
+        int maxBytes,
+        string? oodlePath,
+        int maxAllowedBytes,
+        CancellationToken cancellationToken)
+    {
+        if (maxAllowedBytes is <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxAllowedBytes));
+        }
+
+        if (maxBytes <= 0 || maxBytes > maxAllowedBytes)
         {
             return PoeResourceContentReadResult.Error(
                 "invalid_max_bytes",
-                $"maxBytes must be between 1 and {AbsoluteMaxBytes}.");
+                $"maxBytes must be between 1 and {maxAllowedBytes}.");
         }
 
         ResourceSummaryDto? resource;
@@ -50,11 +90,41 @@ public sealed class PoeResourceContentReader
             return PoeResourceContentReadResult.Error("resource_not_found", $"Resource '{resourcePath}' was not found in the index.");
         }
 
-        if (IsNativeOrUnsupported(resource.PhysicalPath))
+        if (NativeBundleResourceContentResolver.IsNativeResource(resource))
+        {
+            if (!IsNativePhysicalPathAllowed(resource.PhysicalPath, out var nativePathError))
+            {
+                return nativePathError;
+            }
+
+            if (profile is null || nativeContentResolver is null)
+            {
+                return PoeResourceContentReadResult.Error(
+                    "native_resource_reader_unavailable",
+                    "Native Bundles2 or GGPK resources require a profile and native content resolver.");
+            }
+
+            var nativeRead = await nativeContentResolver.ReadAsync(profile, resource, oodlePath, cancellationToken);
+            if (!nativeRead.Ok)
+            {
+                return PoeResourceContentReadResult.Error(
+                    nativeRead.ErrorCode ?? "native_resource_read_failed",
+                    nativeRead.Message ?? "Native resource read failed.");
+            }
+
+            var count = Math.Min(maxBytes, nativeRead.Data.Length);
+            return PoeResourceContentReadResult.Success(
+                resource,
+                resource.PhysicalPath!,
+                nativeRead.Data.AsSpan(0, count).ToArray(),
+                nativeRead.Data.Length > count);
+        }
+
+        if (IsUnsupported(resource.PhysicalPath))
         {
             return PoeResourceContentReadResult.Error(
-                "native_resource_not_supported_in_stage1",
-                "Native Bundles2 or non-physical resources are not supported by Stage 1 MCP read tools.");
+                "unsupported_resource_path",
+                "Only physical files, native-bundles2://, and ggpk-bundles2:// resources are supported by MCP read tools.");
         }
 
         string fullPath;
@@ -83,11 +153,52 @@ public sealed class PoeResourceContentReader
         return PoeResourceContentReadResult.Success(resource, fullPath, bytes.Bytes, bytes.Truncated);
     }
 
-    private static bool IsNativeOrUnsupported(string? physicalPath)
+    private static bool IsUnsupported(string? physicalPath)
     {
         return string.IsNullOrWhiteSpace(physicalPath)
-            || NativeBundleLocationParser.TryParse(physicalPath, out _)
             || physicalPath.Contains("://", StringComparison.Ordinal);
+    }
+
+    private bool IsNativePhysicalPathAllowed(string? physicalPath, out PoeResourceContentReadResult error)
+    {
+        error = PoeResourceContentReadResult.Error("unused", "unused");
+        const string GgpkBundles2Scheme = "ggpk-bundles2://";
+        if (string.IsNullOrWhiteSpace(physicalPath)
+            || !physicalPath.StartsWith(GgpkBundles2Scheme, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var rest = physicalPath[GgpkBundles2Scheme.Length..];
+        var hashIndex = rest.IndexOf('#');
+        if (hashIndex <= 0)
+        {
+            error = PoeResourceContentReadResult.Error(
+                "invalid_ggpk_bundles2_resource_path",
+                "GGPK 内嵌 native 资源定位信息不合法。");
+            return false;
+        }
+
+        string ggpkPath;
+        try
+        {
+            ggpkPath = Path.GetFullPath(rest[..hashIndex]);
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            error = PoeResourceContentReadResult.Error("invalid_physical_path", exception.Message);
+            return false;
+        }
+
+        if (IsUnderAllowedRoot(ggpkPath))
+        {
+            return true;
+        }
+
+        error = PoeResourceContentReadResult.Error(
+            "physical_path_outside_allowed_roots",
+            $"GGPK resource path is outside the allowed profile roots: {ggpkPath}");
+        return false;
     }
 
     private bool IsUnderAllowedRoot(string fullPath)

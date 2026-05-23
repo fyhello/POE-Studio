@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using PoeStudio.Contracts;
 
 namespace PoeStudio.Core.Agent;
@@ -23,17 +24,27 @@ public interface ICodexProcessRunner
 public sealed class CodexProcessRunner : ICodexProcessRunner
 {
     private readonly CodexJsonEventParser _parser;
-    private readonly TimeSpan _noOutputTimeout;
+    private readonly TimeSpan _startupNoOutputTimeout;
+    private readonly TimeSpan _activeNoOutputTimeout;
 
     public CodexProcessRunner(CodexJsonEventParser parser)
-        : this(parser, TimeSpan.FromSeconds(30))
+        : this(parser, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(5))
     {
     }
 
     public CodexProcessRunner(CodexJsonEventParser parser, TimeSpan noOutputTimeout)
+        : this(parser, noOutputTimeout, noOutputTimeout)
+    {
+    }
+
+    public CodexProcessRunner(
+        CodexJsonEventParser parser,
+        TimeSpan startupNoOutputTimeout,
+        TimeSpan activeNoOutputTimeout)
     {
         _parser = parser;
-        _noOutputTimeout = noOutputTimeout;
+        _startupNoOutputTimeout = startupNoOutputTimeout;
+        _activeNoOutputTimeout = activeNoOutputTimeout;
     }
 
     public Task<CodexRunResult> RunAsync(
@@ -53,6 +64,7 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
         var events = new List<CodexParsedEvent>();
         var stderrLines = new List<string>();
         var lastOutputAt = DateTimeOffset.UtcNow;
+        var observedOutput = false;
         using var process = new Process
         {
             StartInfo = BuildStartInfo(settings, prompt),
@@ -65,6 +77,7 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
             {
                 events.Add(parsedEvent);
                 lastOutputAt = DateTimeOffset.UtcNow;
+                observedOutput = true;
             }
 
             if (onEvent is not null)
@@ -112,13 +125,19 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
                 break;
             }
 
-            if (!cancellationToken.IsCancellationRequested && DateTimeOffset.UtcNow - lastOutputAt > _noOutputTimeout)
+            TimeSpan timeout;
+            lock (events)
+            {
+                timeout = observedOutput ? _activeNoOutputTimeout : _startupNoOutputTimeout;
+            }
+
+            if (!cancellationToken.IsCancellationRequested && DateTimeOffset.UtcNow - lastOutputAt > timeout)
             {
                 timedOut = true;
                 await PublishAsync(new CodexParsedEvent(
                     string.Empty,
                     CodexParsedEventType.Error,
-                    $"No Codex output was observed for {_noOutputTimeout.TotalSeconds:0.#} seconds.",
+                    $"No Codex output was observed for {timeout.TotalSeconds:0.#} seconds.",
                     null,
                     true,
                     false,
@@ -176,6 +195,11 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
                 : settings.WorkingDirectory
         };
 
+        if (!string.IsNullOrWhiteSpace(settings.OodlePath))
+        {
+            startInfo.Environment["POE_STUDIO_OODLE_PATH"] = settings.OodlePath;
+        }
+
         if (IsFakePowerShell(settings.CodexPath, prompt))
         {
             foreach (var argument in SplitPowerShellArguments(prompt))
@@ -184,6 +208,19 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
             }
 
             return startInfo;
+        }
+
+        if (!string.IsNullOrWhiteSpace(settings.OodlePath))
+        {
+            startInfo.ArgumentList.Add("-c");
+            startInfo.ArgumentList.Add($"mcp_servers.{settings.McpServerName}.env.POE_STUDIO_OODLE_PATH={JsonSerializer.Serialize(settings.OodlePath)}");
+        }
+
+        var approvalMode = NormalizeApprovalMode(settings.ApprovalMode);
+        if (!string.IsNullOrWhiteSpace(approvalMode))
+        {
+            startInfo.ArgumentList.Add("-a");
+            startInfo.ArgumentList.Add(approvalMode);
         }
 
         startInfo.ArgumentList.Add("exec");
@@ -210,6 +247,24 @@ public sealed class CodexProcessRunner : ICodexProcessRunner
 
         startInfo.ArgumentList.Add(prompt);
         return startInfo;
+    }
+
+    private static string? NormalizeApprovalMode(string? approvalMode)
+    {
+        if (string.IsNullOrWhiteSpace(approvalMode))
+        {
+            return null;
+        }
+
+        return approvalMode.Trim().ToLowerInvariant() switch
+        {
+            "manual" => "on-request",
+            "on-request" => "on-request",
+            "never" => "never",
+            "untrusted" => "untrusted",
+            "on-failure" => "on-failure",
+            _ => null
+        };
     }
 
     private async Task ReadStdoutAsync(

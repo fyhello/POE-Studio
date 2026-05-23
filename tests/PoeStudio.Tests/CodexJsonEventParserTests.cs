@@ -41,6 +41,32 @@ public sealed class CodexJsonEventParserTests
     }
 
     [Fact]
+    public void ParseLine_extracts_mcp_error_message_from_error_object()
+    {
+        var parsed = _parser.ParseLine("""
+            {"type":"item.completed","item":{"type":"mcp_tool_call","server":"poe-studio","tool":"poe_get_workspace","arguments":{},"result":null,"error":{"message":"user cancelled MCP tool call"},"status":"failed"}}
+            """);
+
+        Assert.Equal(CodexParsedEventType.Error, parsed.EventType);
+        Assert.Contains("user cancelled MCP tool call", parsed.Message);
+        using var payload = JsonDocument.Parse(parsed.PayloadJson!);
+        Assert.Equal("user cancelled MCP tool call", payload.RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public void ParseLine_extracts_mcp_failure_message_from_result_content()
+    {
+        var parsed = _parser.ParseLine("""
+            {"type":"item.completed","item":{"type":"mcp_tool_call","server":"poe-studio","tool":"poe_datc64_extract_translatable_cells","arguments":{"limit":5},"result":{"content":[{"type":"text","text":"native_resource_not_supported_in_stage1: Native Bundles2 or non-physical resources are not supported by Stage 1 MCP read tools."}],"structured_content":null},"error":null,"status":"failed"}}
+            """);
+
+        Assert.Equal(CodexParsedEventType.Error, parsed.EventType);
+        Assert.Contains("native_resource_not_supported_in_stage1", parsed.Message);
+        using var payload = JsonDocument.Parse(parsed.PayloadJson!);
+        Assert.Contains("native_resource_not_supported_in_stage1", payload.RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
     public void ParseLine_extracts_agent_message()
     {
         var parsed = _parser.ParseLine("""

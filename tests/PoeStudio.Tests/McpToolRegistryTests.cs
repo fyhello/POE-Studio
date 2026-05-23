@@ -34,6 +34,21 @@ public sealed class McpToolRegistryTests
     }
 
     [Fact]
+    public void Tools_list_marks_stage1_tools_as_read_only()
+    {
+        var registry = McpToolRegistry.CreateDefault();
+
+        var tools = registry.ListTools().ToArray();
+
+        Assert.All(tools, tool =>
+        {
+            Assert.NotNull(tool.Annotations);
+            Assert.True(tool.Annotations!.ReadOnlyHint);
+            Assert.False(tool.Annotations.OpenWorldHint);
+        });
+    }
+
+    [Fact]
     public async Task Unknown_tool_call_returns_is_error_true()
     {
         var registry = McpToolRegistry.CreateDefault();

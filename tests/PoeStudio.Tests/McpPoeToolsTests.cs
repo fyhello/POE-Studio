@@ -1,5 +1,6 @@
 using System.Text.Json;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Native;
 using PoeStudio.Mcp;
 using PoeStudio.Storage.Profiles;
 using PoeStudio.Storage.Resources;
@@ -186,13 +187,43 @@ public sealed class McpPoeToolsTests
     }
 
     [Fact]
+    public async Task Read_resource_reads_native_bundles2_resource_through_mcp_tool()
+    {
+        var root = CreateTempDirectory();
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "bundle.bin"), NativeBundleTestData.CreateBundle([1, 2, 3, 4]));
+        var profile = CreateProfile("profile-1", root, bundles);
+        await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
+        await new ResourceIndexStore(root).SaveAsync(profile.Id, [
+            Resource(profile.Id, "metadata/native.datc64", ".datc64", ResourceKind.Table, "native-bundles2://bundle.bin#offset=1&size=2")
+        ], [], CancellationToken.None);
+        var registry = McpToolRegistry.CreateDefault(
+            new PoeWorkspaceResolution(true, root, "argument", null),
+            new NativeBundleResourceContentResolver(new CopyOodleCodec()));
+
+        var result = await registry.CallToolAsync(
+            "poe_read_resource",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, resourcePath = "metadata/native.datc64" }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal("base64", payload.RootElement.GetProperty("encoding").GetString());
+        Assert.Equal("AgM=", payload.RootElement.GetProperty("base64").GetString());
+    }
+
+    [Fact]
     public async Task Read_resource_returns_native_error_without_fabricated_content()
     {
         var root = CreateTempDirectory();
-        var profile = CreateProfile("profile-1", root);
+        var bundles = Path.Combine(root, "Bundles2");
+        Directory.CreateDirectory(bundles);
+        await File.WriteAllBytesAsync(Path.Combine(bundles, "bundle.bin"), NativeBundleTestData.CreateBundle([1, 2, 3, 4]));
+        var profile = CreateProfile("profile-1", root, bundles);
         await new ProfileStore(root).SaveAsync(profile, CancellationToken.None);
         await new ResourceIndexStore(root).SaveAsync(profile.Id, [
-            Resource(profile.Id, "metadata/native.datc64", ".datc64", ResourceKind.Table, "native-bundles2://bundle.bin#offset=0&size=12")
+            Resource(profile.Id, "metadata/native.datc64", ".datc64", ResourceKind.Table, "native-bundles2://bundle.bin#offset=0&size=2")
         ], [], CancellationToken.None);
         var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
 
@@ -202,7 +233,7 @@ public sealed class McpPoeToolsTests
             CancellationToken.None);
 
         Assert.True(result.IsError);
-        Assert.Contains("native_resource_not_supported_in_stage1", result.Content.Single().Text);
+        Assert.Contains("native_oodle_missing", result.Content.Single().Text);
     }
 
     [Fact]
@@ -241,19 +272,19 @@ public sealed class McpPoeToolsTests
         return JsonDocument.Parse(result.Content.Single().Text);
     }
 
-    private static ClientProfileDto CreateProfile(string id, string? root = null)
+    private static ClientProfileDto CreateProfile(string id, string? root = null, string? bundles = null)
     {
         var rootPath = root ?? "C:/Game";
         return new ClientProfileDto(
             Id: id,
             DisplayName: "Official",
             Platform: ClientPlatform.Official,
-            EntryKind: ClientEntryKind.Ggpk,
+            EntryKind: bundles is null ? ClientEntryKind.Ggpk : ClientEntryKind.Bundles2,
             RootPath: rootPath,
-            ContentGgpkPath: Path.Combine(rootPath, "Content.ggpk"),
-            Bundles2Path: null,
-            IndexPath: null,
-            OodleStatus: OodleStatus.Missing,
+            ContentGgpkPath: bundles is null ? Path.Combine(rootPath, "Content.ggpk") : null,
+            Bundles2Path: bundles,
+            IndexPath: bundles is null ? null : Path.Combine(bundles, "_.index.bin"),
+            OodleStatus: bundles is null ? OodleStatus.Missing : OodleStatus.Found,
             ClientFingerprint: "abc",
             CreatedAt: DateTimeOffset.UtcNow,
             UpdatedAt: DateTimeOffset.UtcNow);
@@ -284,5 +315,16 @@ public sealed class McpPoeToolsTests
         var path = Path.Combine(Path.GetTempPath(), "poe-mcp-tools-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(path);
         return path;
+    }
+
+    private sealed class CopyOodleCodec : IOodleCodec
+    {
+        public bool IsAvailable => true;
+
+        public int Decompress(ReadOnlySpan<byte> compressed, Span<byte> output, int compressor)
+        {
+            compressed.CopyTo(output);
+            return compressed.Length;
+        }
     }
 }
