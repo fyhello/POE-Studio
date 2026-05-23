@@ -14,7 +14,8 @@ public enum AgentRunStatus
     Succeeded = 3,
     Failed = 4,
     Cancelled = 5,
-    Rejected = 6
+    Rejected = 6,
+    WaitingForInput = 7
 }
 
 public enum AgentEventType
@@ -98,7 +99,11 @@ public sealed record AgentRunDto(
     string? ErrorMessage,
     string? ResultJson,
     string? ResourcePath = null,
-    string? OodlePath = null);
+    string? OodlePath = null,
+    string? RequestedTaskKind = null,
+    string? ResolvedTaskKind = null,
+    string? PlannerJson = null,
+    string? GuardJson = null);
 
 public sealed record AgentEventDto(
     string Id,
