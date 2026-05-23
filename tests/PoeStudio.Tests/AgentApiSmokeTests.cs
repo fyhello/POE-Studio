@@ -141,6 +141,55 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     [Fact]
+    public async Task Agent_run_auto_uses_codex_planner_and_reaches_datc64_approval()
+    {
+        var client = _factory.CreateClient();
+        var resourcePath = "data/balance/traditional chinese/activeskills.datc64";
+        await SaveProfileAndIndexedResourceAsync("profile-1", resourcePath);
+        _runner.EnqueuePlannerReady("datc64-translation", "profile-1", resourcePath);
+        _runner.EnqueueDatc64Proposal(resourcePath);
+
+        var thread = await CreateThreadAsync(client, "auto");
+        var response = await client.PostAsJsonAsync("/api/agent/runs", new AgentRunCreateRequest(
+            thread.Id,
+            thread.ProfileId,
+            "重新翻译刚才的表",
+            "auto",
+            resourcePath));
+
+        response.EnsureSuccessStatusCode();
+        var run = (await response.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>())!.Data!;
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.WaitingForApproval);
+
+        Assert.Equal("auto", run.RequestedTaskKind);
+        Assert.Equal("auto", run.TaskKind);
+        Assert.Equal("datc64-translation", run.ResolvedTaskKind);
+    }
+
+    [Fact]
+    public async Task Agent_run_auto_returns_waiting_for_input_when_planner_needs_clarification()
+    {
+        var client = _factory.CreateClient();
+        _runner.EnqueuePlannerClarification("请告诉我要翻译哪个资源路径，或先在资源列表中选中它。");
+
+        var thread = await CreateThreadAsync(client, "auto");
+        var response = await client.PostAsJsonAsync("/api/agent/runs", new AgentRunCreateRequest(
+            thread.Id,
+            thread.ProfileId,
+            "翻译这个表。",
+            "auto",
+            null));
+
+        response.EnsureSuccessStatusCode();
+        var run = (await response.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>())!.Data!;
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.WaitingForInput);
+        var events = await client.GetFromJsonAsync<ApiResponse<IReadOnlyList<AgentEventDto>>>($"/api/agent/runs/{run.Id}/events");
+
+        Assert.Equal(AgentRunStatus.WaitingForInput, run.Status);
+        Assert.Contains(events!.Data!, x => x.Message.Contains("请告诉我要翻译哪个资源路径", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Agent_settings_roundtrip()
     {
         var client = _factory.CreateClient();
@@ -504,6 +553,35 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
             CancellationToken.None);
     }
 
+    private async Task SaveProfileAndIndexedResourceAsync(string profileId, string resourcePath)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var basePath = Path.Combine(_workspaceRoot, "fixtures", resourcePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(basePath)!);
+        await File.WriteAllBytesAsync(basePath, BuildDatc64PointerTableData([("NoMana", "法力不足")]));
+        await using (var scope = _factory.Services.CreateAsyncScope())
+        {
+            var profiles = scope.ServiceProvider.GetRequiredService<PoeStudio.Storage.Profiles.ProfileStore>();
+            await profiles.SaveAsync(
+                new ClientProfileDto(
+                    profileId,
+                    "Target",
+                    ClientPlatform.Official,
+                    ClientEntryKind.Ggpk,
+                    _workspaceRoot,
+                    Path.Combine(_workspaceRoot, "Content.ggpk"),
+                    null,
+                    null,
+                    OodleStatus.Found,
+                    "fingerprint",
+                    now,
+                    now),
+                CancellationToken.None);
+        }
+
+        await SaveResourceIndexAsync(profileId, resourcePath, basePath);
+    }
+
     private sealed class FakeRunner : ICodexProcessRunner
     {
         public int Datc64RowIndex { get; set; }
@@ -513,8 +591,58 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
         public bool BlockAfterFirstEvent { get; set; }
         public bool SawCancellation { get; set; }
         public bool ThrowUnexpected { get; set; }
+        private readonly Queue<string> _queuedMessages = new();
         public List<string> Prompts { get; } = [];
         public List<string?> OodlePaths { get; } = [];
+
+        public void EnqueuePlannerReady(string resolvedTaskKind, string profileId, string resourcePath)
+        {
+            _queuedMessages.Enqueue($$"""
+                ```json
+                {
+                  "status": "ready",
+                  "requestedTaskKind": "auto",
+                  "resolvedTaskKind": "{{resolvedTaskKind}}",
+                  "profileId": "{{profileId}}",
+                  "resourcePath": "{{resourcePath}}",
+                  "summary": "Planner ready.",
+                  "userConstraints": [],
+                  "steps": [],
+                  "requiredApprovals": ["overlay_draft"],
+                  "warnings": [],
+                  "questions": [],
+                  "missingCapability": null
+                }
+                ```
+                """);
+        }
+
+        public void EnqueuePlannerClarification(string question)
+        {
+            _queuedMessages.Enqueue($$"""
+                ```json
+                {
+                  "status": "needs_clarification",
+                  "requestedTaskKind": "auto",
+                  "resolvedTaskKind": null,
+                  "profileId": "profile-1",
+                  "resourcePath": null,
+                  "summary": "Need more context.",
+                  "userConstraints": [],
+                  "steps": [],
+                  "requiredApprovals": [],
+                  "warnings": [],
+                  "questions": ["{{question}}"],
+                  "missingCapability": null
+                }
+                ```
+                """);
+        }
+
+        public void EnqueueDatc64Proposal(string resourcePath)
+        {
+            _queuedMessages.Enqueue(BuildDatc64Proposal(resourcePath, Datc64RowIndex, Datc64ColumnIndex, Datc64Locator));
+        }
 
         public async Task<CodexRunResult> RunAsync(
             AgentSettingsDto settings,
@@ -547,31 +675,26 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
                 }
             }
 
+            if (_queuedMessages.Count > 0)
+            {
+                var queued = _queuedMessages.Dequeue();
+                var queuedEvents = new[]
+                {
+                    new CodexParsedEvent("{}", CodexParsedEventType.AgentMessage, queued, "{}", true, false, null)
+                };
+                if (onEvent is not null)
+                {
+                    await onEvent(queuedEvents[0]);
+                }
+
+                return new CodexRunResult(0, false, false, queuedEvents, null);
+            }
+
             var isDatc64 = prompt.Contains("datc64-translation", StringComparison.Ordinal);
             var rowIndex = Datc64RowIndex;
             var columnIndex = Datc64ColumnIndex;
-            var locator = Datc64Locator ?? $"row:{rowIndex + 1};column:{columnIndex};name:text_{columnIndex} @{columnIndex * 4}";
             var final = isDatc64
-                ? $$"""
-                  ```json
-                  {
-                    "taskKind": "datc64-translation",
-                    "profileId": "profile-1",
-                    "resourcePath": "metadata/example.datc64",
-                    "candidates": [
-                      {
-                        "locator": "{{locator}}",
-                        "rowIndex": {{rowIndex}},
-                        "columnIndex": {{columnIndex}},
-                        "sourceText": "法力不足",
-                        "translatedText": "法力不足",
-                        "confidence": 0.86,
-                        "notes": "test"
-                      }
-                    ]
-                  }
-                  ```
-                  """
+                ? BuildDatc64Proposal("metadata/example.datc64", rowIndex, columnIndex, Datc64Locator)
                 : """
                   ```json
                   {"taskKind":"question","profileId":"profile-1","summary":"done","evidence":[]}
@@ -610,6 +733,31 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
             }
 
             return new CodexRunResult(0, false, false, events, null);
+        }
+
+        private static string BuildDatc64Proposal(string resourcePath, int rowIndex, int columnIndex, string? locatorOverride)
+        {
+            var locator = locatorOverride ?? $"row:{rowIndex + 1};column:{columnIndex};name:text_{columnIndex} @{columnIndex * 4}";
+            return $$"""
+                ```json
+                {
+                  "taskKind": "datc64-translation",
+                  "profileId": "profile-1",
+                  "resourcePath": "{{resourcePath}}",
+                  "candidates": [
+                    {
+                      "locator": "{{locator}}",
+                      "rowIndex": {{rowIndex}},
+                      "columnIndex": {{columnIndex}},
+                      "sourceText": "法力不足",
+                      "translatedText": "法力不足",
+                      "confidence": 0.86,
+                      "notes": "test"
+                    }
+                  ]
+                }
+                ```
+                """;
         }
     }
 

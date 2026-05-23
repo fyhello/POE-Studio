@@ -60,6 +60,9 @@ builder.Services.AddScoped(sp => new PatchOverlayDraftService(
 builder.Services.AddScoped(sp => new AgentStore(sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
 builder.Services.AddSingleton<CodexJsonEventParser>();
 builder.Services.AddSingleton<AgentPromptBuilder>();
+builder.Services.AddSingleton<AgentPlannerPromptBuilder>();
+builder.Services.AddSingleton<AgentTaskPlanParser>();
+builder.Services.AddScoped<AgentPlanGuardService>();
 builder.Services.AddSingleton<Datc64TranslationDraftParser>();
 builder.Services.AddSingleton<AgentRepositoryRootResolver>();
 builder.Services.AddScoped<AgentProjectContextService>();

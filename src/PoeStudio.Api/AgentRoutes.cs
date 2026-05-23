@@ -58,16 +58,13 @@ public static class AgentRoutes
 
         app.MapPost("/api/agent/threads", async (AgentThreadCreateRequest request, AgentStore store, CancellationToken cancellationToken) =>
         {
-            try
+            if (!AgentTaskKindPolicy.IsSupportedRequestTaskKind(request.TaskKind))
             {
-                AgentCapabilities.GetRequired(request.TaskKind);
-                var thread = await store.SaveNewThreadAsync(request.ProfileId, request.Title, request.Goal, request.TaskKind, cancellationToken);
-                return Results.Ok(ApiResponse<AgentThreadDto>.Success(thread));
+                return Results.BadRequest(ApiResponse<AgentThreadDto>.Failure("unsupported_task_kind", "unsupported_task_kind"));
             }
-            catch (ArgumentException ex)
-            {
-                return Results.BadRequest(ApiResponse<AgentThreadDto>.Failure(ex.Message, ex.Message));
-            }
+
+            var thread = await store.SaveNewThreadAsync(request.ProfileId, request.Title, request.Goal, request.TaskKind, cancellationToken);
+            return Results.Ok(ApiResponse<AgentThreadDto>.Success(thread));
         });
 
         app.MapPost("/api/agent/threads/{threadId}/messages", async (
@@ -124,13 +121,16 @@ public static class AgentRoutes
         {
             try
             {
-                if (string.Equals(request.TaskKind, "datc64-translation", StringComparison.Ordinal)
+                if (!AgentTaskKindPolicy.IsAuto(request.TaskKind)
+                    && string.Equals(request.TaskKind, "datc64-translation", StringComparison.Ordinal)
                     && string.IsNullOrWhiteSpace(request.ResourcePath))
                 {
                     return Results.BadRequest(ApiResponse<AgentRunDto>.Failure("resource_path_required", "resourcePath is required for datc64-translation."));
                 }
 
-                var run = await orchestrator.StartRunShellAsync(request.ThreadId, request.ProfileId, request.Goal, request.TaskKind, request.ResourcePath, request.OodlePath, cancellationToken);
+                var run = AgentTaskKindPolicy.IsAuto(request.TaskKind)
+                    ? await orchestrator.StartAutoRunShellAsync(request.ThreadId, request.ProfileId, request.Goal, request.ResourcePath, request.OodlePath, cancellationToken)
+                    : await orchestrator.StartRunShellAsync(request.ThreadId, request.ProfileId, request.Goal, request.TaskKind, request.ResourcePath, request.OodlePath, cancellationToken);
                 StartBackgroundRun(run.Id, cancellations, scopeFactory);
                 return Results.Ok(ApiResponse<AgentRunDto>.Success(run));
             }

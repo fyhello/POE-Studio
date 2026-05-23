@@ -737,7 +737,7 @@ git commit -m "feat(agent): run auto tasks through codex planner"
 - 修改：`src/PoeStudio.Api/Program.cs`
 - 修改：`tests/PoeStudio.Tests/AgentApiSmokeTests.cs`
 
-- [ ] **步骤 1：运行影响分析**
+- [x] **步骤 1：运行影响分析**
 
 ```text
 mcp__gitnexus__api_impact({
@@ -748,7 +748,7 @@ mcp__gitnexus__api_impact({
 
 记录消费者与响应字段风险。
 
-- [ ] **步骤 2：编写失败测试：API auto 翻译进入审批**
+- [x] **步骤 2：编写失败测试：API auto 翻译进入审批**
 
 在 `AgentApiSmokeTests.cs` 新增：
 
@@ -780,11 +780,11 @@ public async Task Agent_run_auto_uses_codex_planner_and_reaches_datc64_approval(
 }
 ```
 
-- [ ] **步骤 3：编写失败测试：API clarification 返回可恢复状态**
+- [x] **步骤 3：编写失败测试：API clarification 返回可恢复状态**
 
 fake planner 返回 `needs_clarification`。断言 run 为 `WaitingForInput`，snapshot 中可看到 question event。
 
-- [ ] **步骤 4：实现 API 分流**
+- [x] **步骤 4：实现 API 分流**
 
 `POST /api/agent/runs`：
 
@@ -799,7 +799,7 @@ fake planner 返回 `needs_clarification`。断言 run 为 `WaitingForInput`，s
 - `auto` 可以创建 thread，但仍不能作为执行 capability。
 - unsupported 仍返回 `unsupported_task_kind`。
 
-- [ ] **步骤 5：运行 API 测试**
+- [x] **步骤 5：运行 API 测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~AgentApiSmokeTests
@@ -807,7 +807,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 6：Commit**
+- [x] **步骤 6：Commit**
 
 ```powershell
 git add src\PoeStudio.Api\AgentRoutes.cs src\PoeStudio.Api\Program.cs tests\PoeStudio.Tests\AgentApiSmokeTests.cs
