@@ -824,7 +824,7 @@ git commit -m "feat(agent): expose auto planner runs"
 - 修改：`src/PoeStudio.Api/wwwroot/styles.css`
 - 修改：`tests/PoeStudio.Tests/FrontendAgentWorkspaceTests.cs`
 
-- [ ] **步骤 1：编写失败测试：默认任务类型是 auto**
+- [x] **步骤 1：编写失败测试：默认任务类型是 auto**
 
 在 `FrontendAgentWorkspaceTests.cs` 更新或新增断言：
 
@@ -834,7 +834,7 @@ Assert.DoesNotContain("<option value=\"question\">自动/提问</option>", html)
 Assert.Contains("taskKind = $(\"agentTaskKindSelect\").value || \"auto\"", js);
 ```
 
-- [ ] **步骤 2：编写失败测试：auto 会携带当前资源上下文**
+- [x] **步骤 2：编写失败测试：auto 会携带当前资源上下文**
 
 断言 `app.js` 不再只有 DATC64 才传 resourcePath：
 
@@ -843,7 +843,7 @@ Assert.Contains("selectedResourcePath", js);
 Assert.DoesNotContain("resourcePath: taskKind === \"datc64-translation\" ? resourcePath : null", js);
 ```
 
-- [ ] **步骤 3：修改 HTML**
+- [x] **步骤 3：修改 HTML**
 
 任务类型选择：
 
@@ -856,7 +856,7 @@ Assert.DoesNotContain("resourcePath: taskKind === \"datc64-translation\" ? resou
 
 高级选择可以保留，但默认 UI 文案必须让用户知道「自动规划」是主入口。
 
-- [ ] **步骤 4：修改 JS**
+- [x] **步骤 4：修改 JS**
 
 `startAgentRun` 逻辑：
 
@@ -866,7 +866,7 @@ Assert.DoesNotContain("resourcePath: taskKind === \"datc64-translation\" ? resou
 - 展示 run 的 `requestedTaskKind`、`resolvedTaskKind`、Planner/Guard events。
 - `WaitingForInput` 状态展示 clarification question，不显示失败。
 
-- [ ] **步骤 5：运行前端 smoke 测试**
+- [x] **步骤 5：运行前端 smoke 测试**
 
 ```powershell
 dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter FullyQualifiedName~FrontendAgentWorkspaceTests
@@ -874,7 +874,7 @@ dotnet test tests\PoeStudio.Tests\PoeStudio.Tests.csproj --no-restore --filter F
 
 预期：PASS。
 
-- [ ] **步骤 6：Commit**
+- [x] **步骤 6：Commit**
 
 ```powershell
 git add src\PoeStudio.Api\wwwroot\index.html src\PoeStudio.Api\wwwroot\app.js src\PoeStudio.Api\wwwroot\styles.css tests\PoeStudio.Tests\FrontendAgentWorkspaceTests.cs

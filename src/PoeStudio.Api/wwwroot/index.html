@@ -540,9 +540,10 @@
 
         <div class="agent-run-composer">
           <select id="agentTaskKindSelect" aria-label="任务类型">
-            <option value="question">自动/提问</option>
-            <option value="read-only-analysis">只读分析</option>
-            <option value="datc64-translation">DATC64 翻译</option>
+            <option value="auto" selected>自动规划</option>
+            <option value="question">强制提问</option>
+            <option value="read-only-analysis">强制只读分析</option>
+            <option value="datc64-translation">强制 DATC64 翻译</option>
           </select>
           <textarea id="agentGoalInput" spellcheck="false" placeholder="告诉 Agent 你要完成什么"></textarea>
           <input id="agentResourcePathInput" type="text" spellcheck="false" placeholder="可选：资源路径">

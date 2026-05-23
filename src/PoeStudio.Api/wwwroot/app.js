@@ -5382,7 +5382,7 @@ function bind() {
 // === Agent Workspace Functions ===
 
 function agentRunStatusText(status) {
-  const map = { 0: "Queued", 1: "Running", 2: "WaitingForApproval", 3: "Succeeded", 4: "Failed", 5: "Cancelled", 6: "Rejected" };
+  const map = { 0: "Queued", 1: "Running", 2: "WaitingForApproval", 3: "Succeeded", 4: "Failed", 5: "Cancelled", 6: "Rejected", 7: "WaitingForInput" };
   return typeof status === "string" ? status : (map[status] || String(status));
 }
 
@@ -5484,9 +5484,10 @@ function renderAgentRunStatus(run) {
     return;
   }
   const statusName = agentRunStatusText(run.status);
-  $("agentCurrentRunStatus").textContent = `${statusName} · ${run.progressPercent}% · ${run.message}`;
+  const resolved = run.resolvedTaskKind ? ` · ${run.requestedTaskKind || run.taskKind} -> ${run.resolvedTaskKind}` : "";
+  $("agentCurrentRunStatus").textContent = `${statusName} · ${run.progressPercent}% · ${run.message}${resolved}`;
   $("agentCancelRunBtn").disabled = ![0, 1].includes(run.status);
-  $("agentRetryRunBtn").disabled = ![3, 4, 5, 6].includes(run.status);
+  $("agentRetryRunBtn").disabled = ![3, 4, 5, 6, 7].includes(run.status);
   if (run.errorMessage) {
     $("agentCurrentRunStatus").textContent += ` · 错误: ${run.errorCode || ""} ${run.errorMessage}`;
   }
@@ -5564,7 +5565,14 @@ function renderAgentApprovals(approvals) {
 
 function renderAgentResult(run) {
   $("agentResultPanel").textContent = run
-    ? (run.resultJson || run.errorMessage || run.message || "暂无结果")
+    ? (run.plannerJson || run.guardJson
+        ? [
+          run.plannerJson ? `Planner:\n${run.plannerJson}` : null,
+          run.guardJson ? `Guard:\n${run.guardJson}` : null,
+          run.resultJson ? `Result:\n${run.resultJson}` : null,
+          run.errorMessage ? `Error:\n${run.errorMessage}` : null
+        ].filter(Boolean).join("\n\n")
+        : (run.resultJson || run.errorMessage || run.message || "暂无结果"))
     : "暂无运行结果";
 }
 
@@ -5575,9 +5583,9 @@ async function startAgentRun() {
     return;
   }
 
-  const taskKind = $("agentTaskKindSelect").value || "question";
+  const taskKind = $("agentTaskKindSelect").value || "auto";
   const profileId = targetProfileId();
-  const resourcePath = $("agentResourcePathInput").value.trim() || state.selectedResource?.virtualPath || null;
+  const selectedResourcePath = $("agentResourcePathInput").value.trim() || state.selectedResource?.virtualPath || null;
   const threadTitle = goal.length > 32 ? `${goal.slice(0, 32)}...` : goal;
 
   let thread = state.agent.snapshot?.thread || null;
@@ -5594,7 +5602,7 @@ async function startAgentRun() {
 
   await api(`/api/agent/threads/${encodeURIComponent(thread.id)}/messages`, {
     content: goal,
-    attachments: resourcePath ? [resourcePath] : null
+    attachments: selectedResourcePath ? [selectedResourcePath] : null
   });
 
   const run = await api("/api/agent/runs", {
@@ -5602,7 +5610,7 @@ async function startAgentRun() {
     profileId,
     goal,
     taskKind,
-    resourcePath: taskKind === "datc64-translation" ? resourcePath : null,
+    resourcePath: selectedResourcePath,
     oodlePath: currentOodlePath()
   });
 
@@ -5619,7 +5627,7 @@ function startAgentEventPolling() {
   }
 
   const run = state.agent.currentRun;
-  if (!run || ["Succeeded", "Failed", "Cancelled", "Rejected"].includes(agentRunStatusText(run.status))) {
+  if (!run || ["WaitingForApproval", "WaitingForInput", "Succeeded", "Failed", "Cancelled", "Rejected"].includes(agentRunStatusText(run.status))) {
     return;
   }
 
@@ -5651,7 +5659,7 @@ async function pollAgentEvents() {
   const freshRun = await api(`/api/agent/runs/${encodeURIComponent(run.id)}`);
   state.agent.currentRun = freshRun;
   renderAgentRunStatus(freshRun);
-  if ([2, 3, 4, 5, 6].includes(freshRun.status)) {
+  if ([2, 3, 4, 5, 6, 7].includes(freshRun.status)) {
     clearInterval(state.agent.eventTimer);
     state.agent.eventTimer = null;
     await loadAgentSnapshot(freshRun.threadId);

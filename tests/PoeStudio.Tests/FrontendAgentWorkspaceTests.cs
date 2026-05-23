@@ -45,7 +45,7 @@ public sealed class FrontendAgentWorkspaceTests
         Assert.Contains("agentGoalInput", js);
         Assert.Contains("agentTaskKindSelect", js);
         Assert.Contains("agentResourcePathInput", js);
-        Assert.Contains("datc64-translation", js);
+        Assert.Contains("taskKind = $(\"agentTaskKindSelect\").value || \"auto\"", js);
     }
 
     [Fact]
@@ -54,7 +54,20 @@ public sealed class FrontendAgentWorkspaceTests
         var js = await File.ReadAllTextAsync(Path.Combine(FindRepositoryRoot(), "src", "PoeStudio.Api", "wwwroot", "app.js"));
 
         Assert.Contains("oodlePath: currentOodlePath()", js);
-        Assert.Contains("resourcePath: taskKind === \"datc64-translation\" ? resourcePath : null", js);
+        Assert.Contains("selectedResourcePath", js);
+        Assert.DoesNotContain("resourcePath: taskKind === \"datc64-translation\" ? resourcePath : null", js);
+    }
+
+    [Fact]
+    public async Task Agent_workspace_defaults_to_auto_planner()
+    {
+        var root = FindRepositoryRoot();
+        var html = await File.ReadAllTextAsync(Path.Combine(root, "src", "PoeStudio.Api", "wwwroot", "index.html"));
+        var js = await File.ReadAllTextAsync(Path.Combine(root, "src", "PoeStudio.Api", "wwwroot", "app.js"));
+
+        Assert.Contains("<option value=\"auto\" selected>自动规划</option>", html);
+        Assert.DoesNotContain("<option value=\"question\">自动/提问</option>", html);
+        Assert.Contains("taskKind = $(\"agentTaskKindSelect\").value || \"auto\"", js);
     }
 
     [Fact]
