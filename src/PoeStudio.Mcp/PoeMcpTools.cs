@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PoeStudio.Contracts;
+using PoeStudio.Core.Agent;
 using PoeStudio.Core.Native;
 using PoeStudio.Core.Oodle;
 using PoeStudio.Core.Tables;
@@ -81,6 +82,33 @@ public static class PoeMcpTools
                 ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("limit", "integer"), ("oodlePath", "string")),
                 ReadOnlyAnnotations),
             (arguments, cancellationToken) => ExtractDatc64TranslatableCellsAsync(workspace, nativeContentResolver, arguments, cancellationToken));
+
+        registry.Register(
+            new McpToolDefinition(
+                "poe_get_project_context",
+                "Return summarized POE Studio project workflow context, source metadata, tool boundaries, risk boundaries, and unknowns.",
+                ObjectSchema(("taskKind", "string"), ("goal", "string"), ("resourcePath", "string"), ("repositoryRoot", "string")),
+                ReadOnlyAnnotations),
+            (arguments, cancellationToken) => GetProjectContextAsync(arguments, cancellationToken));
+    }
+
+    private static async Task<McpToolResult> GetProjectContextAsync(
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        var taskKind = TryGetString(arguments, "taskKind", out var taskKindValue) ? taskKindValue : "question";
+        var goal = TryGetString(arguments, "goal", out var goalValue) ? goalValue : string.Empty;
+        var resourcePath = TryGetString(arguments, "resourcePath", out var resourcePathValue) ? resourcePathValue : null;
+        var repositoryRoot = TryGetString(arguments, "repositoryRoot", out var repositoryRootValue) ? repositoryRootValue : null;
+        var resolver = new AgentRepositoryRootResolver(repositoryRoot);
+        var context = await new AgentProjectContextService(resolver).BuildAsync(
+            taskKind,
+            goal,
+            resourcePath,
+            repositoryRoot,
+            cancellationToken);
+
+        return JsonSuccess(context);
     }
 
     private static McpToolResult GetWorkspace(PoeWorkspaceResolution workspace)

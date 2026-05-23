@@ -10,21 +10,21 @@ public static class AgentCapabilities
             "question",
             "Question",
             AgentCapabilityKind.ReadOnly,
-            ["poe_get_workspace", "poe_list_profiles"],
+            ["poe_get_project_context", "poe_get_workspace", "poe_list_profiles"],
             false,
             "agentQuestionResult"),
         new(
             "read-only-analysis",
             "Read-only analysis",
             AgentCapabilityKind.ReadOnly,
-            ["poe_get_workspace", "poe_search_resources", "poe_read_resource"],
+            ["poe_get_project_context", "poe_get_workspace", "poe_search_resources", "poe_read_resource"],
             false,
             "agentReadOnlyAnalysisResult"),
         new(
             "datc64-translation",
             "DATC64 translation",
             AgentCapabilityKind.WriteWithApproval,
-            ["poe_datc64_extract_translatable_cells", "poe_read_resource"],
+            ["poe_get_project_context", "poe_datc64_extract_translatable_cells", "poe_read_resource"],
             true,
             "datc64TranslationProposal")
     ];

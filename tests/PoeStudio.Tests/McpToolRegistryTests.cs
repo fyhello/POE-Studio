@@ -13,7 +13,8 @@ public sealed class McpToolRegistryTests
         "poe_get_index_status",
         "poe_search_resources",
         "poe_read_resource",
-        "poe_datc64_extract_translatable_cells"
+        "poe_datc64_extract_translatable_cells",
+        "poe_get_project_context"
     ];
 
     [Fact]

@@ -33,4 +33,12 @@ public sealed class AgentCapabilitiesTests
         Assert.True(capability.RequiresApproval);
         Assert.Contains("poe_datc64_extract_translatable_cells", capability.RequiredMcpTools);
     }
+
+    [Fact]
+    public void Registry_includes_project_context_tool_for_all_capabilities()
+    {
+        Assert.All(
+            AgentCapabilities.All,
+            capability => Assert.Contains("poe_get_project_context", capability.RequiredMcpTools));
+    }
 }
