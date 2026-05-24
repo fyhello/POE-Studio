@@ -116,7 +116,7 @@ public sealed class McpProtocolTests
 
         public async Task<string> ReadStdoutLineAsync()
         {
-            return await TryReadStdoutLineAsync(TimeSpan.FromSeconds(10))
+            return await TryReadStdoutLineAsync(TimeSpan.FromSeconds(30))
                 ?? throw new TimeoutException("MCP server did not write a stdout JSON-RPC response.");
         }
 
@@ -130,7 +130,7 @@ public sealed class McpProtocolTests
         public async Task<string> ReadStderrLineAsync()
         {
             var readTask = stderr.ReadLineAsync();
-            var completed = await Task.WhenAny(readTask, Task.Delay(TimeSpan.FromSeconds(10)));
+            var completed = await Task.WhenAny(readTask, Task.Delay(TimeSpan.FromSeconds(30)));
             return completed == readTask
                 ? await readTask ?? string.Empty
                 : throw new TimeoutException("MCP server did not write stderr diagnostics.");

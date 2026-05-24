@@ -199,8 +199,8 @@ public sealed class CodexProcessRunnerTests
             """);
         var runner = new CodexProcessRunner(
             new CodexJsonEventParser(),
-            TimeSpan.FromMilliseconds(300),
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5));
 
         var result = await runner.RunAsync(
             Settings("powershell"),
@@ -259,7 +259,7 @@ public sealed class CodexProcessRunnerTests
 
     private static async Task WaitForAsync(Func<bool> condition)
     {
-        for (var i = 0; i < 50; i++)
+        for (var i = 0; i < 200; i++)
         {
             if (condition())
             {

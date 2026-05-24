@@ -282,6 +282,71 @@ public sealed class AgentOrchestratorTests
     }
 
     [Fact]
+    public async Task ContinueRunAsync_auto_uses_planner_resolved_profile_for_datc64_approval()
+    {
+        var workspace = CreateWorkspace();
+        var store = new AgentStore(workspace);
+        await store.SaveSettingsAsync(Settings(workspace) with { OodlePath = await CreateOodleAsync(workspace) }, CancellationToken.None);
+        await SaveProfileAndIndexedResourceAsync(workspace, "profile-source", "metadata/source.datc64");
+        await SaveProfileAndIndexedResourceAsync(workspace, "profile-target", "metadata/target.datc64");
+        var runner = new QueueRunner(
+            """
+            ```json
+            {
+              "status": "ready",
+              "requestedTaskKind": "auto",
+              "resolvedTaskKind": "datc64-translation",
+              "profileId": "profile-target",
+              "resourcePath": "metadata/target.datc64",
+              "summary": "Translate with the target profile.",
+              "userConstraints": [],
+              "steps": [],
+              "requiredApprovals": ["overlay_draft"],
+              "warnings": [],
+              "questions": [],
+              "missingCapability": null
+            }
+            ```
+            """,
+            """
+            ```json
+            {
+              "taskKind": "datc64-translation",
+              "profileId": "profile-target",
+              "resourcePath": "metadata/target.datc64",
+              "candidates": [
+                {
+                  "locator": "row:1;column:3;name:text_3 @12",
+                  "rowIndex": 0,
+                  "columnIndex": 3,
+                  "sourceText": "NoMana",
+                  "translatedText": "法力不足",
+                  "confidence": 0.86,
+                  "notes": "test"
+                }
+              ]
+            }
+            ```
+            """);
+        var orchestrator = CreateOrchestrator(store, workspace, runner);
+        var thread = await store.SaveNewThreadAsync("profile-source", "Task", "Goal", "auto", CancellationToken.None);
+
+        var shell = await orchestrator.StartAutoRunShellAsync(thread.Id, "profile-source", "用国际服-目标翻译", null, null, CancellationToken.None);
+        var run = await orchestrator.ContinueRunAsync(shell.Id, CancellationToken.None);
+
+        Assert.Equal("profile-target", run.ProfileId);
+        Assert.Equal("profile-target", run.GuardJson is null ? null : System.Text.Json.JsonDocument.Parse(run.GuardJson).RootElement.GetProperty("profileId").GetString());
+        var approval = Assert.Single(await store.ListApprovalsAsync(thread.Id, run.Id, CancellationToken.None));
+        Assert.Equal("profile-target", approval.ProfileId);
+        var proposal = new Datc64TranslationDraftParser().Parse(
+            $"```json{Environment.NewLine}{approval.ProposalJson}{Environment.NewLine}```",
+            "profile-target",
+            "metadata/target.datc64");
+        Assert.Equal("profile-target", proposal.ProfileId);
+        Assert.Equal("metadata/target.datc64", proposal.ResourcePath);
+    }
+
+    [Fact]
     public async Task ContinueRunAsync_auto_waits_for_input_when_planner_needs_clarification()
     {
         var workspace = CreateWorkspace();
@@ -316,6 +381,63 @@ public sealed class AgentOrchestratorTests
         Assert.Empty(await store.ListApprovalsAsync(thread.Id, run.Id, CancellationToken.None));
         var events = await store.ListEventsAsync(thread.Id, run.Id, 0, CancellationToken.None);
         Assert.Contains(events, x => x.Message.Contains("请告诉我要翻译哪个资源路径", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RetryAsync_auto_creates_new_auto_attempt_without_using_executable_task_kind_path()
+    {
+        var workspace = CreateWorkspace();
+        var store = new AgentStore(workspace);
+        await store.SaveSettingsAsync(Settings(workspace), CancellationToken.None);
+        var runner = new QueueRunner(
+            """
+            ```json
+            {
+              "status": "needs_clarification",
+              "requestedTaskKind": "auto",
+              "resolvedTaskKind": null,
+              "profileId": "profile-1",
+              "resourcePath": null,
+              "summary": "Need a resource.",
+              "userConstraints": [],
+              "steps": [],
+              "requiredApprovals": [],
+              "warnings": [],
+              "questions": ["请选择资源。"],
+              "missingCapability": null
+            }
+            ```
+            """,
+            """
+            ```json
+            {
+              "status": "needs_clarification",
+              "requestedTaskKind": "auto",
+              "resolvedTaskKind": null,
+              "profileId": "profile-1",
+              "resourcePath": null,
+              "summary": "Need a resource.",
+              "userConstraints": [],
+              "steps": [],
+              "requiredApprovals": [],
+              "warnings": [],
+              "questions": ["请选择资源。"],
+              "missingCapability": null
+            }
+            ```
+            """);
+        var orchestrator = CreateOrchestrator(store, workspace, runner);
+        var thread = await store.SaveNewThreadAsync("profile-1", "Task", "Goal", "auto", CancellationToken.None);
+        var shell = await orchestrator.StartAutoRunShellAsync(thread.Id, "profile-1", "翻译这个表", null, null, CancellationToken.None);
+        var first = await orchestrator.ContinueRunAsync(shell.Id, CancellationToken.None);
+
+        var retry = await orchestrator.RetryAsync(first.Id, CancellationToken.None);
+
+        Assert.NotEqual(first.Id, retry.Id);
+        Assert.Equal("auto", retry.TaskKind);
+        Assert.Equal("auto", retry.RequestedTaskKind);
+        Assert.Equal(AgentRunStatus.WaitingForInput, retry.Status);
+        Assert.Equal(2, runner.CallCount);
     }
 
     private static AgentSettingsDto Settings(string workspace)

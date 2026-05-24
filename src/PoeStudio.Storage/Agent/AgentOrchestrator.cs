@@ -382,14 +382,20 @@ public sealed class AgentOrchestrator
 
         var resolvedTaskKind = guard.ResolvedTaskKind ?? throw new InvalidOperationException("resolved_task_kind_missing");
         var capability = AgentCapabilities.GetRequired(resolvedTaskKind);
-        var executionRun = run with { ResolvedTaskKind = resolvedTaskKind, ResourcePath = guard.ResourcePath };
+        var executionRun = run with
+        {
+            ProfileId = guard.ProfileId,
+            ResolvedTaskKind = resolvedTaskKind,
+            ResourcePath = guard.ResourcePath
+        };
+        var executionThread = thread with { ProfileId = guard.ProfileId };
         var executionContext = await _projectContextService.BuildAsync(
             resolvedTaskKind,
             run.Goal,
             guard.ResourcePath,
             settings.WorkingDirectory,
             CancellationToken.None);
-        var executionPrompt = _promptBuilder.Build(settings, capability, thread, messages, run.Goal, guard.ResourcePath, executionContext, taskPlan);
+        var executionPrompt = _promptBuilder.Build(settings, capability, executionThread, messages, run.Goal, guard.ResourcePath, executionContext, taskPlan);
         var executionResult = await RunCodexAndPersistEventsAsync(run, settings, executionPrompt, cancellationToken);
         if (executionResult.Cancelled)
         {
@@ -410,12 +416,12 @@ public sealed class AgentOrchestrator
                 throw new ArgumentException("resource_path_required");
             }
 
-            var proposal = _datc64Parser.Parse(finalMessage, run.ProfileId, guard.ResourcePath);
+            var proposal = _datc64Parser.Parse(finalMessage, executionRun.ProfileId, guard.ResourcePath);
             var proposalJson = JsonSerializer.Serialize(proposal, JsonOptions);
             var approval = new AgentApprovalDto(
                 NewId("approval"),
                 run.Id,
-                run.ProfileId,
+                executionRun.ProfileId,
                 resolvedTaskKind,
                 AgentApprovalStatus.Pending,
                 $"{proposal.Candidates.Count} DATC64 translation candidate(s)",
@@ -429,7 +435,7 @@ public sealed class AgentOrchestrator
             return await CompleteRunAsync(executionRun, AgentRunStatus.WaitingForApproval, 90, "Waiting for approval", null, null, null, cancellationToken);
         }
 
-        var resultJson = ExtractFinalJsonOrWrap(resolvedTaskKind, run.ProfileId, finalMessage);
+        var resultJson = ExtractFinalJsonOrWrap(resolvedTaskKind, executionRun.ProfileId, finalMessage);
         await _store.SavePlanAsync(run.ThreadId, run.Id, CompleteAutoPlan(run.Id, waitingForApproval: false), cancellationToken);
         return await CompleteRunAsync(executionRun, AgentRunStatus.Succeeded, 100, "Succeeded", null, null, resultJson, cancellationToken);
     }
@@ -438,6 +444,18 @@ public sealed class AgentOrchestrator
     {
         var previous = await _store.FindRunAsync(runId, cancellationToken)
             ?? throw new ArgumentException("run_not_found", nameof(runId));
+        if (AgentTaskKindPolicy.IsAuto(previous.TaskKind))
+        {
+            var run = await StartAutoRunShellAsync(
+                previous.ThreadId,
+                previous.ProfileId,
+                previous.Goal,
+                previous.ResourcePath,
+                previous.OodlePath,
+                cancellationToken);
+            return await ContinueRunAsync(run.Id, cancellationToken);
+        }
+
         return await StartRunAsync(
             previous.ThreadId,
             previous.ProfileId,
@@ -452,6 +470,17 @@ public sealed class AgentOrchestrator
     {
         var previous = await _store.FindRunAsync(runId, cancellationToken)
             ?? throw new ArgumentException("run_not_found", nameof(runId));
+        if (AgentTaskKindPolicy.IsAuto(previous.TaskKind))
+        {
+            return await StartAutoRunShellAsync(
+                previous.ThreadId,
+                previous.ProfileId,
+                previous.Goal,
+                previous.ResourcePath,
+                previous.OodlePath,
+                cancellationToken);
+        }
+
         return await StartRunShellAsync(
             previous.ThreadId,
             previous.ProfileId,

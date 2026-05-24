@@ -190,6 +190,36 @@ public sealed class AgentApiSmokeTests : IClassFixture<WebApplicationFactory<Pro
     }
 
     [Fact]
+    public async Task Agent_run_auto_retry_from_waiting_for_input_returns_new_auto_run()
+    {
+        var client = _factory.CreateClient();
+        _runner.EnqueuePlannerClarification("请选择资源。");
+        _runner.EnqueuePlannerClarification("请选择资源。");
+
+        var thread = await CreateThreadAsync(client, "auto");
+        var response = await client.PostAsJsonAsync("/api/agent/runs", new AgentRunCreateRequest(
+            thread.Id,
+            thread.ProfileId,
+            "翻译这个表。",
+            "auto",
+            null));
+        response.EnsureSuccessStatusCode();
+        var run = (await response.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>())!.Data!;
+        run = await WaitForRunStatusAsync(client, run.Id, AgentRunStatus.WaitingForInput);
+
+        var retryResponse = await client.PostAsync($"/api/agent/runs/{run.Id}/retry", null);
+        Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+        var retryPayload = await retryResponse.Content.ReadFromJsonAsync<ApiResponse<AgentRunDto>>();
+        Assert.True(retryPayload!.Ok);
+        var retry = await WaitForRunStatusAsync(client, retryPayload!.Data!.Id, AgentRunStatus.WaitingForInput);
+
+        Assert.NotEqual(run.Id, retry.Id);
+        Assert.Equal("auto", retry.TaskKind);
+        Assert.Equal("auto", retry.RequestedTaskKind);
+        Assert.Equal(AgentRunStatus.WaitingForInput, retry.Status);
+    }
+
+    [Fact]
     public async Task Agent_settings_roundtrip()
     {
         var client = _factory.CreateClient();
