@@ -864,7 +864,7 @@ gitnexus_detect_changes(scope="staged")
 - 测试：`tests/PoeStudio.Tests/McpToolRegistryTests.cs`
 - 测试：`tests/PoeStudio.Tests/McpPoeToolsTests.cs`
 
-- [ ] **步骤 1：GitNexus 影响分析**
+- [x] **步骤 1：GitNexus 影响分析**
 
 运行：
 
@@ -876,7 +876,7 @@ gitnexus_impact(target="GetProjectOverview", direction="upstream")
 
 如果风险 HIGH/CRITICAL，先报告用户并等待确认。
 
-- [ ] **步骤 2：编写失败测试：工具注册**
+- [x] **步骤 2：编写失败测试：工具注册**
 
 修改 `tests/PoeStudio.Tests/McpToolRegistryTests.cs`：
 
@@ -908,7 +908,7 @@ Assert.Contains("project knowledge", knowledge.Description, StringComparison.Ord
 Assert.True(knowledge.Annotations?.ReadOnlyHint);
 ```
 
-- [ ] **步骤 3：编写失败测试：知识工具读取 section**
+- [x] **步骤 3：编写失败测试：知识工具读取 section**
 
 在 `tests/PoeStudio.Tests/McpPoeToolsTests.cs` 添加：
 
@@ -933,7 +933,7 @@ public async Task Get_project_knowledge_returns_requested_sections()
 
 该测试直接使用 repo root，因为知识契约文件属于仓库内容，不属于 workspace 用户数据。
 
-- [ ] **步骤 4：编写失败测试：overview 返回知识目录**
+- [x] **步骤 4：编写失败测试：overview 返回知识目录**
 
 修改 `Get_project_overview_prefers_current_view_tools_for_current_table_untranslated_checks` 或新增测试：
 
@@ -947,7 +947,7 @@ Assert.DoesNotContain("This file is the always-on POE Studio Agent contract", te
 
 预期：overview 返回目录和摘要，不返回 core-contract 全文。
 
-- [ ] **步骤 5：运行测试验证失败**
+- [x] **步骤 5：运行测试验证失败**
 
 运行：
 
@@ -957,7 +957,7 @@ dotnet test tests/PoeStudio.Tests/PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：FAIL，新工具不存在或 overview 未返回知识目录。
 
-- [ ] **步骤 6：实现 MCP 工具注册**
+- [x] **步骤 6：实现 MCP 工具注册**
 
 在 `PoeMcpTools.RegisterAll` 中，在 `poe_get_project_overview` 后注册：
 
@@ -971,7 +971,7 @@ registry.Register(
     (arguments, cancellationToken) => GetProjectKnowledgeAsync(workspace, arguments, cancellationToken));
 ```
 
-- [ ] **步骤 7：实现 GetProjectKnowledgeAsync**
+- [x] **步骤 7：实现 GetProjectKnowledgeAsync**
 
 在 `PoeMcpTools.cs` 中添加：
 
@@ -1000,7 +1000,7 @@ private static async Task<McpToolResult> GetProjectKnowledgeAsync(
 
 如果现有 `GetStringArray` 只支持顶层 string array，需要确认它可读取 JSON array；否则在本任务补测试和实现。
 
-- [ ] **步骤 8：收缩 GetProjectOverview**
+- [x] **步骤 8：收缩 GetProjectOverview**
 
 `GetProjectOverview` 返回新增：
 
@@ -1023,7 +1023,7 @@ knowledgeRuntime = new
 
 保留已有 current-view / raw fallback guidance，但避免复制长篇 contract 全文。
 
-- [ ] **步骤 9：运行测试验证通过**
+- [x] **步骤 9：运行测试验证通过**
 
 运行：
 

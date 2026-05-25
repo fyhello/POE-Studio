@@ -22,7 +22,29 @@ public sealed class McpPoeToolsTests
         Assert.Contains("poe_get_current_view_context", text);
         Assert.Contains("poe_find_current_table_untranslated_cells", text);
         Assert.Contains("currentViewContextId", text);
+        Assert.Contains("knowledgeIndex", text);
+        Assert.Contains("core.contract", text);
+        Assert.Contains("workflow.current-view", text);
+        Assert.Contains("poe_get_project_knowledge", text);
         Assert.DoesNotContain("Find untranslated cells: Use poe_datc64_extract_translatable_cells", text);
+        Assert.DoesNotContain("This file is the always-on POE Studio Agent contract", text);
+    }
+
+    [Fact]
+    public async Task Get_project_knowledge_returns_requested_sections()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_get_project_knowledge",
+            JsonSerializer.SerializeToElement(new { sectionIds = new[] { "core.contract" }, maxBytes = 12000 }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal("0.1", payload.RootElement.GetProperty("version").GetString());
+        Assert.Contains("source", payload.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

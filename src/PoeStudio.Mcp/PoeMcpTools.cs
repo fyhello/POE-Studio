@@ -44,6 +44,14 @@ public static class PoeMcpTools
 
         registry.Register(
             new McpToolDefinition(
+                "poe_get_project_knowledge",
+                "Read selected POE Studio Agent project knowledge sections by sectionId. Use this after poe_get_project_overview when a task needs workflow-specific project semantics. Does not read game resources.",
+                ObjectSchema(("sectionIds", "array"), ("maxBytes", "integer")),
+                ReadOnlyAnnotations),
+            (arguments, cancellationToken) => GetProjectKnowledgeAsync(workspace, arguments, cancellationToken));
+
+        registry.Register(
+            new McpToolDefinition(
                 "poe_get_workspace",
                 "Return POE Studio workspace root, resolution source, data directory, and current process directory.",
                 ObjectSchema(),
@@ -140,6 +148,8 @@ public static class PoeMcpTools
     private static McpToolResult GetProjectOverview(PoeWorkspaceResolution workspace)
     {
         TryGetWorkspaceRoot(workspace, out var workspaceRoot, out _);
+        var knowledgeRoot = ResolveKnowledgeRoot(workspaceRoot);
+        var knowledgeIndex = ReadKnowledgeIndexSummary(knowledgeRoot);
 
         return JsonSuccess(new
         {
@@ -166,6 +176,12 @@ public static class PoeMcpTools
                 poe_find_current_table_untranslated_cells = "Finds likely missing translations from the current UI table comparison snapshot. If currentViewContextId is present, use this first for current-table missing-translation checks. It does not read raw bundles and does not require Oodle.",
                 poe_datc64_extract_translatable_cells = "Extracts up to 100 cells from a raw/base DATC64 table resource. Use only when currentViewContextId is absent or the user explicitly asks to reread original/raw resources; it may read Native/GGPK bundles and may require Oodle."
             },
+            knowledgeRuntime = new
+            {
+                coreContract = "Always use the short core contract; read workflow details through poe_get_project_knowledge.",
+                tool = "poe_get_project_knowledge",
+                knowledgeIndex
+            },
             limits = new
             {
                 maxSearchResults = 100,
@@ -184,6 +200,24 @@ public static class PoeMcpTools
             },
             workspaceRoot
         });
+    }
+
+    private static async Task<McpToolResult> GetProjectKnowledgeAsync(
+        PoeWorkspaceResolution workspace,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        var sectionIds = GetStringArray(arguments, "sectionIds");
+        if (sectionIds.Length == 0)
+        {
+            return McpToolResult.Error("Argument 'sectionIds' is required.");
+        }
+
+        TryGetWorkspaceRoot(workspace, out var workspaceRoot, out _);
+        var knowledgeRoot = ResolveKnowledgeRoot(workspaceRoot);
+        var maxBytes = GetInt32(arguments, "maxBytes") ?? 12000;
+        var result = await new AgentKnowledgeStore(knowledgeRoot).ReadSectionsAsync(sectionIds, maxBytes, cancellationToken);
+        return JsonSuccess(result);
     }
 
     private static McpToolResult GetWorkspace(PoeWorkspaceResolution workspace)
@@ -760,6 +794,54 @@ public static class PoeMcpTools
         if (!string.IsNullOrWhiteSpace(path))
         {
             roots.Add(path);
+        }
+    }
+
+    private static string ResolveKnowledgeRoot(string? workspaceRoot)
+    {
+        if (!string.IsNullOrWhiteSpace(workspaceRoot)
+            && File.Exists(Path.Combine(workspaceRoot, "docs", "agent", "knowledge", "index.json")))
+        {
+            return workspaceRoot;
+        }
+
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "docs", "agent", "knowledge", "index.json")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return AppContext.BaseDirectory;
+    }
+
+    private static IReadOnlyList<object> ReadKnowledgeIndexSummary(string knowledgeRoot)
+    {
+        try
+        {
+            var index = new AgentKnowledgeStore(knowledgeRoot).ReadIndexAsync(CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+            return index.Sections
+                .Select(section => new
+                {
+                    section.SectionId,
+                    section.Title,
+                    section.Summary,
+                    section.Keywords,
+                    section.AppliesWhen,
+                    section.Priority
+                })
+                .Cast<object>()
+                .ToArray();
+        }
+        catch (Exception)
+        {
+            return [];
         }
     }
 

@@ -8,6 +8,7 @@ public sealed class McpToolRegistryTests
     private static readonly string[] ReadOnlyToolNames =
     [
         "poe_get_project_overview",
+        "poe_get_project_knowledge",
         "poe_get_workspace",
         "poe_list_profiles",
         "poe_get_profile",
@@ -94,6 +95,18 @@ public sealed class McpToolRegistryTests
         Assert.Contains("missing translations", findCells.Description, StringComparison.OrdinalIgnoreCase);
         Assert.True(getContext.Annotations?.ReadOnlyHint);
         Assert.True(findCells.Annotations?.ReadOnlyHint);
+    }
+
+    [Fact]
+    public void Tools_list_includes_project_knowledge_as_read_only()
+    {
+        var registry = McpToolRegistry.CreateDefault();
+
+        var tools = registry.ListTools();
+
+        var knowledge = Assert.Single(tools, tool => tool.Name == "poe_get_project_knowledge");
+        Assert.Contains("project knowledge", knowledge.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.True(knowledge.Annotations?.ReadOnlyHint);
     }
 
     [Fact]
