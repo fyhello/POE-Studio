@@ -5720,9 +5720,9 @@ function addChatToolCall(tool, argsInput, status, resultText = null) {
 }
 
 function summarizeChatToolResult(tool, resultText) {
-  if (tool === "poe_get_project_knowledge") {
-    try {
-      const data = JSON.parse(resultText);
+  try {
+    const data = JSON.parse(resultText);
+    if (tool === "poe_get_project_knowledge") {
       const sections = Array.isArray(data.sections) ? data.sections : [];
       const first = sections[0];
       return [
@@ -5730,9 +5730,17 @@ function summarizeChatToolResult(tool, resultText) {
         `缺失：${data.missingSectionIds?.length ?? 0}`,
         first ? `示例：${first.sectionId} / ${first.title}` : "未返回知识块"
       ].join("\n");
-    } catch {
-      return resultText.slice(0, 2000);
     }
+
+    if (tool === "poe_find_current_table_non_simplified_chinese_cells") {
+      const first = Array.isArray(data.items) ? data.items[0] : null;
+      return [
+        `已检查行数：${data.inspectedRows ?? "未知"}`,
+        `未转简中候选：${data.candidates ?? 0}`,
+        first ? `示例：第 ${first.rowNumber} 行 / ${first.columnName || first.columnIndex}` : "未发现候选项"
+      ].join("\n");
+    }
+  } catch {
   }
 
   return resultText.slice(0, 2000);

@@ -150,7 +150,8 @@ public sealed class ChatService
             lines.Add("When the user says current table, current draft, opened table, current comparison, or asks to check missing translations in the current table, use current-view MCP tools first.");
             lines.Add("Use poe_get_current_view_context with currentViewContextId to inspect the current UI snapshot.");
             lines.Add("Recommended knowledge sections for current table tasks: core.contract, workflow.current-view, workflow.datc64-translation, diagnostics.tool-fit-and-capability-gap.");
-            lines.Add("Choose current-table analysis tools by semantics, such as poe_find_current_table_untranslated_cells for missing-translation candidates.");
+            lines.Add("Choose current-table analysis tools by semantics: poe_find_current_table_untranslated_cells checks missing/untranslated candidates; poe_find_current_table_non_simplified_chinese_cells checks editable target cells still containing Traditional Chinese when the user wants Simplified Chinese.");
+            lines.Add("In table comparisons, source/current source means reference table; target/current target means editable table and overlay write target.");
             lines.Add("Do not call poe_datc64_extract_translatable_cells for current table checks.");
             lines.Add("Only call raw resource tools such as poe_read_resource or poe_datc64_extract_translatable_cells when currentViewContextId is absent or the user explicitly asks to reread raw files.");
         }

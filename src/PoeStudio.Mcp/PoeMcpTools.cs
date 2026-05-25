@@ -124,6 +124,14 @@ public static class PoeMcpTools
 
         registry.Register(
             new McpToolDefinition(
+                "poe_find_current_table_non_simplified_chinese_cells",
+                "Find editable target cells in the current UI table comparison that still contain Traditional Chinese or mixed text when the user wants Simplified Chinese. Source/current source is only the reference table; target/current target is the editable table. Does not read raw resources, Native/GGPK bundles, or Oodle.",
+                ObjectSchema(("contextId", "string"), ("limit", "integer")),
+                ReadOnlyAnnotations),
+            (arguments, cancellationToken) => FindCurrentTableNonSimplifiedChineseCellsAsync(workspace, arguments, cancellationToken));
+
+        registry.Register(
+            new McpToolDefinition(
                 "poe_get_agent_run_trace",
                 "Read a POE Studio Agent run trace by runId. Use this to diagnose why a prior chat/tool run failed or produced no final answer.",
                 ObjectSchema(("runId", "string")),
@@ -174,6 +182,7 @@ public static class PoeMcpTools
             {
                 poe_get_current_view_context = "Reads the short-lived current UI view snapshot by currentViewContextId. Use this when the user refers to the current table, current draft, opened table, or current comparison.",
                 poe_find_current_table_untranslated_cells = "Finds likely missing translations from the current UI table comparison snapshot. If currentViewContextId is present, use this first for current-table missing-translation checks. It does not read raw bundles and does not require Oodle.",
+                poe_find_current_table_non_simplified_chinese_cells = "Finds editable target cells that still contain Traditional Chinese or mixed text when the user asks which current-table target cells are not converted to Simplified Chinese. Treat source/current source as reference and target/current target as editable overlay target; do not infer output language from resource path names.",
                 poe_datc64_extract_translatable_cells = "Extracts up to 100 cells from a raw/base DATC64 table resource. Use only when currentViewContextId is absent or the user explicitly asks to reread original/raw resources; it may read Native/GGPK bundles and may require Oodle."
             },
             knowledgeRuntime = new
@@ -194,6 +203,7 @@ public static class PoeMcpTools
             {
                 "Check game resources: Search then read a resource by path through poe_search_resources + poe_read_resource.",
                 "Find untranslated cells in the current table: If currentViewContextId is available, you must call poe_find_current_table_untranslated_cells before any raw resource tool.",
+                "Find target cells not converted to Simplified Chinese: If currentViewContextId is available, call poe_find_current_table_non_simplified_chinese_cells. The source table is a reference; the target table is the editable/write target even if its resource path says traditional chinese.",
                 "Find untranslated cells from raw resources: Use poe_datc64_extract_translatable_cells only when the user explicitly asks to reread original/raw files or no currentViewContextId is available.",
                 "Edit game data: Read a resource, then write changes via poe_write_overlay_text/poe_write_overlay_binary. Writes go to staging — user commits them later.",
                 "Review changes: Use poe_list_overlays to see staged changes, poe_revert_overlay to discard."
@@ -591,6 +601,81 @@ public static class PoeMcpTools
         });
     }
 
+    private static async Task<McpToolResult> FindCurrentTableNonSimplifiedChineseCellsAsync(
+        PoeWorkspaceResolution workspace,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetWorkspaceRoot(workspace, out var workspaceRoot, out var error))
+        {
+            return McpToolResult.Error(error);
+        }
+
+        if (!TryGetString(arguments, "contextId", out var contextId))
+        {
+            return McpToolResult.Error("Argument 'contextId' is required.");
+        }
+
+        var limit = Math.Clamp(GetInt32(arguments, "limit") ?? 50, 1, 200);
+        var snapshot = await new AgentCurrentViewStore(workspaceRoot).LoadAsync(contextId, cancellationToken);
+        var table = snapshot?.View.Table;
+        if (table is null)
+        {
+            return McpToolResult.Error($"Current view context '{contextId}' does not contain a table.");
+        }
+
+        var sourceRows = table.SourceRows?.ToDictionary(row => row.RowNumber) ?? new Dictionary<int, AgentCurrentTableRowDto>();
+        var editable = table.EditableColumnIndexes.Count > 0
+            ? table.EditableColumnIndexes
+            : Enumerable.Range(0, table.Columns.Count).ToArray();
+        var results = new List<AgentUntranslatedCellDto>();
+
+        foreach (var targetRow in table.TargetRows)
+        {
+            sourceRows.TryGetValue(targetRow.RowNumber, out var sourceRow);
+
+            foreach (var columnIndex in editable)
+            {
+                var targetText = CellAt(targetRow, columnIndex);
+                var reason = NonSimplifiedChineseReason(targetText);
+                if (reason is null)
+                {
+                    continue;
+                }
+
+                results.Add(new AgentUntranslatedCellDto(
+                    targetRow.RowNumber,
+                    columnIndex,
+                    columnIndex >= 0 && columnIndex < table.Columns.Count ? table.Columns[columnIndex] : null,
+                    sourceRow is null ? string.Empty : CellAt(sourceRow, columnIndex),
+                    targetText,
+                    reason));
+
+                if (results.Count >= limit)
+                {
+                    break;
+                }
+            }
+
+            if (results.Count >= limit)
+            {
+                break;
+            }
+        }
+
+        return JsonSuccess(new
+        {
+            snapshot!.ContextId,
+            table.TargetProfileId,
+            table.TargetResourcePath,
+            table.SourceProfileId,
+            table.SourceResourcePath,
+            inspectedRows = table.TargetRows.Count,
+            candidates = results.Count,
+            items = results
+        });
+    }
+
     private static async Task<McpToolResult> GetAgentRunTraceAsync(
         PoeWorkspaceResolution workspace,
         JsonElement arguments,
@@ -689,6 +774,73 @@ public static class PoeMcpTools
 
         return null;
     }
+
+    private static string? NonSimplifiedChineseReason(string targetText)
+    {
+        if (string.IsNullOrWhiteSpace(targetText))
+        {
+            return null;
+        }
+
+        return ContainsKnownTraditionalChinese(targetText)
+            ? "target_contains_traditional_chinese"
+            : null;
+    }
+
+    private static bool ContainsKnownTraditionalChinese(string value)
+    {
+        return value.Any(ch => KnownTraditionalChineseCharacters.Contains(ch));
+    }
+
+    private static readonly HashSet<char> KnownTraditionalChineseCharacters =
+    [
+        '變', '體', '與', '專', '業', '兩', '嚴', '個', '豐', '臨', '為', '舉',
+        '麼', '義', '樂', '書', '買', '亂', '爭', '於', '雲', '亞', '產', '親',
+        '億', '僅', '從', '倉', '儀', '們', '價', '眾', '優', '會', '傘', '偉',
+        '傳', '傷', '倫', '偽', '餘', '俠', '侶', '偵', '側', '僑', '兒', '兇',
+        '黨', '蘭', '關', '興', '養', '獸', '內', '寫', '軍', '農', '馮', '決',
+        '況', '凍', '淨', '涼', '減', '幾', '鳳', '憑', '凱', '擊', '劃', '劇',
+        '劉', '則', '剛', '創', '刪', '別', '劑', '劍', '勸', '辦', '務', '動',
+        '勵', '勞', '勢', '匯', '區', '協', '單', '賣', '盧', '卻', '廠', '廳',
+        '歷', '厲', '壓', '厭', '縣', '參', '雙', '發', '號', '後', '嚇', '嗎',
+        '啟', '員', '聽', '問', '喚', '嘗', '噴', '團', '園', '圓', '圖', '聖',
+        '場', '壞', '塊', '堅', '壇', '墜', '壘', '壯', '聲', '殼', '處', '備',
+        '複', '夠', '頭', '奪', '奮', '獎', '婦', '媽', '嬌', '孫', '學', '寶',
+        '實', '寵', '審', '寬', '對', '尋', '導', '將', '爾', '塵', '層', '屬',
+        '歲', '島', '嶺', '幣', '師', '帳', '帶', '幫', '幹', '並', '廣', '莊',
+        '慶', '庫', '應', '廟', '廢', '開', '異', '棄', '張', '彈', '強', '歸',
+        '錄', '徹', '徑', '憶', '憂', '懷', '態', '慫', '憐', '總', '戀', '惡',
+        '愛', '慣', '慘', '慮', '憤', '戰', '戲', '戶', '捨', '掃', '搶', '護',
+        '報', '擔', '擬', '擁', '撥', '擇', '擋', '揮', '據', '捲', '攜', '攝',
+        '擺', '搖', '敗', '敵', '數', '齊', '斷', '時', '暫', '會', '術', '機',
+        '殺', '雜', '權', '條', '來', '極', '構', '欄', '樹', '樣', '橋', '檢',
+        '檔', '槍', '樓', '標', '橫', '歡', '歐', '殘', '毀', '氣', '漢', '湯',
+        '滅', '淚', '澤', '潔', '灑', '測', '濟', '濃', '濤', '湧', '灣', '濕',
+        '滿', '滾', '漲', '潛', '潤', '濾', '燈', '靈', '災', '爐', '點', '煉',
+        '燒', '營', '牆', '狀', '獨', '獅', '獵', '獻', '瑪', '環', '現', '電',
+        '畫', '療', '發', '皺', '盜', '盤', '眾', '矯', '礦', '碼', '確', '禍',
+        '禮', '離', '種', '積', '稱', '穩', '窮', '竊', '競', '筆', '築', '節',
+        '範', '簡', '籃', '籌', '糾', '紀', '約', '紅', '紋', '納', '紐', '純',
+        '紙', '級', '紛', '細', '紹', '組', '結', '絕', '給', '統', '絲', '綁',
+        '經', '綠', '維', '網', '緊', '緒', '線', '緣', '編', '練', '縣', '縫',
+        '縮', '總', '績', '織', '繞', '繼', '續', '纖', '罰', '罵', '羅', '聖',
+        '聞', '聯', '聰', '聲', '職', '聽', '膽', '勝', '臉', '臨', '舉', '藝',
+        '節', '藍', '虛', '蟲', '雖', '蠻', '術', '補', '裝', '裏', '製', '褲',
+        '見', '觀', '規', '視', '覺', '覽', '觸', '訂', '計', '訊', '討', '訓',
+        '記', '訣', '訪', '設', '許', '訴', '該', '詳', '認', '語', '誤', '說',
+        '誰', '課', '調', '談', '請', '論', '諸', '諾', '謂', '講', '謝', '謹',
+        '證', '識', '譯', '議', '護', '讀', '讓', '讚', '貝', '負', '財', '責',
+        '賢', '敗', '貨', '質', '貪', '貧', '貴', '貸', '費', '貼', '資', '賊',
+        '賞', '賠', '賽', '贈', '贏', '趙', '趕', '躍', '車', '軟', '較', '載',
+        '輔', '輝', '輪', '輯', '輸', '轉', '辭', '農', '這', '連', '進', '運',
+        '過', '達', '違', '遙', '遠', '適', '遲', '遷', '選', '遺', '還', '邊',
+        '郵', '鄰', '釋', '針', '釘', '釣', '鈴', '鉛', '銀', '銅', '銘', '鋼',
+        '錄', '錢', '錯', '鍛', '鎖', '鎮', '鏡', '鐵', '鑄', '長', '門', '閉',
+        '間', '閣', '關', '闖', '陣', '陰', '陳', '陽', '隊', '階', '隨', '險',
+        '隱', '隸', '雙', '難', '雲', '電', '靜', '韋', '頁', '頂', '項', '順',
+        '須', '預', '頓', '領', '顏', '願', '類', '顧', '顯', '驚', '驅', '驗',
+        '騎', '騙', '騰', '驟', '魚', '鳥', '鹽', '麥', '黃', '龍'
+    ];
 
     private static bool LooksMostlyAscii(string value)
     {

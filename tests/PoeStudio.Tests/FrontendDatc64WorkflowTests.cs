@@ -44,6 +44,8 @@ public sealed class FrontendDatc64WorkflowTests
         Assert.Contains(".chat-tool-result", appJs);
         Assert.Contains("poe_get_project_knowledge", appJs);
         Assert.Contains("知识块", appJs);
+        Assert.Contains("poe_find_current_table_non_simplified_chinese_cells", appJs);
+        Assert.Contains("未转简中候选", appJs);
         Assert.DoesNotContain("section.Content", appJs);
         Assert.DoesNotContain("argsJson.slice", appJs);
     }

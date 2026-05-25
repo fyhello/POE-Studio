@@ -18,6 +18,7 @@ public sealed class McpToolRegistryTests
         "poe_datc64_extract_translatable_cells",
         "poe_get_current_view_context",
         "poe_find_current_table_untranslated_cells",
+        "poe_find_current_table_non_simplified_chinese_cells",
         "poe_get_agent_run_trace",
         "poe_get_agent_recent_logs"
     ];
@@ -91,10 +92,13 @@ public sealed class McpToolRegistryTests
 
         var getContext = Assert.Single(tools, tool => tool.Name == "poe_get_current_view_context");
         var findCells = Assert.Single(tools, tool => tool.Name == "poe_find_current_table_untranslated_cells");
+        var findNonSimplified = Assert.Single(tools, tool => tool.Name == "poe_find_current_table_non_simplified_chinese_cells");
         Assert.Contains("current UI", getContext.Description, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("missing translations", findCells.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Simplified Chinese", findNonSimplified.Description, StringComparison.OrdinalIgnoreCase);
         Assert.True(getContext.Annotations?.ReadOnlyHint);
         Assert.True(findCells.Annotations?.ReadOnlyHint);
+        Assert.True(findNonSimplified.Annotations?.ReadOnlyHint);
     }
 
     [Fact]

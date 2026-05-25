@@ -21,7 +21,10 @@ public sealed class McpPoeToolsTests
         Assert.False(result.IsError);
         Assert.Contains("poe_get_current_view_context", text);
         Assert.Contains("poe_find_current_table_untranslated_cells", text);
+        Assert.Contains("poe_find_current_table_non_simplified_chinese_cells", text);
         Assert.Contains("currentViewContextId", text);
+        Assert.Contains("source/current source", text);
+        Assert.Contains("target/current target", text);
         Assert.Contains("knowledgeIndex", text);
         Assert.Contains("core.contract", text);
         Assert.Contains("workflow.current-view", text);

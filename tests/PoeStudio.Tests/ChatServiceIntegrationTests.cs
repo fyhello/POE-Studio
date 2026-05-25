@@ -638,7 +638,57 @@ public sealed class ChatServiceIntegrationTests
         Assert.Contains("toolFitCheck", capturedPrompt);
         Assert.Contains("source/current source means reference", capturedPrompt);
         Assert.Contains("target/current target means editable", capturedPrompt);
+        Assert.Contains("poe_find_current_table_non_simplified_chinese_cells", capturedPrompt);
         Assert.DoesNotContain("This file is the always-on POE Studio Agent contract", capturedPrompt);
+    }
+
+    [Fact]
+    public async Task Prompt_treats_source_as_reference_and_target_as_editable_table()
+    {
+        string? capturedPrompt = null;
+        var runner = new FakeCodexRunner((settings, prompt, onEvent, ct) =>
+        {
+            capturedPrompt = prompt;
+            return Task.FromResult(new CodexRunResult(0, false, false, [], null));
+        });
+        var root = Path.Combine(Path.GetTempPath(), "poe-direction-rule-" + Guid.NewGuid().ToString("N"));
+        var service = CreateChatService(runner, CreateWorkspaceRoot(root));
+        var view = new AgentCurrentViewRequestDto(
+            "tableComparison",
+            new AgentCurrentTableViewDto(
+                "target",
+                "data/balance/traditional chinese/activeskills.datc64",
+                "source",
+                "data/balance/simplified chinese/activeskills.datc64",
+                "target",
+                "data/balance/traditional chinese/activeskills.datc64",
+                "datc64-auto",
+                1,
+                1,
+                ["Text"],
+                [0],
+                [new AgentCurrentTableRowDto(1, ["變形"])],
+                [new AgentCurrentTableRowDto(1, ["变形"])],
+                "简体路径"));
+
+        await foreach (var _ in service.RunCodexAsync(
+            "我是需要把繁中翻译成简中",
+            "target",
+            "data/balance/traditional chinese/activeskills.datc64",
+            "source",
+            "target",
+            "data/balance/simplified chinese/activeskills.datc64",
+            "data/balance/traditional chinese/activeskills.datc64",
+            view,
+            CancellationToken.None))
+        {
+        }
+
+        Assert.NotNull(capturedPrompt);
+        Assert.Contains("source/current source means reference table", capturedPrompt);
+        Assert.Contains("target/current target means editable table and overlay write target", capturedPrompt);
+        Assert.Contains("Do not infer desired output language from profile names or resource paths", capturedPrompt);
+        Assert.Contains("poe_find_current_table_non_simplified_chinese_cells", capturedPrompt);
     }
 
     private static ChatService CreateChatService(
