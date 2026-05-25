@@ -613,7 +613,8 @@ public sealed class ChatService
     private static JsonDocument? TryParseJsonObject(string value, out string rawJson)
     {
         rawJson = string.Empty;
-        var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(value), new JsonReaderOptions { AllowTrailingCommas = true });
+        var bytes = System.Text.Encoding.UTF8.GetBytes(value);
+        var reader = new Utf8JsonReader(bytes, new JsonReaderOptions { AllowTrailingCommas = true });
         try
         {
             while (reader.Read())
@@ -629,7 +630,7 @@ public sealed class ChatService
                 return null;
             }
 
-            rawJson = value[..checked((int)reader.BytesConsumed)];
+            rawJson = System.Text.Encoding.UTF8.GetString(bytes.AsSpan(0, checked((int)reader.BytesConsumed)));
             return document;
         }
         catch (JsonException)

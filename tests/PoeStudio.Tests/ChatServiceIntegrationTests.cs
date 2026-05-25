@@ -68,6 +68,34 @@ public sealed class ChatServiceIntegrationTests
     }
 
     [Fact]
+    public async Task RunCodexAsync_strips_embedded_semantic_agent_json_with_multibyte_text()
+    {
+        var service = CreateChatService(events: [
+            new CodexParsedEvent(
+                "{}",
+                CodexParsedEventType.AgentMessage,
+                """
+                {"type":"agent_capability_gap","failureType":"tool_semantics_mismatch","userGoal":"检查目标表繁中","missingCapability":"缺少当前表格繁中检测工具","proposedNextAction":"报告 capability gap；不要冒充检测结果"}
+
+                结论：当前可用工具语义不匹配。
+                """,
+                null,
+                false,
+                false,
+                null)
+        ]);
+
+        var results = await CollectEvents(service, "hello", null, null);
+
+        var message = Assert.Single(results.Where(e => e.EventName == "message"));
+        using var document = JsonDocument.Parse(message.DataJson);
+        var text = document.RootElement.GetProperty("text").GetString();
+        Assert.Contains("结论", text);
+        Assert.DoesNotContain("proposedNextAction", message.DataJson);
+        Assert.DoesNotContain("capability_gap", message.DataJson);
+    }
+
+    [Fact]
     public async Task RunCodexAsync_returns_tool_call_event()
     {
         var payload = """{"tool":"poe_list_profiles","arguments":{"limit":5},"status":"completed"}""";
