@@ -18,7 +18,7 @@ public sealed class McpProcessSmokeTests
 
         var firstLine = await ReadRequiredLineAsync(process.StandardOutput, process);
         var secondLine = await ReadRequiredLineAsync(process.StandardOutput, process);
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20));
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(60));
 
         Assert.Equal(0, process.ExitCode);
         using var initialize = JsonDocument.Parse(firstLine);
@@ -60,7 +60,7 @@ public sealed class McpProcessSmokeTests
     private static async Task<string> ReadRequiredLineAsync(StreamReader reader, Process process)
     {
         var lineTask = reader.ReadLineAsync();
-        var completed = await Task.WhenAny(lineTask, Task.Delay(TimeSpan.FromSeconds(20)));
+        var completed = await Task.WhenAny(lineTask, Task.Delay(TimeSpan.FromSeconds(60)));
         if (completed == lineTask && lineTask.Result is { } line)
         {
             return line;

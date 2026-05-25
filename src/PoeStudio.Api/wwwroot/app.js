@@ -40,16 +40,12 @@ const state = {
   },
   csdTagIssues: [],
   csdTagIssueCursor: -1,
-  agent: {
+  chat: {
     visible: false,
-    settings: null,
-    capabilities: [],
-    threads: [],
-    currentThreadId: localStorage.getItem("poeStudioAgentThreadId") || null,
-    snapshot: null,
-    currentRun: null,
-    eventTimer: null,
-    lastEventSequence: 0
+    messages: [],
+    abortController: null,
+    pendingRepair: null,
+    repairPollTimer: null
   }
 };
 
@@ -144,6 +140,12 @@ const simplifiedReferenceDirectories = [
   "simple chinese",
   "简体中文",
   "簡體中文"
+];
+const targetLanguageDirectories = [
+  "traditional chinese",
+  "traditionalchinese",
+  "繁体中文",
+  "繁體中文"
 ];
 const resourceTreeTake = 5000;
 const defaultPreviewLimit = 65536;
@@ -1920,6 +1922,22 @@ function buildReferencePathCandidates(targetPath) {
   return candidates;
 }
 
+function buildTargetPathCandidates(sourcePath) {
+  const parts = splitVirtualPath(sourcePath);
+  const languageIndex = findLanguageDirectoryIndex(parts);
+  if (languageIndex < 0) {
+    return [joinVirtualPath(parts)];
+  }
+
+  const candidates = [];
+  for (const languageDirectory of targetLanguageDirectories) {
+    const next = [...parts];
+    next[languageIndex] = languageDirectory;
+    candidates.push(joinVirtualPath(next));
+  }
+  return candidates;
+}
+
 async function findReferenceResourceByLanguageAwarePath(sourceId, targetResource, take = 50) {
   const candidates = buildReferencePathCandidates(targetResource.virtualPath);
   for (const candidate of candidates) {
@@ -2577,6 +2595,52 @@ async function loadTableReferenceInspection(targetInspection) {
 function tableInspectLimitForResource(resource) {
   const size = Number(resource?.size || 0);
   return Math.min(maxTextPreviewLimit, Math.max(defaultPreviewLimit, size + 16));
+}
+
+const agentCurrentViewRowLimit = 200;
+
+function summarizeAgentTableRows(rows, limit = agentCurrentViewRowLimit, nullWhenMissing = false) {
+  if (!rows && nullWhenMissing) return null;
+  return (rows || []).slice(0, limit).map(function (row) {
+    return {
+      rowNumber: row.rowNumber,
+      cells: (row.cells || []).map(function (cell) { return String(cell ?? ""); })
+    };
+  });
+}
+
+function buildAgentCurrentView() {
+  if (!state.selectedResource || !state.tableEditBase) {
+    return { kind: "none" };
+  }
+
+  const table = state.tableEditBase;
+  const reference = state.tableReference;
+  const sourceId = reference?.resource?.profileId ?? sourceProfileId() ?? null;
+  const sourcePath = reference?.resource?.virtualPath ?? null;
+  const targetId = state.selectedResource.profileId;
+  const targetPath = state.selectedResource.virtualPath;
+  const kind = reference?.inspection ? "tableComparison" : "table";
+
+  return {
+    kind,
+    table: {
+      profileId: targetId,
+      resourcePath: targetPath,
+      sourceProfileId: sourceId,
+      sourceResourcePath: sourcePath,
+      targetProfileId: targetId,
+      targetResourcePath: targetPath,
+      delimiter: table.delimiter || "",
+      rowCount: table.rowCount || table.previewRowCount || 0,
+      previewRowCount: table.previewRowCount || 0,
+      columns: table.columns || [],
+      editableColumnIndexes: table.editableColumnIndexes || [],
+      targetRows: summarizeAgentTableRows(state.tableEditBase?.rows),
+      sourceRows: summarizeAgentTableRows(state.tableReference?.inspection?.rows, agentCurrentViewRowLimit, true),
+      referenceMatchMode: reference?.matchMode || null
+    }
+  };
 }
 
 async function exportTableCsv() {
@@ -5330,368 +5394,376 @@ function bind() {
   $("syncExternalOverlayQuickBtn").addEventListener("click", syncExternalOverlay);
   $("refreshOverlayBtn").addEventListener("click", refreshOverlayList);
 
-  // Agent Workspace bindings
-  $("openAgentWorkspaceBtn").addEventListener("click", async () => {
-    state.agent.visible = !state.agent.visible;
-    $("agentWorkspace").classList.toggle("hidden", !state.agent.visible);
-    if (state.agent.visible) {
-      await loadAgentWorkspace();
+  // Chat bindings
+  $("openAgentWorkspaceBtn").addEventListener("click", () => {
+    state.chat.visible = !state.chat.visible;
+    $("chatWorkspace").classList.toggle("hidden", !state.chat.visible);
+    if (state.chat.visible) {
+      $("chatInput").focus();
     }
   });
-  $("agentCloseBtn").addEventListener("click", () => {
-    state.agent.visible = false;
-    $("agentWorkspace").classList.add("hidden");
-    if (state.agent.eventTimer) {
-      clearInterval(state.agent.eventTimer);
-      state.agent.eventTimer = null;
+  $("chatCloseBtn").addEventListener("click", () => {
+    state.chat.visible = false;
+    $("chatWorkspace").classList.add("hidden");
+    if (state.chat.abortController) {
+      state.chat.abortController.abort();
+      state.chat.abortController = null;
     }
   });
-  $("agentRunBtn").addEventListener("click", () => startAgentRun().catch((error) => setStatus(error.message)));
-  $("agentCancelRunBtn").addEventListener("click", () => cancelAgentRun().catch((error) => setStatus(error.message)));
-  $("agentRetryRunBtn").addEventListener("click", () => retryAgentRun().catch((error) => setStatus(error.message)));
-  $("agentNewThreadBtn").addEventListener("click", () => {
-    state.agent.currentThreadId = null;
-    state.agent.snapshot = null;
-    state.agent.currentRun = null;
-    state.agent.lastEventSequence = 0;
-    localStorage.removeItem("poeStudioAgentThreadId");
-    renderAgentSnapshot(null);
-    renderAgentThreads();
-    $("agentGoalInput").value = "";
-    $("agentGoalInput").focus();
+  $("approveAgentRepairBtn").addEventListener("click", approveAgentRepair);
+  $("chatSendBtn").addEventListener("click", () => {
+    const input = $("chatInput");
+    const message = input.value.trim();
+    if (message && !state.chat.abortController) {
+      input.value = "";
+      startChat(message);
+    }
   });
-  $("agentWorkspace").addEventListener("click", (event) => {
-    const approveBtn = event.target.closest("[data-agent-approve]");
-    if (approveBtn) {
-      approveAgentApproval(approveBtn.dataset.agentApprove).catch((error) => setStatus(error.message));
-      return;
-    }
-    const rejectBtn = event.target.closest("[data-agent-reject]");
-    if (rejectBtn) {
-      rejectAgentApproval(rejectBtn.dataset.agentReject).catch((error) => setStatus(error.message));
-      return;
-    }
-    const threadBtn = event.target.closest("[data-agent-thread]");
-    if (threadBtn) {
-      loadAgentSnapshot(threadBtn.dataset.agentThread).catch((error) => setStatus(error.message));
-      return;
+  $("chatInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      $("chatSendBtn").click();
     }
   });
 }
 
-// === Agent Workspace Functions ===
+// === Chat Functions ===
 
-function agentRunStatusText(status) {
-  const map = { 0: "Queued", 1: "Running", 2: "WaitingForApproval", 3: "Succeeded", 4: "Failed", 5: "Cancelled", 6: "Rejected" };
-  return typeof status === "string" ? status : (map[status] || String(status));
-}
+let chatMessageCount = 0;
 
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = String(text ?? "");
-  return div.innerHTML;
-}
+async function startChat(message) {
+  const messagesEl = $("chatMessages");
+  const abortController = new AbortController();
+  state.chat.abortController = abortController;
+  state.chat.messages = [];
 
-async function loadAgentWorkspace() {
+  addChatMessage("user", escapeHtml(message));
+  addChatMessage("status", "AI 助手思考中...");
+
   try {
-    state.agent.settings = await api("/api/agent/settings");
-    state.agent.capabilities = await api("/api/agent/capabilities");
-    state.agent.threads = await api("/api/agent/threads?take=30");
-    if (!state.agent.currentThreadId && state.agent.threads.length > 0) {
-      state.agent.currentThreadId = state.agent.threads[0].id;
-    }
-    renderAgentSettings();
-    renderAgentThreads();
-    if (state.agent.currentThreadId) {
-      await loadAgentSnapshot(state.agent.currentThreadId);
-    } else {
-      renderAgentSnapshot(null);
-    }
-  } catch (error) {
-    setStatus(`Agent 加载失败：${error.message}`);
-  }
-}
+    // Resolve source/target resource context for the chat prompt
+    const srcId = sourceProfileId() || null;
+    const tgtId = targetProfileId() || null;
+    const resProfileId = state.selectedResource?.profileId ?? null;
+    const resPath = state.selectedResource?.virtualPath ?? null;
 
-async function loadAgentSnapshot(threadId) {
-  const snapshot = await api(`/api/agent/threads/${encodeURIComponent(threadId)}`);
-  state.agent.currentThreadId = threadId;
-  state.agent.snapshot = snapshot;
-  state.agent.currentRun = snapshot.recentRuns?.[0] || null;
-  localStorage.setItem("poeStudioAgentThreadId", threadId);
-
-  // Load historical events for latest run so they survive refresh
-  const latestRun = snapshot.recentRuns?.[0];
-  if (latestRun) {
-    const historicalEvents = await api(`/api/agent/runs/${encodeURIComponent(latestRun.id)}/events?afterSequence=0`);
-    snapshot.events = historicalEvents || [];
-    state.agent.lastEventSequence = historicalEvents.length > 0
-      ? Math.max(...historicalEvents.map((e) => e.sequence || 0))
-      : 0;
-  } else {
-    snapshot.events = [];
-    state.agent.lastEventSequence = 0;
-  }
-
-  renderAgentThreads();
-  renderAgentSnapshot(snapshot);
-  startAgentEventPolling();
-}
-
-function renderAgentSettings() {
-  const settings = state.agent.settings;
-  $("agentSettingsSummary").textContent = settings
-    ? `${settings.model || "默认模型"} · ${settings.sandbox} · ${settings.mcpServerName}`
-    : "未加载设置";
-}
-
-function renderAgentThreads() {
-  const list = $("agentThreadList");
-  if (!state.agent.threads || state.agent.threads.length === 0) {
-    list.innerHTML = '<div class="agent-empty">没有会话记录</div>';
-    return;
-  }
-  list.innerHTML = state.agent.threads.map((thread) => `
-    <button type="button" class="agent-thread-item${thread.id === state.agent.currentThreadId ? " selected" : ""}" data-agent-thread="${escapeHtml(thread.id)}">
-      <strong>${escapeHtml(thread.title)}</strong>
-      <span>${escapeHtml(thread.taskKind)} · ${formatLocalTime(thread.updatedAt)}</span>
-    </button>
-  `).join("");
-}
-
-function renderAgentSnapshot(snapshot) {
-  if (!snapshot) {
-    $("agentCurrentThreadStatus").textContent = "未选择会话";
-    renderAgentRunStatus(null);
-    renderAgentPlan([]);
-    renderAgentEvents([]);
-    renderAgentApprovals([]);
-    renderAgentResult(null);
-    return;
-  }
-  $("agentCurrentThreadStatus").textContent = `${snapshot.thread.title} (${snapshot.thread.taskKind})`;
-  renderAgentRunStatus(snapshot.recentRuns?.[0] || null);
-  renderAgentPlan(snapshot.latestPlan || []);
-  renderAgentEvents(snapshot.events || []);
-  renderAgentApprovals(snapshot.pendingApprovals || []);
-  renderAgentResult(snapshot.recentRuns?.[0] || null);
-}
-
-function renderAgentRunStatus(run) {
-  if (!run) {
-    $("agentCurrentRunStatus").textContent = "未运行";
-    $("agentCancelRunBtn").disabled = true;
-    $("agentRetryRunBtn").disabled = true;
-    return;
-  }
-  const statusName = agentRunStatusText(run.status);
-  $("agentCurrentRunStatus").textContent = `${statusName} · ${run.progressPercent}% · ${run.message}`;
-  $("agentCancelRunBtn").disabled = ![0, 1].includes(run.status);
-  $("agentRetryRunBtn").disabled = ![3, 4, 5, 6].includes(run.status);
-  if (run.errorMessage) {
-    $("agentCurrentRunStatus").textContent += ` · 错误: ${run.errorCode || ""} ${run.errorMessage}`;
-  }
-}
-
-function renderAgentPlan(steps) {
-  const panel = $("agentPlanList");
-  if (!steps || steps.length === 0) {
-    panel.innerHTML = '<div class="agent-empty">暂无计划</div>';
-    return;
-  }
-  panel.innerHTML = steps.map((step) => `
-    <div class="agent-plan-step">
-      <span class="agent-plan-status">${escapeHtml(step.status)}</span>
-      <span>${escapeHtml(step.title)}</span>
-    </div>
-  `).join("");
-}
-
-function renderAgentEvents(events, options) {
-  const panel = $("agentEventTimeline");
-  if (options?.append && events.length > 0) {
-    const fragment = events.map((evt) => `
-      <div class="agent-event">
-        <span class="agent-event-type">${escapeHtml(agentEventTypeName(evt.type))}</span>
-        <span>${escapeHtml(evt.message)}</span>
-        <time>${formatLocalTime(evt.createdAt)}</time>
-      </div>
-    `).join("");
-    panel.insertAdjacentHTML("beforeend", fragment);
-    panel.scrollTop = panel.scrollHeight;
-    return;
-  }
-  if (!events || events.length === 0) {
-    if (!options?.append) {
-      panel.innerHTML = '<div class="agent-empty">暂无事件</div>';
-    }
-    return;
-  }
-  panel.innerHTML = events.map((evt) => `
-    <div class="agent-event">
-      <span class="agent-event-type">${escapeHtml(agentEventTypeName(evt.type))}</span>
-      <span>${escapeHtml(evt.message)}</span>
-      <time>${formatLocalTime(evt.createdAt)}</time>
-    </div>
-  `).join("");
-}
-
-function agentEventTypeName(type) {
-  const map = { 0: "创建", 1: "计划", 2: "Codex", 3: "Codex错误", 4: "MCP工具", 5: "消息", 6: "审批请求", 7: "已批准", 8: "已拒绝", 9: "草稿写入", 10: "失败", 11: "已取消" };
-  return map[type] || String(type);
-}
-
-function renderAgentApprovals(approvals) {
-  const panel = $("agentApprovalsPanel");
-  if (!approvals || approvals.length === 0) {
-    panel.innerHTML = '<div class="agent-empty">没有待审批操作</div>';
-    return;
-  }
-  panel.innerHTML = approvals.map((approval) => `
-    <article class="agent-approval" data-approval-id="${escapeHtml(approval.id)}">
-      <div class="agent-approval-head">
-        <strong>${escapeHtml(approval.kind)}</strong>
-        <span>${escapeHtml(approval.status)}</span>
-      </div>
-      <p>${escapeHtml(approval.summary || "需要审批")}</p>
-      <pre>${escapeHtml(approval.proposalJson || "")}</pre>
-      <div class="agent-approval-actions">
-        <button type="button" data-agent-approve="${escapeHtml(approval.id)}">批准</button>
-        <button type="button" data-agent-reject="${escapeHtml(approval.id)}">拒绝</button>
-      </div>
-    </article>
-  `).join("");
-}
-
-function renderAgentResult(run) {
-  $("agentResultPanel").textContent = run
-    ? (run.resultJson || run.errorMessage || run.message || "暂无结果")
-    : "暂无运行结果";
-}
-
-async function startAgentRun() {
-  const goal = $("agentGoalInput").value.trim();
-  if (!goal) {
-    setStatus("请输入 Agent 任务目标");
-    return;
-  }
-
-  const taskKind = $("agentTaskKindSelect").value || "question";
-  const profileId = targetProfileId();
-  const resourcePath = $("agentResourcePathInput").value.trim() || state.selectedResource?.virtualPath || null;
-  const threadTitle = goal.length > 32 ? `${goal.slice(0, 32)}...` : goal;
-
-  let thread = state.agent.snapshot?.thread || null;
-  if (!thread || thread.taskKind !== taskKind) {
-    thread = await api("/api/agent/threads", {
-      profileId,
-      title: threadTitle,
-      goal,
-      taskKind
-    });
-    state.agent.currentThreadId = thread.id;
-    localStorage.setItem("poeStudioAgentThreadId", thread.id);
-  }
-
-  await api(`/api/agent/threads/${encodeURIComponent(thread.id)}/messages`, {
-    content: goal,
-    attachments: resourcePath ? [resourcePath] : null
-  });
-
-  const run = await api("/api/agent/runs", {
-    threadId: thread.id,
-    profileId,
-    goal,
-    taskKind,
-    resourcePath: taskKind === "datc64-translation" ? resourcePath : null
-  });
-
-  state.agent.currentRun = run;
-  state.agent.lastEventSequence = 0;
-  await loadAgentSnapshot(thread.id);
-  setStatus(`Agent 任务已启动：${run.id}`);
-}
-
-function startAgentEventPolling() {
-  if (state.agent.eventTimer) {
-    clearInterval(state.agent.eventTimer);
-    state.agent.eventTimer = null;
-  }
-
-  const run = state.agent.currentRun;
-  if (!run || ["Succeeded", "Failed", "Cancelled", "Rejected"].includes(agentRunStatusText(run.status))) {
-    return;
-  }
-
-  state.agent.eventTimer = setInterval(() => {
-    pollAgentEvents().catch((error) => {
-      setStatus(`Agent 事件刷新失败：${error.message}`);
-    });
-  }, 1200);
-}
-
-async function pollAgentEvents() {
-  const run = state.agent.currentRun;
-  if (!run) return;
-  const events = await api(`/api/agent/runs/${encodeURIComponent(run.id)}/events?afterSequence=${state.agent.lastEventSequence || 0}`);
-  if (events.length > 0) {
-    state.agent.lastEventSequence = Math.max(...events.map((event) => event.sequence || 0));
-    state.agent.snapshot = {
-      ...state.agent.snapshot,
-      events: [...(state.agent.snapshot?.events || []), ...events]
-    };
-    renderAgentEvents(events, { append: true });
-    // Check for Project context loaded event
-    for (const evt of events) {
-      if (evt.message === "Project context loaded") {
-        setStatus("Agent: 项目上下文已加载");
+    let srcPath = null;
+    let tgtPath = null;
+    if (resPath && resProfileId) {
+      if (resProfileId === tgtId) {
+        // Selected resource is a target resource → find corresponding source path
+        tgtPath = resPath;
+        srcPath = buildReferencePathCandidates(resPath)[0] || null;
+      } else if (resProfileId === srcId) {
+        // Selected resource is a source resource → find corresponding target path
+        srcPath = resPath;
+        tgtPath = buildTargetPathCandidates(resPath)[0] || null;
+      } else {
+        // Not clearly source or target, just send what we have
+        srcPath = resProfileId === srcId ? resPath : null;
+        tgtPath = resProfileId === tgtId ? resPath : null;
       }
     }
-  }
-  const freshRun = await api(`/api/agent/runs/${encodeURIComponent(run.id)}`);
-  state.agent.currentRun = freshRun;
-  renderAgentRunStatus(freshRun);
-  if ([2, 3, 4, 5, 6].includes(freshRun.status)) {
-    clearInterval(state.agent.eventTimer);
-    state.agent.eventTimer = null;
-    await loadAgentSnapshot(freshRun.threadId);
+
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        profileId: resProfileId ?? state.selectedProfile?.id ?? null,
+        resourcePath: resPath,
+        sourceProfileId: srcId,
+        targetProfileId: tgtId,
+        sourceResourcePath: srcPath,
+        targetResourcePath: tgtPath,
+        currentView: buildAgentCurrentView()
+      }),
+      signal: abortController.signal
+    });
+
+    if (!response.ok) {
+      updateLastChatMessage("error", `请求失败 (${response.status})`);
+      return;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const block of events) {
+        processSseBlock(block);
+      }
+    }
+
+    if (buffer.trim()) {
+      processSseBlock(buffer);
+    }
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      updateLastChatMessage("error", `连接错误：${escapeHtml(err.message)}`);
+    }
+  } finally {
+    releaseChatSendLock();
   }
 }
 
-async function approveAgentApproval(approvalId) {
-  setStatus("正在批准...");
-  await api(`/api/agent/approvals/${encodeURIComponent(approvalId)}/approve`, {});
-  setStatus("已批准");
-  if (state.agent.currentThreadId) {
-    await loadAgentSnapshot(state.agent.currentThreadId);
+function releaseChatSendLock() {
+  state.chat.abortController = null;
+}
+
+function processSseBlock(block) {
+  const lines = block.split("\n");
+  let eventName = "";
+  let dataJson = "";
+
+  for (const line of lines) {
+    if (line.startsWith("event: ")) {
+      eventName = line.slice(7).trim();
+    } else if (line.startsWith("data: ")) {
+      dataJson = line.slice(6).trim();
+    }
+  }
+
+  if (!dataJson) return;
+
+  let data;
+  try {
+    data = JSON.parse(dataJson);
+  } catch {
+    return;
+  }
+
+  switch (eventName) {
+    case "message":
+      updateLastChatMessage("status", "");
+      addChatMessage("assistant", escapeHtml(data.text || ""));
+      break;
+    case "tool_call":
+      addChatToolCall(data.tool, data.arguments || "{}", data.status || "pending", data.resultText || null);
+      if (data.status === "completed" &&
+          (data.tool === "poe_write_overlay_text" || data.tool === "poe_write_overlay_binary")) {
+        refreshOverlayList();
+      }
+      break;
+    case "command":
+      addChatCommand(data.command || "", data.exitCode);
+      break;
+    case "error":
+      updateLastChatMessage("status", "");
+      addChatMessage("error", escapeHtml(data.text || "未知错误"));
+      break;
+    case "diagnostic":
+      renderAgentDiagnostic(data.finding || data);
+      break;
+    case "done":
+      updateLastChatMessage("status", "");
+      releaseChatSendLock();
+      if (data.autoDiagnostic) {
+        addChatMessage("status", "检测到本次运行未完成，正在启动自动诊断...");
+      }
+      break;
   }
 }
 
-async function rejectAgentApproval(approvalId) {
-  setStatus("正在拒绝...");
-  await api(`/api/agent/approvals/${encodeURIComponent(approvalId)}/reject`, {});
-  setStatus("已拒绝");
-  if (state.agent.currentThreadId) {
-    await loadAgentSnapshot(state.agent.currentThreadId);
+function renderAgentDiagnostic(finding) {
+  const panel = $("agentDiagnosticPanel");
+  panel.classList.remove("hidden");
+  $("agentDiagnosticSummary").textContent = `${finding.code || "diagnostic"}：${finding.summary || ""}`;
+  $("approveAgentRepairBtn").disabled = finding.severity !== "high";
+  state.chat.pendingRepair = finding;
+  releaseChatSendLock();
+}
+
+async function approveAgentRepair() {
+  if (!state.chat.pendingRepair) return;
+  releaseChatSendLock();
+  const result = await api("/api/agent/repair/approve", {
+    runId: state.chat.pendingRepair.runId,
+    code: state.chat.pendingRepair.code
+  });
+  if (result?.repairRunId) {
+    addChatMessage("status", `Agent 修复已启动：${escapeHtml(result.repairRunId)}`);
+    pollAgentRepairRun(result.repairRunId);
   }
 }
 
-async function cancelAgentRun() {
-  const run = state.agent.currentRun;
-  if (!run) return;
-  setStatus("正在取消...");
-  await api(`/api/agent/runs/${encodeURIComponent(run.id)}/cancel`, {});
-  setStatus("已取消");
-  await loadAgentSnapshot(run.threadId);
+function pollAgentRepairRun(repairRunId) {
+  if (state.chat.repairPollTimer) {
+    clearTimeout(state.chat.repairPollTimer);
+  }
+
+  const terminalRepairStatuses = new Set(["completed", "failed", "cancelled"]);
+  const poll = async () => {
+    try {
+      const events = await api(`/api/agent/runs/${encodeURIComponent(repairRunId)}/trace`);
+      renderAgentRepairTrace(repairRunId, events || []);
+      const terminalRunEvent = [...(events || [])].reverse().find((event) =>
+        event.eventName === "run" && terminalRepairStatuses.has(event.status));
+      if (!terminalRunEvent) {
+        state.chat.repairPollTimer = setTimeout(poll, 1500);
+      }
+    } catch (error) {
+      addChatMessage("error", `Agent 修复进度读取失败：${escapeHtml(error.message)}`);
+    }
+  };
+
+  poll();
 }
 
-async function retryAgentRun() {
-  const run = state.agent.currentRun;
-  if (!run) return;
-  setStatus("正在重试...");
-  const retry = await api(`/api/agent/runs/${encodeURIComponent(run.id)}/retry`, {});
-  state.agent.currentRun = retry;
-  state.agent.lastEventSequence = 0;
-  await loadAgentSnapshot(retry.threadId);
+function renderAgentRepairTrace(repairRunId, events) {
+  const latest = [...events].reverse().find((event) => event.eventName === "codex_event" || event.eventName === "run");
+  if (!latest) return;
+  let text = `Agent 修复 ${repairRunId.slice(0, 8)}：${latest.eventName}/${latest.status}`;
+  try {
+    const data = JSON.parse(latest.dataJson || "{}");
+    if (data.message) {
+      text += `\n${data.message}`;
+    } else if (data.stderrSummary) {
+      text += `\n${data.stderrSummary}`;
+    }
+  } catch {
+  }
+  addChatMessage("status", escapeHtml(text));
+}
+
+function addChatMessage(role, content) {
+  const messagesEl = $("chatMessages");
+  const id = "chat-msg-" + (++chatMessageCount);
+  const div = document.createElement("div");
+  div.id = id;
+  div.className = "chat-msg chat-msg-" + role;
+
+  if (role === "user") {
+    div.innerHTML = '<div class="chat-msg-label">你</div><div class="chat-msg-content">' + content + "</div>";
+  } else if (role === "assistant") {
+    div.innerHTML = '<div class="chat-msg-label">AI</div><div class="chat-msg-content">' + content + "</div>";
+  } else if (role === "error") {
+    div.innerHTML = '<div class="chat-msg-label">错误</div><div class="chat-msg-content chat-error-text">' + content + "</div>";
+  } else if (role === "status") {
+    div.innerHTML = '<div class="chat-msg-label">AI</div><div class="chat-msg-content chat-status-text">' + content + "</div>";
+  }
+
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+function updateLastChatMessage(role, content) {
+  const messagesEl = $("chatMessages");
+  const lastMsg = messagesEl.lastElementChild;
+  if (!lastMsg) return;
+
+  if (role === "status") {
+    const contentEl = lastMsg.querySelector(".chat-status-text");
+    if (contentEl) {
+      contentEl.textContent = content || "思考中...";
+    } else {
+      lastMsg.className = "chat-msg chat-msg-status";
+      lastMsg.innerHTML = '<div class="chat-msg-label">AI</div><div class="chat-msg-content chat-status-text">' + (content || "思考中...") + "</div>";
+    }
+  } else if (role === "error") {
+    lastMsg.className = "chat-msg chat-msg-error";
+    lastMsg.innerHTML = '<div class="chat-msg-label">错误</div><div class="chat-msg-content chat-error-text">' + content + "</div>";
+  }
+}
+
+function addChatToolCall(tool, argsInput, status, resultText = null) {
+  const existing = findOpenToolCall(tool, argsInput);
+  if (existing) {
+    existing.querySelector(".chat-tool-status").textContent = status || "pending";
+    if (resultText) {
+      existing.querySelector(".chat-tool-result").textContent = summarizeChatToolResult(tool, resultText);
+    }
+    return existing;
+  }
+
+  const messagesEl = $("chatMessages");
+  const id = "chat-tool-" + (++chatMessageCount);
+  const div = document.createElement("div");
+  div.id = id;
+  div.className = "chat-tool-call";
+  div.dataset.toolCallKey = chatToolCallKey(tool, argsInput);
+
+  let argsDisplay = "";
+  if (argsInput && typeof argsInput === "object") {
+    argsDisplay = Object.entries(argsInput)
+      .map(function (kv) { return escapeHtml(kv[0]) + ": " + escapeHtml(String(kv[1]).slice(0, 200)); })
+      .join("<br>");
+  } else if (typeof argsInput === "string") {
+    try {
+      const args = JSON.parse(argsInput);
+      argsDisplay = Object.entries(args)
+        .map(function (kv) { return escapeHtml(kv[0]) + ": " + escapeHtml(String(kv[1]).slice(0, 200)); })
+        .join("<br>");
+    } catch {
+      argsDisplay = escapeHtml(argsInput.slice(0, 300));
+    }
+  } else {
+    argsDisplay = "";
+  }
+
+  div.innerHTML = '<div class="chat-tool-head"><span class="chat-tool-name">' + escapeHtml(tool) + '</span><span class="chat-tool-status">' + escapeHtml(status) + '</span></div><div class="chat-tool-args">' + argsDisplay + '</div><pre class="chat-tool-result"></pre>';
+  if (resultText) {
+    div.querySelector(".chat-tool-result").textContent = summarizeChatToolResult(tool, resultText);
+  }
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+function summarizeChatToolResult(tool, resultText) {
+  try {
+    const data = JSON.parse(resultText);
+    if (tool === "poe_get_project_knowledge") {
+      const sections = Array.isArray(data.sections) ? data.sections : [];
+      const first = sections[0];
+      return [
+        `知识块：${sections.length}`,
+        `缺失：${data.missingSectionIds?.length ?? 0}`,
+        first ? `示例：${first.sectionId} / ${first.title}` : "未返回知识块"
+      ].join("\n");
+    }
+
+    if (tool === "poe_find_current_table_non_simplified_chinese_cells") {
+      const first = Array.isArray(data.items) ? data.items[0] : null;
+      return [
+        `已检查行数：${data.inspectedRows ?? "未知"}`,
+        `未转简中候选：${data.candidates ?? 0}`,
+        first ? `示例：第 ${first.rowNumber} 行 / ${first.columnName || first.columnIndex}` : "未发现候选项"
+      ].join("\n");
+    }
+  } catch {
+  }
+
+  return resultText.slice(0, 2000);
+}
+
+function findOpenToolCall(tool, argsInput) {
+  const key = chatToolCallKey(tool, argsInput);
+  return document.querySelector(`[data-tool-call-key="${CSS.escape(key)}"]`);
+}
+
+function chatToolCallKey(tool, argsInput) {
+  return `${tool}:${JSON.stringify(argsInput || {})}`;
+}
+
+function addChatCommand(command, exitCode) {
+  const messagesEl = $("chatMessages");
+  const id = "chat-cmd-" + (++chatMessageCount);
+  const div = document.createElement("div");
+  div.id = id;
+  div.className = "chat-command";
+  div.innerHTML = '<div class="chat-cmd-line">$ ' + escapeHtml(command) + "</div>" + (exitCode !== null ? '<div class="chat-cmd-exit">退出码: ' + exitCode + "</div>" : "");
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 applyTheme(currentTheme);

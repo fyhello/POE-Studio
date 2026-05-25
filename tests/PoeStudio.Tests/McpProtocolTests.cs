@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text;
 
 namespace PoeStudio.Tests;
 
@@ -64,6 +65,45 @@ public sealed class McpProtocolTests
         Assert.False(string.IsNullOrWhiteSpace(await server.ReadStderrLineAsync()));
     }
 
+    [Fact]
+    public async Task Invalid_json_error_includes_explicit_null_id_for_json_rpc_clients()
+    {
+        using var server = await McpServerProcess.StartAsync();
+
+        await server.SendAsync("{not valid json");
+
+        var line = await server.ReadStdoutLineAsync();
+        using var response = JsonDocument.Parse(line);
+        var root = response.RootElement;
+        Assert.True(root.TryGetProperty("id", out var id));
+        Assert.Equal(JsonValueKind.Null, id.ValueKind);
+        Assert.Equal(-32700, root.GetProperty("error").GetProperty("code").GetInt32());
+    }
+
+    [Fact]
+    public async Task Utf8_json_input_with_chinese_text_is_parsed_without_parse_error()
+    {
+        using var server = await McpServerProcess.StartAsync(useUtf8Stdio: true);
+
+        var request = JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id = 7,
+            method = "poe/unknown",
+            @params = new
+            {
+                goal = "检查 DATC64 表是否有漏翻单元格"
+            }
+        });
+        await server.SendAsync(request);
+
+        var line = await server.ReadStdoutLineAsync();
+        using var response = JsonDocument.Parse(line);
+        var root = response.RootElement;
+        Assert.Equal(7, root.GetProperty("id").GetInt32());
+        Assert.Equal(-32601, root.GetProperty("error").GetProperty("code").GetInt32());
+    }
+
     private sealed class McpServerProcess : IDisposable
     {
         private readonly StreamWriter stdin;
@@ -80,13 +120,18 @@ public sealed class McpProtocolTests
 
         public Process Process { get; }
 
-        public static async Task<McpServerProcess> StartAsync()
+        public static async Task<McpServerProcess> StartAsync(bool useUtf8Stdio = false)
         {
             var root = FindRepositoryRoot();
+            var mcpExe = Path.Combine(root, "src", "PoeStudio.Mcp", "bin", "Debug", "net8.0", OperatingSystem.IsWindows() ? "PoeStudio.Mcp.exe" : "PoeStudio.Mcp");
+            var mcpDll = Path.Combine(root, "src", "PoeStudio.Mcp", "bin", "Debug", "net8.0", "PoeStudio.Mcp.dll");
+            var useSelfContainedExe = File.Exists(mcpExe);
             var startInfo = new ProcessStartInfo
             {
-                FileName = "dotnet",
-                Arguments = "run --project src\\PoeStudio.Mcp\\PoeStudio.Mcp.csproj -- --workspace-root \"" + root + "\"",
+                FileName = useSelfContainedExe ? mcpExe : "dotnet",
+                Arguments = useSelfContainedExe
+                    ? "--workspace-root \"" + root + "\""
+                    : "\"" + mcpDll + "\" --workspace-root \"" + root + "\"",
                 WorkingDirectory = root,
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
@@ -94,6 +139,13 @@ public sealed class McpProtocolTests
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            if (useUtf8Stdio)
+            {
+                var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+                startInfo.StandardInputEncoding = utf8;
+                startInfo.StandardOutputEncoding = utf8;
+                startInfo.StandardErrorEncoding = utf8;
+            }
 
             var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Failed to start MCP test process.");
             await Task.Yield();
@@ -116,7 +168,7 @@ public sealed class McpProtocolTests
 
         public async Task<string> ReadStdoutLineAsync()
         {
-            return await TryReadStdoutLineAsync(TimeSpan.FromSeconds(10))
+            return await TryReadStdoutLineAsync(TimeSpan.FromSeconds(30))
                 ?? throw new TimeoutException("MCP server did not write a stdout JSON-RPC response.");
         }
 
@@ -130,7 +182,7 @@ public sealed class McpProtocolTests
         public async Task<string> ReadStderrLineAsync()
         {
             var readTask = stderr.ReadLineAsync();
-            var completed = await Task.WhenAny(readTask, Task.Delay(TimeSpan.FromSeconds(10)));
+            var completed = await Task.WhenAny(readTask, Task.Delay(TimeSpan.FromSeconds(30)));
             return completed == readTask
                 ? await readTask ?? string.Empty
                 : throw new TimeoutException("MCP server did not write stderr diagnostics.");

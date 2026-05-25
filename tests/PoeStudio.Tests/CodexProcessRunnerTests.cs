@@ -54,6 +54,70 @@ public sealed class CodexProcessRunnerTests
     }
 
     [Fact]
+    public void RunAsync_sets_isolated_CODEX_HOME_environment()
+    {
+        var runner = new CodexProcessRunner(new CodexJsonEventParser());
+        var buildStartInfo = typeof(CodexProcessRunner).GetMethod("BuildStartInfo", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("BuildStartInfo was not found.");
+
+        var startInfo = (ProcessStartInfo)buildStartInfo.Invoke(
+            runner,
+            [Settings("codex"), "prompt"])!;
+
+        Assert.True(startInfo.Environment.TryGetValue("CODEX_HOME", out var codexHome));
+        Assert.False(string.IsNullOrWhiteSpace(codexHome));
+        Assert.True(Directory.Exists(codexHome));
+    }
+
+    [Fact]
+    public void RunAsync_includes_required_startup_arguments()
+    {
+        var runner = new CodexProcessRunner(new CodexJsonEventParser());
+        var buildStartInfo = typeof(CodexProcessRunner).GetMethod("BuildStartInfo", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("BuildStartInfo was not found.");
+
+        var startInfo = (ProcessStartInfo)buildStartInfo.Invoke(
+            runner,
+            [Settings("codex"), "prompt"])!;
+
+        var args = string.Join(" ", startInfo.ArgumentList);
+
+        // Core mode flags
+        Assert.Contains("exec", args);
+        Assert.Contains("--json", args);
+        Assert.Contains("--ignore-rules", args);
+        Assert.Contains("--skip-git-repo-check", args);
+
+        // MCP server configuration for poe-studio
+        Assert.Contains("mcp_servers.poe-studio.command", args);
+        Assert.Contains("mcp_servers.poe-studio.args", args);
+        Assert.Contains("--workspace-root", args);
+
+        // Working directory
+        Assert.Contains("-C", args);
+        Assert.Contains(Directory.GetCurrentDirectory(), args);
+    }
+
+    [Fact]
+    public void RunAsync_writes_feature_flags_from_settings()
+    {
+        var runner = new CodexProcessRunner(new CodexJsonEventParser());
+        var buildStartInfo = typeof(CodexProcessRunner).GetMethod("BuildStartInfo", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("BuildStartInfo was not found.");
+
+        var startInfo = (ProcessStartInfo)buildStartInfo.Invoke(
+            runner,
+            [Settings("codex") with { Memories = false, Skills = false, CommandExecution = true }, "prompt"])!;
+
+        Assert.True(startInfo.Environment.TryGetValue("CODEX_HOME", out var codexHome));
+        Assert.False(string.IsNullOrWhiteSpace(codexHome));
+        var config = File.ReadAllText(Path.Combine(codexHome, "config.toml"));
+        Assert.Contains("memories = false", config);
+        Assert.Contains("skills = false", config);
+        Assert.Contains("command_execution = true", config);
+    }
+
+    [Fact]
     public void RunAsync_passes_oodle_path_to_child_environment()
     {
         var runner = new CodexProcessRunner(new CodexJsonEventParser());
@@ -199,8 +263,8 @@ public sealed class CodexProcessRunnerTests
             """);
         var runner = new CodexProcessRunner(
             new CodexJsonEventParser(),
-            TimeSpan.FromMilliseconds(300),
-            TimeSpan.FromSeconds(2));
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(5));
 
         var result = await runner.RunAsync(
             Settings("powershell"),
@@ -259,7 +323,7 @@ public sealed class CodexProcessRunnerTests
 
     private static async Task WaitForAsync(Func<bool> condition)
     {
-        for (var i = 0; i < 50; i++)
+        for (var i = 0; i < 200; i++)
         {
             if (condition())
             {

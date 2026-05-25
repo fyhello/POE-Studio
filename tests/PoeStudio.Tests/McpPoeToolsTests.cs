@@ -10,6 +10,47 @@ namespace PoeStudio.Tests;
 public sealed class McpPoeToolsTests
 {
     [Fact]
+    public async Task Get_project_overview_prefers_current_view_tools_for_current_table_untranslated_checks()
+    {
+        var root = CreateTempDirectory();
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync("poe_get_project_overview", EmptyArguments(), CancellationToken.None);
+        var text = result.Content.Single().Text;
+
+        Assert.False(result.IsError);
+        Assert.Contains("poe_get_current_view_context", text);
+        Assert.Contains("poe_find_current_table_untranslated_cells", text);
+        Assert.Contains("poe_find_current_table_non_simplified_chinese_cells", text);
+        Assert.Contains("currentViewContextId", text);
+        Assert.Contains("source/current source", text);
+        Assert.Contains("target/current target", text);
+        Assert.Contains("knowledgeIndex", text);
+        Assert.Contains("core.contract", text);
+        Assert.Contains("workflow.current-view", text);
+        Assert.Contains("poe_get_project_knowledge", text);
+        Assert.DoesNotContain("Find untranslated cells: Use poe_datc64_extract_translatable_cells", text);
+        Assert.DoesNotContain("This file is the always-on POE Studio Agent contract", text);
+    }
+
+    [Fact]
+    public async Task Get_project_knowledge_returns_requested_sections()
+    {
+        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_get_project_knowledge",
+            JsonSerializer.SerializeToElement(new { sectionIds = new[] { "core.contract" }, maxBytes = 12000 }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal("0.1", payload.RootElement.GetProperty("version").GetString());
+        Assert.Contains("source", payload.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Get_workspace_success_returns_root_and_source()
     {
         var root = CreateTempDirectory();
@@ -260,6 +301,49 @@ public sealed class McpPoeToolsTests
         Assert.True(result.IsError);
         Assert.Contains("physical_path_outside_allowed_roots", result.Content.Single().Text);
         Assert.DoesNotContain("do not read", result.Content.Single().Text);
+    }
+
+    [Fact]
+    public async Task Get_agent_run_trace_reads_recent_trace_events()
+    {
+        var root = CreateTempDirectory();
+        var runId = Guid.NewGuid().ToString("N");
+        await new PoeStudio.Storage.Agent.AgentRunTraceStore(root).AppendAsync(
+            runId,
+            new AgentRunTraceEventDto("tool_call", "observed", "{\"tool\":\"poe_get_workspace\"}", DateTimeOffset.UtcNow),
+            CancellationToken.None);
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_get_agent_run_trace",
+            JsonSerializer.SerializeToElement(new { runId }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal(runId, payload.RootElement.GetProperty("runId").GetString());
+        Assert.Single(payload.RootElement.GetProperty("events").EnumerateArray());
+    }
+
+    [Theory]
+    [InlineData(-1, 1)]
+    [InlineData(9999, 300)]
+    public async Task Get_agent_recent_logs_clamps_max_lines(int requested, int expected)
+    {
+        var root = CreateTempDirectory();
+        await File.WriteAllLinesAsync(Path.Combine(root, "poe-studio-dev.out.log"), Enumerable.Range(1, 500).Select(i => "line-" + i));
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_get_agent_recent_logs",
+            JsonSerializer.SerializeToElement(new { maxLines = requested }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal(expected, payload.RootElement.GetProperty("maxLines").GetInt32());
+        var entry = payload.RootElement.GetProperty("entries").EnumerateArray().First(e => e.GetProperty("name").GetString() == "poe-studio-dev.out.log");
+        Assert.Equal(expected, entry.GetProperty("lines").GetArrayLength());
     }
 
     private static JsonElement EmptyArguments()

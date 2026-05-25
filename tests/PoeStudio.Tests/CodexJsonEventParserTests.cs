@@ -67,6 +67,19 @@ public sealed class CodexJsonEventParserTests
     }
 
     [Fact]
+    public void ParseLine_extracts_completed_mcp_result_content()
+    {
+        var parsed = _parser.ParseLine("""
+            {"type":"item.completed","item":{"type":"mcp_tool_call","server":"poe-studio","tool":"poe_find_current_table_untranslated_cells","arguments":{"limit":3},"result":{"content":[{"type":"text","text":"{\"candidates\":3,\"items\":[{\"rowNumber\":1,\"sourceText\":\"火球\",\"targetText\":\"\"}]}"}]},"status":"completed"}}
+            """);
+
+        Assert.Equal(CodexParsedEventType.McpToolCall, parsed.EventType);
+        Assert.Contains("火球", parsed.PayloadJson);
+        using var payload = JsonDocument.Parse(parsed.PayloadJson!);
+        Assert.Contains("\"candidates\":3", payload.RootElement.GetProperty("resultText").GetString());
+    }
+
+    [Fact]
     public void ParseLine_extracts_agent_message()
     {
         var parsed = _parser.ParseLine("""
@@ -76,6 +89,18 @@ public sealed class CodexJsonEventParserTests
         Assert.Equal(CodexParsedEventType.AgentMessage, parsed.EventType);
         Assert.Equal("done", parsed.Message);
         Assert.False(parsed.IsToolCall);
+    }
+
+    [Fact]
+    public void ParseLine_marks_turn_completed_as_terminal_success()
+    {
+        var parsed = _parser.ParseLine("""
+            {"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}
+            """);
+
+        Assert.Equal(CodexParsedEventType.FinalMessage, parsed.EventType);
+        Assert.True(parsed.IsTerminal);
+        Assert.Equal(string.Empty, parsed.Message);
     }
 
     [Fact]

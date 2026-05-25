@@ -1,0 +1,70 @@
+{
+  "version": "0.1",
+  "updatedAt": "2026-05-25",
+  "coreSectionId": "core.contract",
+  "sections": [
+    {
+      "sectionId": "core.contract",
+      "title": "Core Agent Contract",
+      "summary": "Always-on POE Studio Agent semantics.",
+      "file": "docs/agent/knowledge/core-contract.md",
+      "keywords": ["source", "target", "current-view", "overlay", "tool-fit"],
+      "appliesWhen": ["every agent run"],
+      "priority": 100
+    },
+    {
+      "sectionId": "workflow.current-view",
+      "title": "Current View Workflow",
+      "summary": "Use current UI snapshots for current table, draft, opened table, and comparison tasks.",
+      "file": "docs/agent/knowledge/workflows/current-view.md",
+      "keywords": ["current table", "current draft", "opened table", "currentViewContextId", "UI snapshot"],
+      "appliesWhen": ["user refers to current UI state", "currentViewContextId is available"],
+      "priority": 90
+    },
+    {
+      "sectionId": "workflow.datc64-translation",
+      "title": "DATC64 Translation Workflow",
+      "summary": "DATC64 source/reference and target/editable semantics, simplified Chinese checks, and overlay writes.",
+      "file": "docs/agent/knowledge/workflows/datc64-translation.md",
+      "keywords": ["DATC64", "Simplified Chinese", "Traditional Chinese", "source", "target", "translation"],
+      "appliesWhen": ["DATC64 table comparison", "translation checks", "non-simplified target cells"],
+      "priority": 80
+    },
+    {
+      "sectionId": "workflow.overlay-staging",
+      "title": "Overlay Staging Workflow",
+      "summary": "Draft write layer, review operations, and patch-build write boundaries.",
+      "file": "docs/agent/knowledge/workflows/overlay-staging.md",
+      "keywords": ["overlay", "staging", "draft", "patch build", "revert", "audit"],
+      "appliesWhen": ["write intent", "overlay review", "patch build"],
+      "priority": 70
+    },
+    {
+      "sectionId": "workflow.resource-indexing",
+      "title": "Resource Indexing Workflow",
+      "summary": "Profile, resource path, raw read, Native/GGPK/Oodle, and index boundary semantics.",
+      "file": "docs/agent/knowledge/workflows/resource-indexing.md",
+      "keywords": ["profile", "resource index", "raw read", "Native", "GGPK", "Oodle"],
+      "appliesWhen": ["resource reads", "indexing", "Native/GGPK/Oodle diagnostics"],
+      "priority": 60
+    },
+    {
+      "sectionId": "diagnostics.tool-fit-and-capability-gap",
+      "title": "Tool Fit And Capability Gap Diagnostics",
+      "summary": "Rules for checking whether tool semantics answer the user goal and reporting missing capability.",
+      "file": "docs/agent/knowledge/diagnostics/tool-fit-and-capability-gap.md",
+      "keywords": ["tool-fit", "capability gap", "tool mismatch", "diagnostics", "zero results"],
+      "appliesWhen": ["tool result may not answer the user goal", "available tools are insufficient"],
+      "priority": 85
+    },
+    {
+      "sectionId": "diagnostics.learning-loop-v0.2",
+      "title": "Learning Loop v0.2 Boundary",
+      "summary": "Scope boundary for turning user corrections into reviewed knowledge, tests, and replay assets later.",
+      "file": "docs/agent/knowledge/diagnostics/learning-loop-v0.2.md",
+      "keywords": ["learning loop", "user correction", "proposal", "replay", "v0.2"],
+      "appliesWhen": ["user correction should become a future system asset"],
+      "priority": 40
+    }
+  ]
+}

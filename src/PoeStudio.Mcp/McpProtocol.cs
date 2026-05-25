@@ -119,7 +119,7 @@ public static class McpProtocol
                 title = ServerTitle,
                 version = ServerVersion
             },
-            instructions = "Read-only POE Studio project context tools."
+            instructions = "POE Studio modding tools for Path of Exile 2. Call poe_get_project_overview at session start to learn the project domain, terminology, and common workflows before responding to user requests.\n\nCRITICAL ENVIRONMENT RULES:\n1. You are running in a CODEX environment, not Claude Code. The Skill tool and shell command execution are DISABLED. Do NOT read any skill files from .agents/ or .codex/ directories — they are designed for Claude Code and not applicable here.\n2. Do NOT execute shell commands. All project data access must go through the available MCP tools: poe_read_resource, poe_search_resources, poe_get_project_overview, etc.\n3. Use MCP tools for EVERYTHING. If you need project context, call poe_get_project_overview. If you need to read a resource file, call poe_read_resource. If you need to search, call poe_search_resources.\n4. The Skill tool is NOT available. Skip all skill-related instructions."
         };
     }
 
@@ -187,7 +187,7 @@ public sealed record McpResponse(
 
     public static McpResponse Failure(JsonElement? id, int code, string message)
     {
-        return new McpResponse("2.0", id, null, new McpError(code, message));
+        return new McpResponse("2.0", id ?? JsonSerializer.SerializeToElement<object?>(null), null, new McpError(code, message));
     }
 }
 

@@ -14,10 +14,10 @@ using PoeStudio.Core.Tables;
 using PoeStudio.Core.Translation;
 using PoeStudio.Core.Workspace;
 using PoeStudio.Core.Agent;
-using PoeStudio.Storage.Agent;
 using PoeStudio.Storage.Overlay;
 using PoeStudio.Storage.Profiles;
 using PoeStudio.Storage.Batch;
+using PoeStudio.Storage.Agent;
 using PoeStudio.Storage.Migration;
 using PoeStudio.Storage.Resources;
 using PoeStudio.Storage.Tables;
@@ -25,7 +25,6 @@ using PoeStudio.Storage.Tables;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddCors();
 builder.Services.AddSingleton<InMemoryJobStore>();
-builder.Services.AddSingleton<AgentRunCancellationRegistry>();
 builder.Services.AddSingleton<WorkspaceRootProvider>();
 builder.Services.AddScoped(sp => new ProfileStore(sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
 builder.Services.AddSingleton(sp => new ResourceIndexStore(() => sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
@@ -57,43 +56,29 @@ builder.Services.AddScoped(sp => new PatchOverlayDraftService(
     sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot,
     sp.GetRequiredService<OverlayStore>(),
     sp.GetRequiredService<ResourceIndexStore>()));
-builder.Services.AddScoped(sp => new AgentStore(sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
 builder.Services.AddSingleton<CodexJsonEventParser>();
-builder.Services.AddSingleton<AgentPromptBuilder>();
-builder.Services.AddSingleton<Datc64TranslationDraftParser>();
-builder.Services.AddSingleton<AgentRepositoryRootResolver>();
-builder.Services.AddScoped<AgentProjectContextService>();
 builder.Services.AddScoped<CodexProcessRunner>();
 builder.Services.AddScoped<ICodexProcessRunner>(sp => sp.GetRequiredService<CodexProcessRunner>());
-builder.Services.AddScoped<AgentOrchestrator>();
-builder.Services.AddScoped(sp => new Datc64DraftApplyService(
-    sp.GetRequiredService<AgentStore>(),
-    sp.GetRequiredService<OverlayStore>(),
-    async (profileId, resourcePath, cancellationToken) =>
-    {
-        var resourceIndex = sp.GetRequiredService<ResourceIndexStore>();
-        var profiles = sp.GetRequiredService<ProfileStore>();
-        var nativeContentResolver = sp.GetRequiredService<NativeBundleResourceContentResolver>();
-        var resource = await resourceIndex.GetByPathAsync(profileId, resourcePath, cancellationToken)
-            ?? throw new InvalidOperationException("resource_not_found");
-        var read = await ReadResourceBytesAsync(profileId, null, resource, profiles, nativeContentResolver, cancellationToken);
-        if (!read.Ok)
-        {
-            throw new InvalidOperationException(read.ErrorCode);
-        }
-
-        return new Datc64DraftResourceReadResult(
-            resource,
-            read.Data,
-            resource.PhysicalPath,
-            !string.IsNullOrWhiteSpace(resource.PhysicalPath) && File.Exists(resource.PhysicalPath));
-    }));
+builder.Services.AddScoped(sp => new AgentCurrentViewStore(sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
+builder.Services.AddScoped(sp => new AgentRunTraceStore(sp.GetRequiredService<WorkspaceRootProvider>().CurrentRoot));
+builder.Services.AddScoped(sp =>
+{
+    var section = sp.GetRequiredService<IConfiguration>().GetSection("CodexSettings");
+    return new AgentRepairService(
+        sp.GetRequiredService<ICodexProcessRunner>(),
+        sp.GetRequiredService<AgentRunTraceStore>(),
+        Environment.CurrentDirectory,
+        section["CodexPath"] ?? "codex",
+        section["Model"],
+        section["Profile"],
+        section["McpServerName"] ?? "poe-studio");
+});
+builder.Services.AddScoped<ChatService>();
 
 var app = builder.Build();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.MapAgentRoutes();
 
 app.MapGet("/api/health", () => ApiResponse<object>.Success(new
 {
@@ -3263,6 +3248,58 @@ app.MapGet("/api/jobs/{jobId}", (string jobId, InMemoryJobStore jobs) =>
     }
 
     return Results.Ok(ApiResponse<JobSnapshotDto>.Success(job));
+});
+
+app.MapPost("/api/chat", async (
+    HttpContext context,
+    ChatRequest request,
+    ChatService chatService,
+    CancellationToken cancellationToken) =>
+{
+    context.Response.ContentType = "text/event-stream";
+    context.Response.Headers.CacheControl = "no-cache";
+    context.Response.Headers.Connection = "keep-alive";
+
+    try
+    {
+        await foreach (var chatEvent in chatService.RunCodexAsync(
+            request.Message,
+            request.ProfileId,
+            request.ResourcePath,
+            request.SourceProfileId,
+            request.TargetProfileId,
+            request.SourceResourcePath,
+            request.TargetResourcePath,
+            request.CurrentView,
+            cancellationToken))
+        {
+            await context.Response.WriteAsync($"event: {chatEvent.EventName}\n", cancellationToken);
+            await context.Response.WriteAsync($"data: {chatEvent.DataJson}\n\n", cancellationToken);
+            await context.Response.Body.FlushAsync(cancellationToken);
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // client disconnected — clean exit
+    }
+});
+
+app.MapPost("/api/agent/repair/approve", async (
+    AgentRepairApproveRequest request,
+    AgentRepairService service,
+    CancellationToken cancellationToken) =>
+{
+    var result = await service.StartRepairAsync(request.RunId, request.Code, userApproved: true, cancellationToken);
+    return Results.Ok(ApiResponse<AgentRepairStartResultDto>.Success(result));
+});
+
+app.MapGet("/api/agent/runs/{runId}/trace", async (
+    string runId,
+    AgentRunTraceStore traceStore,
+    CancellationToken cancellationToken) =>
+{
+    var events = await traceStore.ReadAsync(runId, cancellationToken);
+    return Results.Ok(ApiResponse<IReadOnlyList<AgentRunTraceEventDto>>.Success(events));
 });
 
 app.Run();

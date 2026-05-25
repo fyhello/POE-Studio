@@ -7,6 +7,9 @@ TestResults/
 *.user
 artifacts/
 
+# Local POE Studio acceptance/runtime logs
+/poe-*.log
+
 # Publish output copied to the repository root
 /*.deps.json
 /*.dll

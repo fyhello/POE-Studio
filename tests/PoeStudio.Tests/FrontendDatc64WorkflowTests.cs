@@ -5,6 +5,125 @@ namespace PoeStudio.Tests;
 public sealed class FrontendDatc64WorkflowTests
 {
     [Fact]
+    public void Chat_request_includes_current_table_view_context()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            ".."));
+        var appJs = File.ReadAllText(Path.Combine(repoRoot, "src", "PoeStudio.Api", "wwwroot", "app.js"));
+
+        Assert.Contains("function buildAgentCurrentView()", appJs);
+        Assert.Contains("state.tableEditBase", appJs);
+        Assert.Contains("state.tableReference", appJs);
+        Assert.Contains("currentView: buildAgentCurrentView()", appJs);
+        Assert.Contains("targetRows: summarizeAgentTableRows(state.tableEditBase?.rows", appJs);
+        Assert.Contains("sourceRows: summarizeAgentTableRows(state.tableReference?.inspection?.rows", appJs);
+    }
+
+    [Fact]
+    public void Chat_tool_call_renderer_accepts_object_arguments_from_sse()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            ".."));
+        var appJs = File.ReadAllText(Path.Combine(repoRoot, "src", "PoeStudio.Api", "wwwroot", "app.js"));
+
+        Assert.Contains("function addChatToolCall(tool, argsInput, status, resultText = null)", appJs);
+        Assert.Contains("typeof argsInput === \"string\"", appJs);
+        Assert.Contains("argsInput && typeof argsInput === \"object\"", appJs);
+        Assert.Contains("function findOpenToolCall(tool, argsInput)", appJs);
+        Assert.Contains("function chatToolCallKey(tool, argsInput)", appJs);
+        Assert.Contains(".chat-tool-result", appJs);
+        Assert.Contains("poe_get_project_knowledge", appJs);
+        Assert.Contains("知识块", appJs);
+        Assert.Contains("poe_find_current_table_non_simplified_chinese_cells", appJs);
+        Assert.Contains("未转简中候选", appJs);
+        Assert.DoesNotContain("section.Content", appJs);
+        Assert.DoesNotContain("argsJson.slice", appJs);
+    }
+
+    [Fact]
+    public void Chat_send_lock_is_released_when_done_event_arrives()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            ".."));
+        var appJs = File.ReadAllText(Path.Combine(repoRoot, "src", "PoeStudio.Api", "wwwroot", "app.js"));
+
+        Assert.Contains("function releaseChatSendLock()", appJs);
+        Assert.Contains("state.chat.abortController = null;", appJs);
+        Assert.Contains("case \"done\":", appJs);
+        Assert.Contains("releaseChatSendLock();", appJs);
+    }
+
+    [Fact]
+    public void Chat_ui_exposes_diagnostic_and_repair_approval_controls()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            ".."));
+        var html = File.ReadAllText(Path.Combine(repoRoot, "src", "PoeStudio.Api", "wwwroot", "index.html"));
+        var appJs = File.ReadAllText(Path.Combine(repoRoot, "src", "PoeStudio.Api", "wwwroot", "app.js"));
+
+        Assert.Contains("agentDiagnosticPanel", html);
+        Assert.Contains("approveAgentRepairBtn", html);
+        Assert.Contains("case \"diagnostic\":", appJs);
+        Assert.Contains("renderAgentDiagnostic", appJs);
+        Assert.Contains("approveAgentRepair", appJs);
+    }
+
+    [Fact]
+    public void Chat_repair_approval_tracks_repair_run_progress()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            ".."));
+        var appJs = File.ReadAllText(Path.Combine(repoRoot, "src", "PoeStudio.Api", "wwwroot", "app.js"));
+
+        Assert.Contains("repairRunId", appJs);
+        Assert.Contains("pollAgentRepairRun", appJs);
+        Assert.Contains("/api/agent/runs/", appJs);
+        Assert.Contains("Agent 修复已启动", appJs);
+    }
+
+    [Fact]
+    public void Chat_repair_polling_continues_for_queued_and_started_runs()
+    {
+        var repoRoot = Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            ".."));
+        var appJs = File.ReadAllText(Path.Combine(repoRoot, "src", "PoeStudio.Api", "wwwroot", "app.js"));
+
+        Assert.Contains("const terminalRepairStatuses = new Set([\"completed\", \"failed\", \"cancelled\"])", appJs);
+        Assert.Contains("terminalRepairStatuses.has(event.status)", appJs);
+        Assert.DoesNotContain("event.status !== \"started\"", appJs);
+    }
+
+    [Fact]
     public void Resource_tree_marks_files_and_directories_that_have_overlay_drafts()
     {
         var repoRoot = Path.GetFullPath(Path.Combine(

@@ -1,6 +1,8 @@
 # POE Studio 项目工作流与 Agent 知识底座
 
 > 本文用于帮助后续 Agent 理解 POE Studio 的项目语义、用户工作流、工具边界和审批风险。它是知识底座，不是 Stage 2 / Stage 3 修复计划，也不是 DATC64 专项方案。
+>
+> 运行时以 `docs/agent/knowledge/index.json` 和其中登记的 knowledge section 为准。本文保留为来源材料、证据索引和长篇解释，不应被整体注入 Agent prompt。
 
 ## 1. 文档目标
 
@@ -317,27 +319,45 @@ Stage 1 MCP 工具当前包括：
 | `poe_search_resources` | 在已索引资源中搜索 | “帮我找某个资源。” | `profileId`、`query`、`limit` | 查询索引记录，不读取 overlay 文件 | 不扫描磁盘 |
 | `poe_read_resource` | 读取索引资源内容摘要 | “读取这个资源看看。” | `profileId`、`resourcePath`、`maxBytes`、`oodlePath` | 读取索引资源内容；当前无 `useOverlay` / `preferOverlay` 参数，不代表 UI 当前工作态 | 只读；受 maxBytes 和 Native/Oodle 约束 |
 | `poe_datc64_extract_translatable_cells` | 提取 DATC64 或 string-candidate 可翻译单元 | “提取表里的可翻译文本。” | `profileId`、`resourcePath`、`limit`、`oodlePath` | 基于 MCP 只读资源读取边界；当前无 overlay-aware 参数，不能判断目标草稿层已有翻译 | 只读；不写 overlay；不替代跨 profile 对比 |
+| `poe_get_current_view_context` | 读取当前 UI 工作态快照 | “当前表格是什么？”“当前打开了什么？” | `contextId` | 不读底层资源，不触发 Oodle | 只读；快照有时效 |
+| `poe_find_current_table_untranslated_cells` | 基于当前目标/来源表快照查找漏翻候选 | “检查当前表格漏翻。” | `contextId`、`limit` | 使用 UI 已解析表格，不重新解压 bundle | 只读；第一版最多检查快照中的前 200 行 |
 
-Stage 2 Agent runtime 当前包含：
+当前 CODEX 桥接架构——用户输入直达 MCP 工具：
 
-- settings：Codex path、model、profile、sandbox、MCP server name、working directory、approval mode。
-- thread：用户任务会话。
-- message：用户/助手/系统消息。
-- run：一次 Agent 执行。
-- event：Codex stdout/stderr、MCP tool call、Agent message、approval、overlay write、failure、cancel。
-- plan：run 的计划步骤。
-- approval：写入前审批记录。
-- Codex runner：`codex exec --json` 子进程。
-- PromptBuilder：根据能力、上下文、历史消息、MCP 工具生成 prompt。
-- approval 后写入服务：当前 DATC64 draft 由后端在 approval 后写 overlay。
+用户自然语言 → POST /api/chat SSE → ChatService → CodexProcessRunner → `codex exec --json` → PoeStudio.Mcp tools → MCP 工具结果 → SSE stream → UI 展示。
 
-当前能力：
+核心组件：
 
-| taskKind | 含义 | 写入 |
-| --- | --- | --- |
-| `question` | 通用只读问答 | 不允许 |
-| `read-only-analysis` | 资源/项目只读分析 | 不允许 |
-| `datc64-translation` | DATC64 翻译 proposal | approval 后后端写 overlay |
+- **ChatService**（`src/PoeStudio.Api/ChatService.cs`）：接收用户消息，包装 session context（profileId、resourcePath），构造 CODEX prompt，通过 Channel&lt;T&gt; 桥接为 SSE 事件流。
+- **CodexProcessRunner**（`src/PoeStudio.Core/Agent/CodexProcessRunner.cs`）：管理 `codex exec --json` 子进程生命周期——启动、stdout JSONL 逐行解析、stderr 捕获、watchdog 超时、取消时杀进程树。
+- **PoeStudio.Mcp 工具**（`src/PoeStudio.Mcp/`）：通过 JSON-RPC 2.0 over stdio 提供项目数据读取（只读工具）和 overlay 写入（写工具）。
+- **Overlay staging 审批边界**：所有 `poe_write_overlay_*` 写操作进入 staging area。用户通过 UI overlay 面板审核后，手动发起 patch build 才影响游戏文件。
+
+当前架构没有后端任务分类、Planner、Guard、Approval Run。CODEX 自主决定调用哪些 MCP 工具。写工具直接写入 overlay staging，没有后端的"审批后写入"流程——用户通过 UI 的 overlay 列表审查变更。
+
+数据流：
+
+1. 用户在聊天框输入自然语言，前端将 `{ message, profileId, resourcePath, sourceProfileId, targetProfileId, sourceResourcePath, targetResourcePath }` 通过 SSE 发送到 `POST /api/chat`。其中 source/target resourcePath 由 `buildReferencePathCandidates` / `buildTargetPathCandidates` 自动推导配对资源路径（例如目标繁中表 → 简中来源表）。
+2. `ChatService.RunCodexAsync` 包装 session context prompt，调用 `CodexProcessRunner.RunAsync`。
+3. `CodexProcessRunner` 启动 `codex exec --json` 子进程，自动配置 `mcp_servers.poe-studio` 指向本地 PoeStudio.Mcp。
+4. CODEX 子进程启动后调用 `poe_get_project_overview` 了解项目领域，然后根据用户任务调用其他 MCP 工具。
+5. MCP 工具结果通过 JSONL stdout 流回，`CodexJsonEventParser` 逐行解析，`RunInternalAsync` 通过 Channel 桥接为 SSE events。
+6. 前端 `processSseBlock` 收到 tool_call/message/error/done 事件，动态更新聊天界面和 overlay 列表。
+
+自然语言“当前表格漏翻”流程：
+
+1. UI 提交 `currentView`。
+2. ChatService 保存 current-view snapshot。
+3. Prompt 暴露 `currentViewContextId`。
+4. Codex 调用 `poe_find_current_table_untranslated_cells`。
+5. UI 展示候选；不写 overlay。
+
+关键设计决策：
+
+- 不做后端任务分类——CODEX 自主理解用户意图并选择合适的 MCP 工具。
+- 不做 Planner/Guard——CODEX 的规划能力已由模型提供，不需要后端重复。
+- 写操作直接进 overlay staging——没有 approval run 实体，用户通过 UI 面板做最终审核。
+- 前端 `processSseBlock` 在 tool_call 完成时自动调用 `refreshOverlayList()`，确保 overlay 面板实时反映 staging 状态。
 
 ## 14. 工具与 API 地图
 
@@ -350,7 +370,7 @@ Stage 2 Agent runtime 当前包含：
 | migration/import | `/api/resources/migration-*`、`/api/jobs/patch/import-*` | 跨 profile 迁移、外部补丁导入、转草稿 | 写草稿和批量应用需审批 |
 | patch/build/install | `/api/patch/*`、`/api/jobs/patch/*` | dry-run、readiness、build、verify、install、rollback、sandbox | build/install/uninstall 高风险 |
 | jobs | `/api/jobs/{jobId}` | 跟踪长任务 | job 是进程内状态，不是持久队列 |
-| agent | `/api/agent/*` | 创建 thread/run、记录事件、审批写入 | 写入必须 approval |
+| agent (CODEX 桥接) | `POST /api/chat` (SSE) | CODEX 聊天、MCP 工具调用、overlay staging | 写工具只写 staging，用户通过 UI 审核。无后端 approval run |
 | MCP | `poe_*` tools | Codex 只读读取项目上下文 | Stage 1 工具只读，不直接写 overlay |
 
 ## 15. Agent 自然语言任务理解流程
@@ -358,29 +378,26 @@ Stage 2 Agent runtime 当前包含：
 默认流程：
 
 ```text
-识别任务意图
+识别用户意图
 → 识别 profile / resource / layer / action
-→ 查询项目上下文
-→ 查询实时状态
-→ 判断只读、dry-run、写入、构建、安装风险级别
-→ 调用工具或提出澄清问题
-→ 输出计划/候选/审批点
-→ 执行获批动作
-→ 记录结果与证据
+→ 调用 poe_get_project_overview 了解项目上下文
+→ 调用 poe_list_profiles / poe_get_index_status 查询实时状态
+→ 调用只读 MCP 工具读取资源
+→ 调用 poe_write_overlay_* 写入 overlay staging（如需要）
+→ 用户通过 UI 审核 overlay 列表后手动 patch build
 ```
 
 典型样例：
 
-| 用户说法 | Agent 应先确认 | 可调用工具/API | 何时问用户 |
+| 用户说法 | Agent 应先确认 | 可调用 MCP 工具 | 何时问用户 |
 | --- | --- | --- | --- |
-| “翻译这个表。” | 目标 profile、来源 profile、目标表、参考表、读取层、可编辑列 | `poe_list_profiles`、`poe_get_index_status`、`poe_search_resources`、`poe_datc64_extract_translatable_cells`、后端 Agent approval | profile/resource/layer 不明确，或要写 overlay 前 |
-| “帮我找某个资源。” | profile、关键词、资源类型 | `poe_search_resources` | 多 profile 都可能匹配时 |
-| “把这个改成草稿。” | 当前资源、目标文本/文件、是否覆盖已有 overlay | preview/read、overlay save API | 写入内容不明确或已有草稿时 |
-| “对比国服和国际服差异。” | source profile、target profile、query/path、是否使用 overlay | resources match、migration plan、table inspect | 来源/目标角色不明确时 |
-| “构建补丁。” | 目标 profile、writer、bundleName、Oodle、是否只 dry-run | patch dry-run、readiness、build | build/install 前必须确认 |
-| “为什么失败了。” | run/job/build id、错误发生阶段 | job、agent events、patch verification、readiness | 缺少失败对象时 |
-| “把外部补丁转成草稿。” | zip 路径、目标 profile、bundleName、Oodle | analyze zip、import zip、patch overlay draft | 写 overlay draft 前确认 |
-| “继续上次任务。” | thread/run、当前 profile/resource、上次 plan、pending approvals | Agent thread snapshot、events、overlay list | 存在多个未完成 thread 或 approval 时 |
+| “翻译这个表。” | 目标 profile、来源 profile、目标表、参考表、读取层、可编辑列 | `poe_get_project_overview`、`poe_list_profiles`、`poe_get_index_status`、`poe_search_resources`、`poe_read_resource`、`poe_datc64_extract_translatable_cells`、`poe_write_overlay_text` | profile/resource/layer 不明确，或已有 overlay 时 |
+| “帮我找某个资源。” | profile、关键词、资源类型 | `poe_search_resources`、`poe_read_resource` | 多 profile 都可能匹配时 |
+| “把这个改成草稿。” | 当前资源、目标文本/文件、是否覆盖已有 overlay | `poe_read_resource`、`poe_write_overlay_text` | 写入内容不明确或已有草稿时 |
+| “对比国服和国际服差异。” | source profile、target profile、query/path、是否使用 overlay | `poe_get_project_overview`、`poe_search_resources`、`poe_read_resource` | 来源/目标角色不明确时 |
+| “构建补丁。” | 目标 profile、writer、bundleName、Oodle、是否只 dry-run | patch dry-run、readiness、build（通过 REST API，非 MCP） | build/install 前必须确认 |
+| “把外部补丁转成草稿。” | zip 路径、目标 profile、bundleName、Oodle | analyze zip、import zip、patch overlay draft（通过 REST API） | 写 overlay draft 前确认 |
+| “继续上次任务。” | 当前 profile/resource、overlay 列表、上次聊天上下文 | `poe_list_overlays`、`poe_get_project_overview` | 存在多个未完成事项时 |
 
 风险与审批边界：
 
@@ -457,7 +474,7 @@ Agent 禁止行为：
 | Stage 1 MCP 工具已在验收报告中记录为 `Stage 1 status: PASS`。 | `docs/superpowers/reports/2026-05-22-poe-mcp-stage1-acceptance.md` |
 | Stage 2 后端 Agent runtime 已在验收报告中记录为 `Stage 2 status: PASS`。 | `docs/superpowers/reports/2026-05-22-poe-codex-bridge-stage2-acceptance.md` |
 | Stage 2 支持 `question`、`read-only-analysis`、`datc64-translation` 3 类能力。 | `src/PoeStudio.Core/Agent/AgentCapabilities.cs`；`tests/PoeStudio.Tests/AgentCapabilitiesTests.cs`；Stage 2 验收报告 |
-| Stage 2 DATC64 写入必须先产生 approval，批准后由后端写 overlay。 | `src/PoeStudio.Storage/Agent/AgentOrchestrator.cs`；`src/PoeStudio.Storage/Agent/Datc64DraftApplyService.cs`；`tests/PoeStudio.Tests/AgentApiSmokeTests.cs`；`tests/PoeStudio.Tests/Datc64DraftApplyServiceTests.cs` |
+| CODEX MCP 写工具 (`poe_write_overlay_text` / `poe_write_overlay_binary`) 直接写入 overlay staging，不经过后端审批服务。用户通过 UI overlay 面板审核。 | `src/PoeStudio.Mcp/PoeMcpWriteTools.cs`；`src/PoeStudio.Storage/Overlay/OverlayStore.cs`；`tests/PoeStudio.Tests/McpWriteToolsBehaviorTests.cs` |
 | 当前 Agent / MCP 事实不等于正式 Agent Workspace UI，Stage 3 才是 UI 工作台。 | `docs/superpowers/plans/2026-05-22-poe-codex-agent-roadmap.md`；`docs/superpowers/plans/2026-05-22-poe-codex-bridge-stage2.md` |
 
 ## 19. 合理推断
