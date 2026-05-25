@@ -528,53 +528,21 @@
       </div>
     </aside>
 
-    <aside id="agentWorkspace" class="panel agent-workspace hidden" aria-label="Agent 工作台">
-      <div class="agent-sidebar">
-        <div class="agent-section-head">
-          <h2>Agent</h2>
-          <button id="agentNewThreadBtn" type="button">新任务</button>
-          <button id="agentCloseBtn" type="button" title="关闭 Agent 面板">✕</button>
+    <aside id="chatWorkspace" class="panel chat-workspace hidden" aria-label="AI Chat">
+      <div class="chat-layout">
+        <div class="chat-head">
+          <h2>AI Chat</h2>
+          <button id="chatCloseBtn" type="button" title="关闭 Chat 面板">✕</button>
         </div>
-        <div id="agentSettingsSummary" class="agent-settings-summary">未加载设置</div>
-        <div id="agentThreadList" class="agent-thread-list"></div>
-
-        <div class="agent-run-composer">
-          <select id="agentTaskKindSelect" aria-label="任务类型">
-            <option value="auto" selected>自动规划</option>
-            <option value="question">强制提问</option>
-            <option value="read-only-analysis">强制只读分析</option>
-            <option value="datc64-translation">强制 DATC64 翻译</option>
-          </select>
-          <textarea id="agentGoalInput" spellcheck="false" placeholder="告诉 Agent 你要完成什么"></textarea>
-          <input id="agentResourcePathInput" type="text" spellcheck="false" placeholder="可选：资源路径">
-          <div class="agent-run-actions">
-            <button id="agentRunBtn" type="button">运行</button>
-            <button id="agentCancelRunBtn" type="button" disabled>取消</button>
-            <button id="agentRetryRunBtn" type="button" disabled>重试</button>
-          </div>
+        <div id="chatMessages" class="chat-messages"></div>
+        <section id="agentDiagnosticPanel" class="agent-diagnostic-panel hidden">
+          <div id="agentDiagnosticSummary"></div>
+          <button id="approveAgentRepairBtn" type="button" disabled>批准 Agent 修复</button>
+        </section>
+        <div class="chat-composer">
+          <textarea id="chatInput" spellcheck="false" placeholder="告诉 AI 助手你要做什么..." rows="2"></textarea>
+          <button id="chatSendBtn" type="button">发送</button>
         </div>
-
-        <div class="agent-status-row">
-          <span id="agentCurrentThreadStatus">未选择会话</span>
-          <span id="agentCurrentRunStatus">未运行</span>
-        </div>
-
-        <details class="agent-panel-section" open>
-          <summary>计划</summary>
-          <div id="agentPlanList" class="agent-plan-list"></div>
-        </details>
-        <details class="agent-panel-section" open>
-          <summary>事件</summary>
-          <div id="agentEventTimeline" class="agent-event-timeline"></div>
-        </details>
-        <details class="agent-panel-section" open>
-          <summary>审批</summary>
-          <div id="agentApprovalsPanel" class="agent-approvals-panel"></div>
-        </details>
-        <details class="agent-panel-section">
-          <summary>结果</summary>
-          <pre id="agentResultPanel" class="agent-result-panel"></pre>
-        </details>
       </div>
     </aside>
   </main>

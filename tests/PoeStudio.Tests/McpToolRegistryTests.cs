@@ -5,8 +5,9 @@ namespace PoeStudio.Tests;
 
 public sealed class McpToolRegistryTests
 {
-    private static readonly string[] RequiredToolNames =
+    private static readonly string[] ReadOnlyToolNames =
     [
+        "poe_get_project_overview",
         "poe_get_workspace",
         "poe_list_profiles",
         "poe_get_profile",
@@ -14,8 +15,21 @@ public sealed class McpToolRegistryTests
         "poe_search_resources",
         "poe_read_resource",
         "poe_datc64_extract_translatable_cells",
-        "poe_get_project_context"
+        "poe_get_current_view_context",
+        "poe_find_current_table_untranslated_cells",
+        "poe_get_agent_run_trace",
+        "poe_get_agent_recent_logs"
     ];
+
+    private static readonly string[] WriteToolNames =
+    [
+        "poe_write_overlay_text",
+        "poe_write_overlay_binary",
+        "poe_list_overlays",
+        "poe_revert_overlay"
+    ];
+
+    private static readonly string[] RequiredToolNames = [.. ReadOnlyToolNames, .. WriteToolNames];
 
     [Fact]
     public void Tools_list_returns_all_required_tools_with_descriptions_and_input_schemas()
@@ -31,6 +45,9 @@ public sealed class McpToolRegistryTests
             Assert.Equal(JsonValueKind.Object, tool.InputSchema.ValueKind);
             Assert.True(tool.InputSchema.TryGetProperty("type", out var type));
             Assert.Equal("object", type.GetString());
+            Assert.True(tool.InputSchema.TryGetProperty("required", out var required));
+            Assert.Equal(JsonValueKind.Array, required.ValueKind);
+            Assert.True(required.GetArrayLength() == 0 || tool.InputSchema.TryGetProperty("properties", out _));
         }
     }
 
@@ -41,12 +58,42 @@ public sealed class McpToolRegistryTests
 
         var tools = registry.ListTools().ToArray();
 
-        Assert.All(tools, tool =>
+        Assert.All(tools.Where(t => ReadOnlyToolNames.Contains(t.Name)), tool =>
         {
             Assert.NotNull(tool.Annotations);
             Assert.True(tool.Annotations!.ReadOnlyHint);
             Assert.False(tool.Annotations.OpenWorldHint);
         });
+    }
+
+    [Fact]
+    public void Tools_list_marks_write_tools_as_not_read_only()
+    {
+        var registry = McpToolRegistry.CreateDefault();
+
+        var tools = registry.ListTools().ToArray();
+
+        Assert.All(tools.Where(t => WriteToolNames.Contains(t.Name)), tool =>
+        {
+            Assert.NotNull(tool.Annotations);
+            Assert.False(tool.Annotations!.ReadOnlyHint);
+            Assert.False(tool.Annotations.OpenWorldHint);
+        });
+    }
+
+    [Fact]
+    public void Tools_list_includes_current_view_tools_as_read_only()
+    {
+        var registry = McpToolRegistry.CreateDefault();
+
+        var tools = registry.ListTools();
+
+        var getContext = Assert.Single(tools, tool => tool.Name == "poe_get_current_view_context");
+        var findCells = Assert.Single(tools, tool => tool.Name == "poe_find_current_table_untranslated_cells");
+        Assert.Contains("current UI", getContext.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("missing translations", findCells.Description, StringComparison.OrdinalIgnoreCase);
+        Assert.True(getContext.Annotations?.ReadOnlyHint);
+        Assert.True(findCells.Annotations?.ReadOnlyHint);
     }
 
     [Fact]

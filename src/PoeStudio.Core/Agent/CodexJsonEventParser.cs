@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace PoeStudio.Core.Agent;
@@ -37,6 +38,33 @@ public sealed class CodexJsonEventParser
 
     private static CodexParsedEvent ParseRootEvent(string rawJson, JsonElement root, string? type)
     {
+        if (string.Equals(type, "turn.completed", StringComparison.Ordinal))
+        {
+            return new CodexParsedEvent(
+                rawJson,
+                CodexParsedEventType.FinalMessage,
+                string.Empty,
+                CompactJson(root),
+                true,
+                false,
+                null);
+        }
+
+        if (string.Equals(type, "turn.failed", StringComparison.Ordinal))
+        {
+            var message = root.TryGetProperty("error", out var error)
+                ? GetErrorMessage(error) ?? error.GetRawText()
+                : "turn.failed";
+            return new CodexParsedEvent(
+                rawJson,
+                CodexParsedEventType.Error,
+                message,
+                CompactJson(root),
+                true,
+                false,
+                null);
+        }
+
         if (string.Equals(type, "error", StringComparison.Ordinal))
         {
             var message = GetString(root, "message") ?? "Codex error";
@@ -74,13 +102,15 @@ public sealed class CodexJsonEventParser
         var error = GetErrorMessage(item)
             ?? GetString(item, "message")
             ?? (IsFailedStatus(status) ? GetResultContentText(item) : null);
+        var resultText = GetResultContentText(item);
         var payload = new
         {
             server,
             tool,
             arguments = TryGetRaw(item, "arguments"),
             status,
-            error
+            error,
+            resultText
         };
         var failed = IsFailedStatus(status)
             || !string.IsNullOrWhiteSpace(error);
@@ -204,5 +234,8 @@ public sealed class CodexJsonEventParser
         return new CodexParsedEvent(line, CodexParsedEventType.Unknown, line, line, false, false, null);
     }
 
-    private static readonly JsonSerializerOptions JsonLineOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonLineOptions = new(JsonSerializerDefaults.Web)
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
 }

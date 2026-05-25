@@ -125,6 +125,32 @@ public sealed class McpDatc64ToolTests
     }
 
     [Fact]
+    public async Task Extract_translatable_cells_clamps_over_limit_request()
+    {
+        var root = CreateTempDirectory();
+        var profile = CreateProfile("profile-1", root);
+        var resourcePath = "data/balance/traditional chinese/combatuiprompts.datc64";
+        var data = BuildDatc64PointerTableData([
+            ("NoMana", "法力不足")
+        ]);
+        var physicalPath = await WriteResourceAsync(root, resourcePath, data);
+        await SaveProfileAndResourcesAsync(root, profile, Resource(profile.Id, resourcePath, ".datc64", ResourceKind.Table, data.Length, physicalPath));
+        var registry = McpToolRegistry.CreateDefault(new PoeWorkspaceResolution(true, root, "argument", null));
+
+        var result = await registry.CallToolAsync(
+            "poe_datc64_extract_translatable_cells",
+            JsonSerializer.SerializeToElement(new { profileId = profile.Id, resourcePath, limit = 5000 }),
+            CancellationToken.None);
+        using var payload = ParsePayload(result);
+
+        Assert.False(result.IsError);
+        Assert.Equal(100, payload.RootElement.GetProperty("limit").GetInt32());
+        Assert.Contains(
+            payload.RootElement.GetProperty("warnings").EnumerateArray().Select(x => x.GetString()),
+            warning => warning?.Contains("limit was clamped", StringComparison.OrdinalIgnoreCase) == true);
+    }
+
+    [Fact]
     public async Task Extract_translatable_cells_returns_error_for_non_table_resource()
     {
         var root = CreateTempDirectory();

@@ -13,7 +13,22 @@ POE Studio 需要接入的是全量项目助手，不是固定脚本入口。用
 - 对任何写入行为先产出计划、候选、审批点和可追踪记录。
 - 把 DATC64 翻译作为首个受控能力样例，而不是把 Agent 收窄成 DATC64 专用工具。
 
-现阶段已经进入 Stage 2：后端 Codex Bridge Agent runtime。Stage 3 才是 IDE-like Agent Workspace UI。
+当前架构：CODEX 薄桥接。前端 SSE chat → ChatService → CodexProcessRunner → `codex exec --json` → PoeStudio.Mcp tools → overlay staging。Stage 3 才是 IDE-like Agent Workspace UI。
+
+### 当前工作态上下文
+
+用户说“当前表格”“当前草稿”“当前对比视图”时，Agent 必须理解为 UI 当前工作态，而不是底层资源文件。前端会在 `/api/chat` 中提交 `currentView` 摘要，后端保存为短期 `currentViewContextId`，Codex 通过 MCP 工具读取。
+
+可用工具：
+
+- `poe_get_current_view_context`：读取当前 UI 工作态快照。
+- `poe_find_current_table_untranslated_cells`：基于当前已打开目标表和来源参考表查找漏翻候选。
+
+规则：
+
+- 当前表格检查优先使用 current-view 工具。
+- 不要默认调用 `poe_datc64_extract_translatable_cells`，因为该工具读取底层资源，可能触发 Native/GGPK/Oodle，并且不代表 UI 当前工作态。
+- 只有用户明确要求重新读取原始资源时，才使用 raw resource 工具。
 
 ## 2. 当前已确认架构事实
 
@@ -25,15 +40,15 @@ POE Studio 是 .NET 8 + ASP.NET Core Minimal API 本地 Web 工具，前端在 `
 | --- | --- |
 | `PoeStudio.Contracts` | DTO、枚举、API 契约 |
 | `PoeStudio.Core` | 纯业务逻辑，例如资源分类、预览、DATC64、Native、补丁构建、Agent prompt/runner/parser |
-| `PoeStudio.Storage` | 本地持久化，例如 profile、资源索引、overlay、Agent store、审批后写草稿 |
+| `PoeStudio.Storage` | 本地持久化，例如 profile、资源索引、overlay、audit |
 | `PoeStudio.Api` | HTTP 路由、依赖注入、后台任务、静态前端 |
 | `PoeStudio.Mcp` | Stage 1 MCP stdio server，供 Codex 调用 POE Studio 只读工具 |
 
-Agent 相关阶段边界：
+Architecture evolution:
 
-- Stage 1：`POE Studio MCP Tools`，只读 MCP 工具。
-- Stage 2：后端 Agent runtime，`codex exec --json` + MCP + thread/run/event/plan/approval 持久化。
-- Stage 3：Agent Workspace UI，类似 Codex / IDE 插件体验。
+- Phase 1：`POE Studio MCP Tools`，只读 MCP 工具，CODEX 通过 `poe-studio` MCP server 调用。
+- Phase 2（当前）：CODEX 薄桥接。`POST /api/chat` SSE 端点 + `CodexProcessRunner(codex exec --json)` + MCP 工具（读写）+ overlay staging。
+- Phase 3（规划中）：Agent Workspace UI，类似 Codex / IDE 插件体验。
 
 ## 3. Profile 与工作区语义
 
@@ -130,27 +145,38 @@ Agent 应解释为：
 - 跳过：目标与来源相同、两边都是英文、空值、数字、路径、hash、不可编辑列。
 - 写入：先生成 proposal，用户批准后才写入目标 overlay draft。
 
-## 7. Agent Stage 2 当前链路
+## 7. 当前架构：CODEX 薄桥接
 
-当前 Stage 2 后端 Agent 链路：
+当前 CODEX 集成架构——用户输入直达 MCP 工具，无后端任务分类或审批 run：
 
-1. 用户创建 thread / message / run。
-2. `AgentOrchestrator` 创建 run、初始 plan 和事件。
-3. `AgentPromptBuilder` 构造 Codex prompt。
-4. `CodexProcessRunner` 启动 `codex exec --json`。
-5. Codex 通过 `poe-studio` MCP 调用工具。
-6. `CodexJsonEventParser` 解析 JSONL 事件，保存为 run events。
-7. 只读任务保存 result。
-8. `datc64-translation` 任务解析 `datc64TranslationProposal`，创建 pending approval。
-9. 用户批准后，`Datc64DraftApplyService` 调用 `TableInspector` 和 `OverlayStore` 写 overlay draft。
+1. 用户在聊天框输入自然语言，前端发送 `POST /api/chat` SSE 请求，携带 `{ message, profileId, resourcePath, sourceProfileId, targetProfileId, sourceResourcePath, targetResourcePath }`。其中 source/target resourcePath 由语言感知路径匹配自动推导配对资源（例如繁中 → 简中来源路径）。
+2. `ChatService.RunCodexAsync` 包装 session context prompt（含 workspaceRoot、activeProfileId、selectedResourcePath），调用 `CodexProcessRunner.RunAsync`。
+3. `CodexProcessRunner` 启动 `codex exec --json` 子进程，自动配置 `mcp_servers.poe-studio` 指向本地 PoeStudio.Mcp。
+4. CODEX 子进程先调用 `poe_get_project_overview` 了解项目领域，然后根据用户任务调用其他 MCP 工具。
+5. MCP 工具结果通过 JSONL stdout 流回，`CodexJsonEventParser` 逐行解析，通过 `Channel<T>` 桥接为 SSE events。
+6. 前端 `processSseBlock` 收到 tool_call/message/error/done 事件，动态更新聊天界面和 overlay 列表。
+7. `poe_write_overlay_text` / `poe_write_overlay_binary` 直接写入 overlay staging。`processSseBlock` 在写入完成后自动调用 `refreshOverlayList()`。
+8. 用户通过 UI overlay 面板审查 staging 变更，手动发起 patch build 后变更才影响游戏文件。
 
-当前能力注册表：
+能力概述：
 
-| taskKind | 当前含义 | 工具 | 写入 |
-| --- | --- | --- | --- |
-| `question` | 通用只读问答 | `poe_get_workspace`、`poe_list_profiles` | 不允许 |
-| `read-only-analysis` | 资源只读分析 | `poe_get_workspace`、`poe_search_resources`、`poe_read_resource` | 不允许 |
-| `datc64-translation` | DATC64 翻译 proposal | `poe_datc64_extract_translatable_cells`、`poe_read_resource` | approval 后由后端写 |
+| 能力 | 说明 | 工具 |
+| --- | --- | --- |
+| 项目认知 | CODEX 调用 `poe_get_project_overview` 了解领域术语、工作流和限制 | `poe_get_project_overview` |
+| 只读查询 | 查询 workspace、profile、索引状态、搜索/读取资源 | `poe_get_workspace`、`poe_list_profiles`、`poe_get_profile`、`poe_get_index_status`、`poe_search_resources`、`poe_read_resource` |
+| DATC64 分析 | 提取可翻译单元格 | `poe_datc64_extract_translatable_cells` |
+| overlay 写入 | 写 text/binary 到 overlay staging | `poe_write_overlay_text`、`poe_write_overlay_binary` |
+| overlay 管理 | 列出现有 overlay、还原 | `poe_list_overlays`、`poe_revert_overlay` |
+
+关键设计决策：
+
+- 不做后端任务分类/规划——CODEX 自主理解用户意图并选择合适的 MCP 工具。
+- 没有单独的 approval run 实体——写工具直接写入 overlay staging，用户通过 UI 面板做最终审核。
+- 不保留 thread/message/run 状态——每次 chat 请求独立启动 `codex exec --json`，上下文由前端维护。
+
+### 异常路径规则
+
+当工具调用失败、超时、无最终回答或 UI 卡住时，Agent 必须先读取 run trace 和日志摘要，自行判断断点；普通诊断不得修改代码。只有用户明确批准 repair run 后，Agent 才能修改项目代码，并且必须先写失败测试、再最小修复、再验证。
 
 ## 8. 当前已知缺口
 

@@ -1,11 +1,13 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Encodings.Web;
 using PoeStudio.Contracts;
 using PoeStudio.Core.Agent;
 using PoeStudio.Core.Native;
 using PoeStudio.Core.Oodle;
 using PoeStudio.Core.Tables;
 using PoeStudio.Core.Workspace;
+using PoeStudio.Storage.Agent;
 using PoeStudio.Storage.Profiles;
 using PoeStudio.Storage.Resources;
 
@@ -14,10 +16,15 @@ namespace PoeStudio.Mcp;
 public static class PoeMcpTools
 {
     private const int Datc64ExtractMaxBytes = 16 * 1024 * 1024;
+    private const int Datc64ExtractMaxCells = 100;
+    private const int McpProjectSummaryMaxLength = 1000;
+    private const int McpProjectSectionMaxLength = 300;
+    private const int McpProjectGuidanceMaxLength = 240;
     private static readonly McpToolAnnotations ReadOnlyAnnotations = new(true, false);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     public static void RegisterAll(
@@ -26,6 +33,14 @@ public static class PoeMcpTools
         NativeBundleResourceContentResolver? nativeContentResolver = null)
     {
         nativeContentResolver ??= new NativeBundleResourceContentResolver(new MissingOodleCodec());
+
+        registry.Register(
+            new McpToolDefinition(
+                "poe_get_project_overview",
+                "Return POE Studio project overview, domain terminology, and tool guidance for Path of Exile 2 modding. CODEX agents should call this first to understand the project domain before processing user requests.",
+                ObjectSchema(),
+                ReadOnlyAnnotations),
+            (_, _) => Task.FromResult(GetProjectOverview(workspace)));
 
         registry.Register(
             new McpToolDefinition(
@@ -78,37 +93,97 @@ public static class PoeMcpTools
         registry.Register(
             new McpToolDefinition(
                 "poe_datc64_extract_translatable_cells",
-                "Extract translatable DATC64 or string-candidate cells through the Stage 1 read-only resource boundary.",
+                "Extract up to 100 translatable DATC64 or string-candidate cells through the Stage 1 read-only resource boundary.",
                 ObjectSchema(("profileId", "string"), ("resourcePath", "string"), ("limit", "integer"), ("oodlePath", "string")),
                 ReadOnlyAnnotations),
             (arguments, cancellationToken) => ExtractDatc64TranslatableCellsAsync(workspace, nativeContentResolver, arguments, cancellationToken));
 
         registry.Register(
             new McpToolDefinition(
-                "poe_get_project_context",
-                "Return summarized POE Studio project workflow context, source metadata, tool boundaries, risk boundaries, and unknowns.",
-                ObjectSchema(("taskKind", "string"), ("goal", "string"), ("resourcePath", "string"), ("repositoryRoot", "string")),
+                "poe_get_current_view_context",
+                "Read the current UI view snapshot provided by POE Studio chat. Use this before reading raw resources when the user refers to the current table, current draft, or current comparison. Does not read Native/GGPK bundles and does not require Oodle.",
+                ObjectSchema(("contextId", "string")),
                 ReadOnlyAnnotations),
-            (arguments, cancellationToken) => GetProjectContextAsync(arguments, cancellationToken));
+            (arguments, cancellationToken) => GetCurrentViewContextAsync(workspace, arguments, cancellationToken));
+
+        registry.Register(
+            new McpToolDefinition(
+                "poe_find_current_table_untranslated_cells",
+                "Find likely missing translations from the current UI table comparison snapshot. Uses already-opened target/source rows; does not read raw resources, Native/GGPK bundles, or Oodle.",
+                ObjectSchema(("contextId", "string"), ("limit", "integer")),
+                ReadOnlyAnnotations),
+            (arguments, cancellationToken) => FindCurrentTableUntranslatedCellsAsync(workspace, arguments, cancellationToken));
+
+        registry.Register(
+            new McpToolDefinition(
+                "poe_get_agent_run_trace",
+                "Read a POE Studio Agent run trace by runId. Use this to diagnose why a prior chat/tool run failed or produced no final answer.",
+                ObjectSchema(("runId", "string")),
+                ReadOnlyAnnotations),
+            (arguments, cancellationToken) => GetAgentRunTraceAsync(workspace, arguments, cancellationToken));
+
+        registry.Register(
+            new McpToolDefinition(
+                "poe_get_agent_recent_logs",
+                "Read recent POE Studio API/MCP log summaries for diagnosing agent bridge failures. Returns bounded text only.",
+                ObjectSchema(("maxLines", "integer")),
+                ReadOnlyAnnotations),
+            (arguments, cancellationToken) => GetAgentRecentLogsAsync(workspace, arguments, cancellationToken));
+
+        // poe_get_project_context removed — CODEX plans autonomously via MCP tool discovery
+
+        PoeMcpWriteTools.RegisterAll(registry, workspace);
     }
 
-    private static async Task<McpToolResult> GetProjectContextAsync(
-        JsonElement arguments,
-        CancellationToken cancellationToken)
-    {
-        var taskKind = TryGetString(arguments, "taskKind", out var taskKindValue) ? taskKindValue : "question";
-        var goal = TryGetString(arguments, "goal", out var goalValue) ? goalValue : string.Empty;
-        var resourcePath = TryGetString(arguments, "resourcePath", out var resourcePathValue) ? resourcePathValue : null;
-        var repositoryRoot = TryGetString(arguments, "repositoryRoot", out var repositoryRootValue) ? repositoryRootValue : null;
-        var resolver = new AgentRepositoryRootResolver(repositoryRoot);
-        var context = await new AgentProjectContextService(resolver).BuildAsync(
-            taskKind,
-            goal,
-            resourcePath,
-            repositoryRoot,
-            cancellationToken);
+    // GetProjectContextAsync removed — CODEX plans autonomously via MCP tool discovery
 
-        return JsonSuccess(context);
+    private static McpToolResult GetProjectOverview(PoeWorkspaceResolution workspace)
+    {
+        TryGetWorkspaceRoot(workspace, out var workspaceRoot, out _);
+
+        return JsonSuccess(new
+        {
+            projectName = "POE Studio",
+            projectDescription = "Path of Exile 2 game file modding tool. Manages game resource editing through overlay staging with user review.",
+            game = "Path of Exile 2 (PoE2)",
+            domainTerminology = new
+            {
+                table = "DATC64 (.datc64) binary data tables — structured game configuration data (e.g. Stats.datc64, BaseItemTypes.datc64). Analogous to spreadsheets but in binary format.",
+                resource = "Any game file: DATC64 table, texture (.dds), audio, or other asset inside the game's bundle archives.",
+                profile = "A client profile configuring which PoE 2 installation to work with, including root path and bundle paths.",
+                overlay = "A staged file change that the user reviews before committing to a patch build.",
+                patch = "A deployable mod package built from committed overlays."
+            },
+            domainConcepts = new
+            {
+                profilePairing = "POE Studio can compare two profiles (e.g. source=Simplified Chinese, target=Traditional Chinese) for translation workflows. Each profile points to a different game client installation.",
+                overlayDraftPatch = "Three-stage workflow: (1) write changes to overlay staging via poe_write_overlay_*, (2) user reviews staged changes in POE Studio UI, (3) user explicitly commits changes to a patch build via /api/patch/build.",
+                readAwareness = "poe_read_resource reads the base game file from disk/bundles. It does NOT include uncommitted overlay changes. To edit: read base file, modify content, then write back as a new overlay."
+            },
+            toolGuidance = new
+            {
+                poe_get_current_view_context = "Reads the short-lived current UI view snapshot by currentViewContextId. Use this when the user refers to the current table, current draft, opened table, or current comparison.",
+                poe_find_current_table_untranslated_cells = "Finds likely missing translations from the current UI table comparison snapshot. If currentViewContextId is present, use this first for current-table missing-translation checks. It does not read raw bundles and does not require Oodle.",
+                poe_datc64_extract_translatable_cells = "Extracts up to 100 cells from a raw/base DATC64 table resource. Use only when currentViewContextId is absent or the user explicitly asks to reread original/raw resources; it may read Native/GGPK bundles and may require Oodle."
+            },
+            limits = new
+            {
+                maxSearchResults = 100,
+                maxExtractCells = 100,
+                maxReadBytes = 16 * 1024 * 1024,
+                maxWriteBytes = 50 * 1024 * 1024
+            },
+            stagingNotice = "All poe_write_overlay_* calls write to overlay staging. Changes are NOT applied to game files until the user commits them through the POE Studio patch build workflow (/api/patch/build).",
+            commonWorkflows = new[]
+            {
+                "Check game resources: Search then read a resource by path through poe_search_resources + poe_read_resource.",
+                "Find untranslated cells in the current table: If currentViewContextId is available, you must call poe_find_current_table_untranslated_cells before any raw resource tool.",
+                "Find untranslated cells from raw resources: Use poe_datc64_extract_translatable_cells only when the user explicitly asks to reread original/raw files or no currentViewContextId is available.",
+                "Edit game data: Read a resource, then write changes via poe_write_overlay_text/poe_write_overlay_binary. Writes go to staging — user commits them later.",
+                "Review changes: Use poe_list_overlays to see staged changes, poe_revert_overlay to discard."
+            },
+            workspaceRoot
+        });
     }
 
     private static McpToolResult GetWorkspace(PoeWorkspaceResolution workspace)
@@ -316,11 +391,8 @@ public static class PoeMcpTools
             return McpToolResult.Error("Argument 'resourcePath' is required.");
         }
 
-        var limit = GetInt32(arguments, "limit") ?? 100;
-        if (limit is < 1 or > 1000)
-        {
-            return McpToolResult.Error("Argument 'limit' must be between 1 and 1000.");
-        }
+        var requestedLimit = GetInt32(arguments, "limit") ?? Datc64ExtractMaxCells;
+        var limit = Math.Clamp(requestedLimit, 1, Datc64ExtractMaxCells);
 
         var profile = await new ProfileStore(workspaceRoot).GetAsync(profileId, cancellationToken);
         if (profile is null)
@@ -350,6 +422,11 @@ public static class PoeMcpTools
         var skipped = 0;
         var cells = ExtractCells(inspection, limit, ref skipped);
         var warnings = inspection.Warnings.ToList();
+        if (requestedLimit != limit)
+        {
+            warnings.Add($"Requested limit was clamped from {requestedLimit} to {limit}.");
+        }
+
         if (skipped > 0)
         {
             warnings.Add($"Skipped {skipped} non-translatable empty, numeric, path-like, or hash-like cells.");
@@ -361,9 +438,234 @@ public static class PoeMcpTools
             resourcePath = resource.NormalizedPath,
             format = inspection.Format,
             delimiter = inspection.Delimiter,
+            limit,
             cells,
             warnings
         });
+    }
+
+    private static async Task<McpToolResult> GetCurrentViewContextAsync(
+        PoeWorkspaceResolution workspace,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetWorkspaceRoot(workspace, out var workspaceRoot, out var error))
+        {
+            return McpToolResult.Error(error);
+        }
+
+        if (!TryGetString(arguments, "contextId", out var contextId))
+        {
+            return McpToolResult.Error("Argument 'contextId' is required.");
+        }
+
+        var snapshot = await new AgentCurrentViewStore(workspaceRoot).LoadAsync(contextId, cancellationToken);
+        if (snapshot is null)
+        {
+            return McpToolResult.Error($"Current view context '{contextId}' was not found.");
+        }
+
+        return JsonSuccess(snapshot);
+    }
+
+    private static async Task<McpToolResult> FindCurrentTableUntranslatedCellsAsync(
+        PoeWorkspaceResolution workspace,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetWorkspaceRoot(workspace, out var workspaceRoot, out var error))
+        {
+            return McpToolResult.Error(error);
+        }
+
+        if (!TryGetString(arguments, "contextId", out var contextId))
+        {
+            return McpToolResult.Error("Argument 'contextId' is required.");
+        }
+
+        var limit = Math.Clamp(GetInt32(arguments, "limit") ?? 50, 1, 200);
+        var snapshot = await new AgentCurrentViewStore(workspaceRoot).LoadAsync(contextId, cancellationToken);
+        var table = snapshot?.View.Table;
+        if (table is null)
+        {
+            return McpToolResult.Error($"Current view context '{contextId}' does not contain a table.");
+        }
+
+        if (table.SourceRows is null || table.SourceRows.Count == 0)
+        {
+            return McpToolResult.Error("Current table has no source/reference rows. Ask the user to open or match a source table first.");
+        }
+
+        var sourceRows = table.SourceRows.ToDictionary(row => row.RowNumber);
+        var editable = table.EditableColumnIndexes.Count > 0
+            ? table.EditableColumnIndexes
+            : Enumerable.Range(0, table.Columns.Count).ToArray();
+        var results = new List<AgentUntranslatedCellDto>();
+
+        foreach (var targetRow in table.TargetRows)
+        {
+            if (!sourceRows.TryGetValue(targetRow.RowNumber, out var sourceRow))
+            {
+                continue;
+            }
+
+            foreach (var columnIndex in editable)
+            {
+                var sourceText = CellAt(sourceRow, columnIndex);
+                var targetText = CellAt(targetRow, columnIndex);
+                if (string.IsNullOrWhiteSpace(sourceText))
+                {
+                    continue;
+                }
+
+                var reason = MissingTranslationReason(sourceText, targetText);
+                if (reason is null)
+                {
+                    continue;
+                }
+
+                results.Add(new AgentUntranslatedCellDto(
+                    targetRow.RowNumber,
+                    columnIndex,
+                    columnIndex >= 0 && columnIndex < table.Columns.Count ? table.Columns[columnIndex] : null,
+                    sourceText,
+                    targetText,
+                    reason));
+
+                if (results.Count >= limit)
+                {
+                    break;
+                }
+            }
+
+            if (results.Count >= limit)
+            {
+                break;
+            }
+        }
+
+        return JsonSuccess(new
+        {
+            snapshot!.ContextId,
+            table.TargetProfileId,
+            table.TargetResourcePath,
+            table.SourceProfileId,
+            table.SourceResourcePath,
+            inspectedRows = table.TargetRows.Count,
+            candidates = results.Count,
+            items = results
+        });
+    }
+
+    private static async Task<McpToolResult> GetAgentRunTraceAsync(
+        PoeWorkspaceResolution workspace,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetWorkspaceRoot(workspace, out var workspaceRoot, out var error))
+        {
+            return McpToolResult.Error(error);
+        }
+
+        if (!TryGetString(arguments, "runId", out var runId))
+        {
+            return McpToolResult.Error("Argument 'runId' is required.");
+        }
+
+        var events = await new AgentRunTraceStore(workspaceRoot).ReadAsync(runId, cancellationToken);
+        return JsonSuccess(new
+        {
+            runId,
+            events = events.TakeLast(200)
+        });
+    }
+
+    private static Task<McpToolResult> GetAgentRecentLogsAsync(
+        PoeWorkspaceResolution workspace,
+        JsonElement arguments,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetWorkspaceRoot(workspace, out var workspaceRoot, out var error))
+        {
+            return Task.FromResult(McpToolResult.Error(error));
+        }
+
+        var maxLines = Math.Clamp(GetInt32(arguments, "maxLines") ?? 80, 1, 300);
+        var allowedNames = new[]
+        {
+            "poe-studio-dev.out.log",
+            "poe-studio-dev.err.log",
+            "poe-current-view-acceptance.out.log",
+            "poe-current-view-acceptance.err.log"
+        };
+        var rootFullPath = Path.GetFullPath(workspaceRoot);
+        var entries = new List<object>();
+
+        foreach (var name in allowedNames)
+        {
+            var path = Path.Combine(workspaceRoot, name);
+            var fullPath = Path.GetFullPath(path);
+            if (!IsSameOrChildPath(rootFullPath, fullPath))
+            {
+                continue;
+            }
+
+            if (!File.Exists(fullPath))
+            {
+                entries.Add(new { name, exists = false, lines = Array.Empty<string>() });
+                continue;
+            }
+
+            var lines = File.ReadLines(fullPath).TakeLast(maxLines).ToArray();
+            entries.Add(new { name, exists = true, lines });
+        }
+
+        return Task.FromResult(JsonSuccess(new { maxLines, entries }));
+    }
+
+    private static bool IsSameOrChildPath(string rootFullPath, string candidateFullPath)
+    {
+        var relative = Path.GetRelativePath(rootFullPath, candidateFullPath);
+        return relative == "."
+            || (!relative.StartsWith("..", StringComparison.Ordinal)
+                && !Path.IsPathRooted(relative));
+    }
+
+    private static string CellAt(AgentCurrentTableRowDto row, int columnIndex)
+    {
+        return columnIndex >= 0 && columnIndex < row.Cells.Count ? row.Cells[columnIndex] : string.Empty;
+    }
+
+    private static string? MissingTranslationReason(string sourceText, string targetText)
+    {
+        if (string.IsNullOrWhiteSpace(targetText))
+        {
+            return "target_empty";
+        }
+
+        if (string.Equals(sourceText, targetText, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        if (LooksMostlyAscii(targetText) && !LooksMostlyAscii(sourceText))
+        {
+            return "target_still_english";
+        }
+
+        return null;
+    }
+
+    private static bool LooksMostlyAscii(string value)
+    {
+        var letters = value.Where(char.IsLetter).ToArray();
+        if (letters.Length == 0)
+        {
+            return false;
+        }
+
+        var asciiLetters = letters.Count(ch => ch <= 0x7f);
+        return asciiLetters >= Math.Ceiling(letters.Length * 0.8);
     }
 
     private static async Task<object> ReadIndexStatusAsync(
@@ -688,7 +990,8 @@ public static class PoeMcpTools
                 {
                     ["type"] = property.Type
                 },
-                StringComparer.Ordinal)
+                StringComparer.Ordinal),
+            ["required"] = properties.Select(p => p.Name).ToArray()
         };
 
         return JsonSerializer.SerializeToElement(schema);
@@ -697,5 +1000,15 @@ public static class PoeMcpTools
     private static McpToolResult JsonSuccess(object payload)
     {
         return McpToolResult.Success(JsonSerializer.Serialize(payload, JsonOptions));
+    }
+
+    private static string TruncateText(string value, int maxLength)
+    {
+        if (value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..Math.Max(0, maxLength - 14)].TrimEnd() + " [truncated]";
     }
 }
