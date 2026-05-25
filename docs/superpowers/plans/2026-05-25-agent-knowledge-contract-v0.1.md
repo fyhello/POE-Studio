@@ -1524,7 +1524,7 @@ gitnexus_detect_changes(scope="staged")
 - 创建：`docs/superpowers/reports/2026-05-25-agent-knowledge-contract-v0.1-acceptance.md`
 - 可选修改：`docs/ai-project-memory.md` 的自定义区域，若已有约定允许；否则只写报告。
 
-- [ ] **步骤 1：运行完整验证**
+- [x] **步骤 1：运行完整验证**
 
 运行：
 
@@ -1542,7 +1542,7 @@ git diff --check
 - full tests 0 failures。
 - diff check 0 whitespace errors。
 
-- [ ] **步骤 2：GitNexus 变更检测**
+- [x] **步骤 2：GitNexus 变更检测**
 
 运行：
 
@@ -1555,7 +1555,7 @@ gitnexus_detect_changes(scope="all")
 - 影响范围集中在 Agent knowledge、MCP tools、ChatService prompt、frontend chat renderer、测试。
 - 若 HIGH/CRITICAL，报告具体受影响流程和原因。
 
-- [ ] **步骤 3：重启项目**
+- [x] **步骤 3：重启项目**
 
 运行：
 
@@ -1580,7 +1580,7 @@ Invoke-WebRequest -Uri 'http://localhost:5010/api/health' -UseBasicParsing -Time
 
 预期：HTTP 200，body 包含 `"status":"ok"`。
 
-- [ ] **步骤 4：执行实机场景 A**
+- [x] **步骤 4：执行实机场景 A**
 
 在 UI 中打开 activeskills 当前对比表后，输入：
 
@@ -1606,7 +1606,7 @@ Invoke-WebRequest -Uri 'http://localhost:5010/api/health' -UseBasicParsing -Time
 - 必须记录 task frame 或 capability gap。
 - 不写 overlay。
 
-- [ ] **步骤 5：执行实机场景 B**
+- [x] **步骤 5：执行实机场景 B**
 
 输入：
 
@@ -1621,7 +1621,7 @@ Invoke-WebRequest -Uri 'http://localhost:5010/api/health' -UseBasicParsing -Time
 - 不重复用旧工具 0 候选压用户。
 - run trace 包含 `capability_gap` 或等价诊断事件。
 
-- [ ] **步骤 6：执行实机场景 C**
+- [x] **步骤 6：执行实机场景 C**
 
 输入：
 
@@ -1636,7 +1636,7 @@ Invoke-WebRequest -Uri 'http://localhost:5010/api/health' -UseBasicParsing -Time
 - 不改 source。
 - 若写 DATC64 binary 工具不足，报告 capability gap 并请求批准补工具。
 
-- [ ] **步骤 7：执行实机场景 D**
+- [x] **步骤 7：执行实机场景 D**
 
 输入：
 
@@ -1649,7 +1649,7 @@ Invoke-WebRequest -Uri 'http://localhost:5010/api/health' -UseBasicParsing -Time
 - 读取 patch/overlay/resource knowledge。
 - 不读取 DATC64 translation knowledge，除非错误直接关联 DATC64 overlay。
 
-- [ ] **步骤 8：编写验收报告**
+- [x] **步骤 8：编写验收报告**
 
 创建 `docs/superpowers/reports/2026-05-25-agent-knowledge-contract-v0.1-acceptance.md`：
 
@@ -1700,7 +1700,7 @@ Invoke-WebRequest -Uri 'http://localhost:5010/api/health' -UseBasicParsing -Time
 - List any failed or partial live scenarios with concrete blocker, date, and next action.
 ```
 
-- [ ] **步骤 9：提交任务 7**
+- [x] **步骤 9：提交任务 7**
 
 运行：
 
@@ -1719,19 +1719,19 @@ gitnexus_detect_changes(scope="staged")
 
 ## 5. 最终验收清单
 
-- [ ] `docs/agent/knowledge/index.json` 是运行时知识目录。
-- [ ] `core-contract.md` 不超过 1000 token 目标，且只包含硬语义。
-- [ ] `poe_get_project_overview` 返回知识目录，不返回整本文档。
-- [ ] `poe_get_project_knowledge` 可按 section 读取知识块，并限制 maxBytes。
-- [ ] `ChatService` prompt 不再堆所有场景规则，而是注入核心契约和 task-frame/tool-fit 协议。
-- [ ] Codex 在当前表格繁中未转简中场景中读取 current-view 和相关 knowledge section。
-- [ ] run trace 能记录 task frame 和 capability gap。
-- [ ] Codex 不再把 source/target 当语言方向。
-- [ ] Codex 能解释旧工具和用户目标不匹配。
-- [ ] 写入仍只走 target overlay staging。
-- [ ] 用户纠错可以进入 capability gap / tool mismatch 归因。
-- [ ] targeted tests、full tests、build、diff check、GitNexus detect_changes 均有记录。
-- [ ] 真实 UI + 真实 Codex + 真实 MCP 验收报告已提交。
+- [x] `docs/agent/knowledge/index.json` 是运行时知识目录。
+- [x] `core-contract.md` 不超过 1000 token 目标，且只包含硬语义。
+- [x] `poe_get_project_overview` 返回知识目录，不返回整本文档。
+- [x] `poe_get_project_knowledge` 可按 section 读取知识块，并限制 maxBytes。
+- [x] `ChatService` prompt 不再堆所有场景规则，而是注入核心契约和 task-frame/tool-fit 协议。
+- [x] Codex 在当前表格繁中未转简中场景中读取 current-view 和相关 knowledge section。
+- [x] run trace 能记录 task frame 和 capability gap。
+- [x] Codex 不再把 source/target 当语言方向。
+- [x] Codex 能解释旧工具和用户目标不匹配。
+- [x] 写入仍只走 target overlay staging。
+- [x] 用户纠错可以进入 capability gap / tool mismatch 归因。
+- [x] targeted tests、full tests、build、diff check、GitNexus detect_changes 均有记录。
+- [x] 真实 UI + 真实 Codex + 真实 MCP 验收报告已提交。
 
 ---
 
