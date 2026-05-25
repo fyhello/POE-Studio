@@ -444,6 +444,53 @@ public sealed class ChatService
                 }, JsonOptions),
                 DateTimeOffset.UtcNow),
             cancellationToken);
+
+        await AppendSemanticAgentEventsAsync(runId, parsedEvent, cancellationToken);
+    }
+
+    private async Task AppendSemanticAgentEventsAsync(
+        string runId,
+        CodexParsedEvent parsedEvent,
+        CancellationToken cancellationToken)
+    {
+        if (parsedEvent.EventType != CodexParsedEventType.AgentMessage || string.IsNullOrWhiteSpace(parsedEvent.Message))
+        {
+            return;
+        }
+
+        using var document = TryParseJson(parsedEvent.Message);
+        if (document is null || !document.RootElement.TryGetProperty("type", out var typeElement))
+        {
+            return;
+        }
+
+        var type = typeElement.GetString();
+        if (type == "agent_task_frame" && document.RootElement.TryGetProperty("taskFrame", out var taskFrame))
+        {
+            await _traceStore.AppendAsync(
+                runId,
+                new AgentRunTraceEventDto("task_frame", "observed", taskFrame.GetRawText(), DateTimeOffset.UtcNow),
+                cancellationToken);
+        }
+        else if (type == "agent_capability_gap")
+        {
+            await _traceStore.AppendAsync(
+                runId,
+                new AgentRunTraceEventDto("capability_gap", "observed", document.RootElement.GetRawText(), DateTimeOffset.UtcNow),
+                cancellationToken);
+        }
+    }
+
+    private static JsonDocument? TryParseJson(string value)
+    {
+        try
+        {
+            return JsonDocument.Parse(value);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     private async Task WriteSseAsync(

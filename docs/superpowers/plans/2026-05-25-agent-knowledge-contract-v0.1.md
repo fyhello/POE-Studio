@@ -1263,7 +1263,7 @@ gitnexus_detect_changes(scope="staged")
 - 测试：`tests/PoeStudio.Tests/ChatServiceIntegrationTests.cs`
 - 测试：`tests/PoeStudio.Tests/AgentTaskFrameTraceTests.cs`
 
-- [ ] **步骤 1：GitNexus 影响分析**
+- [x] **步骤 1：GitNexus 影响分析**
 
 运行：
 
@@ -1274,7 +1274,7 @@ gitnexus_impact(target="AppendCodexEventAsync", direction="upstream")
 
 如果风险 HIGH/CRITICAL，先报告用户并等待确认。
 
-- [ ] **步骤 2：编写失败测试：task frame 进入 trace**
+- [x] **步骤 2：编写失败测试：task frame 进入 trace**
 
 创建 `tests/PoeStudio.Tests/AgentTaskFrameTraceTests.cs`：
 
@@ -1322,7 +1322,7 @@ public sealed class AgentTaskFrameTraceTests
 }
 ```
 
-- [ ] **步骤 3：编写失败测试：capability gap 进入 trace**
+- [x] **步骤 3：编写失败测试：capability gap 进入 trace**
 
 在同一测试文件中添加：
 
@@ -1405,7 +1405,7 @@ private sealed class FakeCodexRunner : ICodexProcessRunner
 }
 ```
 
-- [ ] **步骤 4：运行测试验证失败**
+- [x] **步骤 4：运行测试验证失败**
 
 运行：
 
@@ -1415,7 +1415,7 @@ dotnet test tests/PoeStudio.Tests/PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：FAIL，当前 ChatService 只把这类 JSON 当普通 assistant message。
 
-- [ ] **步骤 5：新增 DTO**
+- [x] **步骤 5：新增 DTO**
 
 创建 `src/PoeStudio.Contracts/AgentTaskFrameDtos.cs`：
 
@@ -1440,7 +1440,7 @@ public sealed record AgentCapabilityGapDto(
     string? ProposedNextAction);
 ```
 
-- [ ] **步骤 6：实现 trace event 识别**
+- [x] **步骤 6：实现 trace event 识别**
 
 在 `ChatService.AppendCodexEventAsync` 附近新增 helper：
 
@@ -1490,7 +1490,7 @@ private static JsonDocument? TryParseJson(string value)
 }
 ```
 
-- [ ] **步骤 7：运行测试验证通过**
+- [x] **步骤 7：运行测试验证通过**
 
 运行：
 
