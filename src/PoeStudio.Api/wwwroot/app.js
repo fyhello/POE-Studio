@@ -5680,7 +5680,7 @@ function addChatToolCall(tool, argsInput, status, resultText = null) {
   if (existing) {
     existing.querySelector(".chat-tool-status").textContent = status || "pending";
     if (resultText) {
-      existing.querySelector(".chat-tool-result").textContent = resultText.slice(0, 2000);
+      existing.querySelector(".chat-tool-result").textContent = summarizeChatToolResult(tool, resultText);
     }
     return existing;
   }
@@ -5712,11 +5712,30 @@ function addChatToolCall(tool, argsInput, status, resultText = null) {
 
   div.innerHTML = '<div class="chat-tool-head"><span class="chat-tool-name">' + escapeHtml(tool) + '</span><span class="chat-tool-status">' + escapeHtml(status) + '</span></div><div class="chat-tool-args">' + argsDisplay + '</div><pre class="chat-tool-result"></pre>';
   if (resultText) {
-    div.querySelector(".chat-tool-result").textContent = resultText.slice(0, 2000);
+    div.querySelector(".chat-tool-result").textContent = summarizeChatToolResult(tool, resultText);
   }
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return div;
+}
+
+function summarizeChatToolResult(tool, resultText) {
+  if (tool === "poe_get_project_knowledge") {
+    try {
+      const data = JSON.parse(resultText);
+      const sections = Array.isArray(data.sections) ? data.sections : [];
+      const first = sections[0];
+      return [
+        `知识块：${sections.length}`,
+        `缺失：${data.missingSectionIds?.length ?? 0}`,
+        first ? `示例：${first.sectionId} / ${first.title}` : "未返回知识块"
+      ].join("\n");
+    } catch {
+      return resultText.slice(0, 2000);
+    }
+  }
+
+  return resultText.slice(0, 2000);
 }
 
 function findOpenToolCall(tool, argsInput) {

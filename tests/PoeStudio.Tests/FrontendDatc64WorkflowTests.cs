@@ -42,6 +42,9 @@ public sealed class FrontendDatc64WorkflowTests
         Assert.Contains("function findOpenToolCall(tool, argsInput)", appJs);
         Assert.Contains("function chatToolCallKey(tool, argsInput)", appJs);
         Assert.Contains(".chat-tool-result", appJs);
+        Assert.Contains("poe_get_project_knowledge", appJs);
+        Assert.Contains("知识块", appJs);
+        Assert.DoesNotContain("section.Content", appJs);
         Assert.DoesNotContain("argsJson.slice", appJs);
     }
 

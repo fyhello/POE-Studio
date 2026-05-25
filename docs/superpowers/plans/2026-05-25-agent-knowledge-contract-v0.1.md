@@ -1178,7 +1178,7 @@ gitnexus_detect_changes(scope="staged")
 - 修改：`src/PoeStudio.Api/wwwroot/app.js`
 - 测试：`tests/PoeStudio.Tests/FrontendDatc64WorkflowTests.cs`
 
-- [ ] **步骤 1：GitNexus 影响分析**
+- [x] **步骤 1：GitNexus 影响分析**
 
 运行：
 
@@ -1189,7 +1189,7 @@ gitnexus_impact(target="summarizeChatToolResult", direction="upstream")
 
 如果 `summarizeChatToolResult` 尚未被 GitNexus 索引，记录为前端新增函数，继续。
 
-- [ ] **步骤 2：编写失败测试**
+- [x] **步骤 2：编写失败测试**
 
 在 `FrontendDatc64WorkflowTests.cs` 的工具摘要测试中加入断言：
 
@@ -1199,7 +1199,7 @@ Assert.Contains("知识块", appJs);
 Assert.DoesNotContain("section.Content", appJs);
 ```
 
-- [ ] **步骤 3：运行测试验证失败**
+- [x] **步骤 3：运行测试验证失败**
 
 运行：
 
@@ -1209,7 +1209,7 @@ dotnet test tests/PoeStudio.Tests/PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：FAIL，前端未摘要新工具。
 
-- [ ] **步骤 4：实现摘要**
+- [x] **步骤 4：实现摘要**
 
 在 `summarizeChatToolResult` 增加：
 
@@ -1227,7 +1227,7 @@ if (tool === "poe_get_project_knowledge") {
 
 不得把 section content 全文渲染到工具卡片。
 
-- [ ] **步骤 5：运行前端静态测试**
+- [x] **步骤 5：运行前端静态测试**
 
 运行：
 
