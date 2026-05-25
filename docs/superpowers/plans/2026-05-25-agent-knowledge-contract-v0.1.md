@@ -606,7 +606,7 @@ gitnexus_detect_changes(scope="staged")
 - 创建：`src/PoeStudio.Storage/Agent/AgentKnowledgeStore.cs`
 - 测试：`tests/PoeStudio.Tests/AgentKnowledgeStoreTests.cs`
 
-- [ ] **步骤 1：GitNexus 影响分析**
+- [x] **步骤 1：GitNexus 影响分析**
 
 运行：
 
@@ -617,7 +617,7 @@ gitnexus_impact(target="AgentKnowledgeDtos", direction="upstream")
 
 如果目标不存在，记录“新增类型，无 upstream 依赖”，继续。
 
-- [ ] **步骤 2：编写失败测试：读取索引和 section**
+- [x] **步骤 2：编写失败测试：读取索引和 section**
 
 创建 `tests/PoeStudio.Tests/AgentKnowledgeStoreTests.cs`：
 
@@ -669,7 +669,7 @@ public sealed class AgentKnowledgeStoreTests
 }
 ```
 
-- [ ] **步骤 3：运行测试验证失败**
+- [x] **步骤 3：运行测试验证失败**
 
 运行：
 
@@ -679,7 +679,7 @@ dotnet test tests/PoeStudio.Tests/PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：FAIL，类型不存在。
 
-- [ ] **步骤 4：新增 DTO**
+- [x] **步骤 4：新增 DTO**
 
 创建 `src/PoeStudio.Contracts/AgentKnowledgeDtos.cs`：
 
@@ -717,7 +717,7 @@ public sealed record AgentKnowledgeSectionDto(
     bool Truncated);
 ```
 
-- [ ] **步骤 5：实现 AgentKnowledgeStore**
+- [x] **步骤 5：实现 AgentKnowledgeStore**
 
 创建 `src/PoeStudio.Storage/Agent/AgentKnowledgeStore.cs`：
 
@@ -829,7 +829,7 @@ public sealed class AgentKnowledgeStore
 }
 ```
 
-- [ ] **步骤 6：运行测试验证通过**
+- [x] **步骤 6：运行测试验证通过**
 
 运行：
 
