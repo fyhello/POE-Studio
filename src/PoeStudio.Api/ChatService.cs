@@ -142,7 +142,9 @@ public sealed class ChatService
         lines.Add("- Write changes only to target overlay staging unless the user explicitly changes the editable target.");
         lines.Add("");
         lines.Add("Task Frame: Before choosing tools, internally identify userGoal, currentState, reference, editableTarget, desiredOutputLanguage, writeIntent, preferredContext, requiredKnowledge, and toolFitCheck.");
+        lines.Add(@"When useful for diagnosis, emit a standalone compact JSON agent message before the final explanation: {""type"":""agent_task_frame"",""taskFrame"":{""userGoal"":"""",""currentState"":"""",""reference"":"""",""editableTarget"":"""",""desiredOutputLanguage"":"""",""writeIntent"":"""",""preferredContext"":"""",""requiredKnowledge"":[],""toolFitCheck"":""""}}.");
         lines.Add("Tool Fit: A successful tool result can still be the wrong tool. If the tool semantics do not answer the user's task, choose a better tool or report capability_gap.");
+        lines.Add(@"When you identify a missing or mismatched capability, emit a standalone compact JSON agent message before explaining it: {""type"":""agent_capability_gap"",""failureType"":""tool_semantics_mismatch"",""userGoal"":"""",""missingCapability"":"""",""proposedNextAction"":""""}.");
         if (!string.IsNullOrWhiteSpace(currentViewContextId))
         {
             lines.Add("When the user says current table, current draft, opened table, current comparison, or asks to check missing translations in the current table, use current-view MCP tools first.");
@@ -458,26 +460,10 @@ public sealed class ChatService
             return;
         }
 
-        using var document = TryParseJson(parsedEvent.Message);
-        if (document is null || !document.RootElement.TryGetProperty("type", out var typeElement))
+        foreach (var semanticEvent in ExtractSemanticAgentEvents(parsedEvent.Message))
         {
-            return;
-        }
-
-        var type = typeElement.GetString();
-        if (type == "agent_task_frame" && document.RootElement.TryGetProperty("taskFrame", out var taskFrame))
-        {
-            await _traceStore.AppendAsync(
-                runId,
-                new AgentRunTraceEventDto("task_frame", "observed", taskFrame.GetRawText(), DateTimeOffset.UtcNow),
-                cancellationToken);
-        }
-        else if (type == "agent_capability_gap")
-        {
-            await _traceStore.AppendAsync(
-                runId,
-                new AgentRunTraceEventDto("capability_gap", "observed", document.RootElement.GetRawText(), DateTimeOffset.UtcNow),
-                cancellationToken);
+            var eventName = semanticEvent.Type == "agent_task_frame" ? "task_frame" : "capability_gap";
+            await _traceStore.AppendAsync(runId, new AgentRunTraceEventDto(eventName, "observed", semanticEvent.DataJson, DateTimeOffset.UtcNow), cancellationToken);
         }
     }
 
@@ -539,7 +525,11 @@ public sealed class ChatService
         switch (parsedEvent.EventType)
         {
             case CodexParsedEventType.AgentMessage:
-                yield return Sse("message", new { type = "agent_message", text = parsedEvent.Message });
+                var message = RemoveSemanticAgentEventJson(parsedEvent.Message);
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    yield return Sse("message", new { type = "agent_message", text = message });
+                }
                 break;
 
             case CodexParsedEventType.McpToolCall when parsedEvent.PayloadJson is not null:
@@ -565,6 +555,90 @@ public sealed class ChatService
                 break;
         }
     }
+
+    private static string RemoveSemanticAgentEventJson(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return string.Empty;
+        }
+
+        var result = message;
+        foreach (var semanticEvent in ExtractSemanticAgentEvents(message))
+        {
+            result = result.Replace(semanticEvent.RawJson, string.Empty, StringComparison.Ordinal);
+        }
+
+        return result.Trim();
+    }
+
+    private static IReadOnlyList<SemanticAgentEvent> ExtractSemanticAgentEvents(string? message)
+    {
+        var events = new List<SemanticAgentEvent>();
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return events;
+        }
+
+        var searchStart = 0;
+        while (searchStart < message.Length)
+        {
+            var startIndex = message.IndexOf('{', searchStart);
+            if (startIndex < 0)
+            {
+                break;
+            }
+
+            using var document = TryParseJsonObject(message[startIndex..], out var rawJson);
+            searchStart = startIndex + Math.Max(rawJson.Length, 1);
+            if (document is null || !document.RootElement.TryGetProperty("type", out var typeElement))
+            {
+                continue;
+            }
+
+            var type = typeElement.GetString();
+            if (type == "agent_task_frame" && document.RootElement.TryGetProperty("taskFrame", out var taskFrame))
+            {
+                events.Add(new SemanticAgentEvent(type, rawJson, taskFrame.GetRawText()));
+            }
+            else if (type == "agent_capability_gap")
+            {
+                events.Add(new SemanticAgentEvent(type, rawJson, document.RootElement.GetRawText()));
+            }
+        }
+
+        return events;
+    }
+
+    private static JsonDocument? TryParseJsonObject(string value, out string rawJson)
+    {
+        rawJson = string.Empty;
+        var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(value), new JsonReaderOptions { AllowTrailingCommas = true });
+        try
+        {
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.StartObject)
+                {
+                    break;
+                }
+            }
+
+            if (reader.TokenType != JsonTokenType.StartObject || !JsonDocument.TryParseValue(ref reader, out var document))
+            {
+                return null;
+            }
+
+            rawJson = value[..checked((int)reader.BytesConsumed)];
+            return document;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record SemanticAgentEvent(string Type, string RawJson, string DataJson);
 
     private static IEnumerable<ChatSseEvent> ParseToolCallEvent(string payloadJson)
     {

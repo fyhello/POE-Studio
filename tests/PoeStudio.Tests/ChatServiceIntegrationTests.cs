@@ -22,6 +22,52 @@ public sealed class ChatServiceIntegrationTests
     }
 
     [Fact]
+    public async Task RunCodexAsync_records_semantic_agent_json_without_rendering_it_as_chat_message()
+    {
+        var service = CreateChatService(events: [
+            new CodexParsedEvent(
+                "{}",
+                CodexParsedEventType.AgentMessage,
+                """{"type":"agent_capability_gap","failureType":"tool_semantics_mismatch","userGoal":"check target cells","missingCapability":"current-view detector","proposedNextAction":"add tool"}""",
+                null,
+                false,
+                false,
+                null)
+        ]);
+
+        var results = await CollectEvents(service, "hello", null, null);
+
+        Assert.DoesNotContain(results, e => e.EventName == "message" && e.DataJson.Contains("agent_capability_gap"));
+    }
+
+    [Fact]
+    public async Task RunCodexAsync_strips_embedded_semantic_agent_json_from_visible_chat_message()
+    {
+        var service = CreateChatService(events: [
+            new CodexParsedEvent(
+                "{}",
+                CodexParsedEventType.AgentMessage,
+                """
+                {"type":"agent_task_frame","taskFrame":{"userGoal":"check target cells","currentState":"tableComparison","reference":"current source table","editableTarget":"current target table","desiredOutputLanguage":"Simplified Chinese","writeIntent":"read-only","preferredContext":"current-view","requiredKnowledge":["core.contract"],"toolFitCheck":"Need non-simplified detector."}}
+                {"type":"agent_capability_gap","failureType":"tool_semantics_mismatch","userGoal":"check target cells","missingCapability":"current-view detector","proposedNextAction":"add tool"}
+
+                Visible explanation for the user.
+                """,
+                null,
+                false,
+                false,
+                null)
+        ]);
+
+        var results = await CollectEvents(service, "hello", null, null);
+
+        var message = Assert.Single(results.Where(e => e.EventName == "message"));
+        Assert.Contains("Visible explanation for the user.", message.DataJson);
+        Assert.DoesNotContain("agent_task_frame", message.DataJson);
+        Assert.DoesNotContain("agent_capability_gap", message.DataJson);
+    }
+
+    [Fact]
     public async Task RunCodexAsync_returns_tool_call_event()
     {
         var payload = """{"tool":"poe_list_profiles","arguments":{"limit":5},"status":"completed"}""";
@@ -559,6 +605,8 @@ public sealed class ChatServiceIntegrationTests
         Assert.NotNull(capturedPrompt);
         Assert.Contains("poe_get_project_knowledge", capturedPrompt);
         Assert.Contains("Task Frame", capturedPrompt);
+        Assert.Contains("agent_task_frame", capturedPrompt);
+        Assert.Contains("agent_capability_gap", capturedPrompt);
         Assert.Contains("toolFitCheck", capturedPrompt);
         Assert.Contains("source/current source means reference", capturedPrompt);
         Assert.Contains("target/current target means editable", capturedPrompt);
