@@ -1057,7 +1057,7 @@ gitnexus_detect_changes(scope="staged")
 - 修改：`src/PoeStudio.Api/ChatService.cs`
 - 测试：`tests/PoeStudio.Tests/ChatServiceIntegrationTests.cs`
 
-- [ ] **步骤 1：GitNexus 影响分析**
+- [x] **步骤 1：GitNexus 影响分析**
 
 运行：
 
@@ -1068,7 +1068,7 @@ gitnexus_impact(target="BuildPrompt", direction="upstream")
 
 如果风险 HIGH/CRITICAL，先报告用户并等待确认。
 
-- [ ] **步骤 2：编写失败测试：prompt 包含 task frame 和知识工具**
+- [x] **步骤 2：编写失败测试：prompt 包含 task frame 和知识工具**
 
 在 `ChatServiceIntegrationTests.cs` 新增：
 
@@ -1110,7 +1110,7 @@ public async Task Prompt_uses_knowledge_contract_and_task_frame_without_full_kno
 
 如果没有 `CreateTableComparisonCurrentView()` helper，按现有 current-view 测试内联创建。
 
-- [ ] **步骤 3：运行测试验证失败**
+- [x] **步骤 3：运行测试验证失败**
 
 运行：
 
@@ -1120,7 +1120,7 @@ dotnet test tests/PoeStudio.Tests/PoeStudio.Tests.csproj --no-restore --filter "
 
 预期：FAIL，prompt 还未包含新协议。
 
-- [ ] **步骤 4：修改 BuildPrompt**
+- [x] **步骤 4：修改 BuildPrompt**
 
 在 `BuildPrompt` 中保留简短 session context，然后加入：
 
@@ -1144,7 +1144,7 @@ lines.Add("Recommended knowledge sections for current table tasks: core.contract
 
 删除或避免继续堆单场景长规则。
 
-- [ ] **步骤 5：运行 ChatService 测试**
+- [x] **步骤 5：运行 ChatService 测试**
 
 运行：
 

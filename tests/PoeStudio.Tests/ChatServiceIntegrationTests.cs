@@ -514,6 +514,57 @@ public sealed class ChatServiceIntegrationTests
         Assert.Contains("Do not call poe_datc64_extract_translatable_cells for current table checks", capturedPrompt);
     }
 
+    [Fact]
+    public async Task Prompt_uses_knowledge_contract_and_task_frame_without_full_knowledge_dump()
+    {
+        string? capturedPrompt = null;
+        var runner = new FakeCodexRunner((settings, prompt, onEvent, ct) =>
+        {
+            capturedPrompt = prompt;
+            return Task.FromResult(new CodexRunResult(0, false, false, [], null));
+        });
+        var root = Path.Combine(Path.GetTempPath(), "poe-chat-knowledge-" + Guid.NewGuid().ToString("N"));
+        var service = CreateChatService(runner, CreateWorkspaceRoot(root));
+        var view = new AgentCurrentViewRequestDto(
+            "tableComparison",
+            new AgentCurrentTableViewDto(
+                "target",
+                "data/balance/traditional chinese/activeskills.datc64",
+                "source",
+                "data/balance/simplified chinese/activeskills.datc64",
+                "target",
+                "data/balance/traditional chinese/activeskills.datc64",
+                "datc64-auto",
+                1,
+                1,
+                ["Id", "Description @16"],
+                [1],
+                [new AgentCurrentTableRowDto(16, ["molten_crash", "變形"])],
+                [new AgentCurrentTableRowDto(16, ["molten_crash", "变形"])],
+                "简体路径"));
+
+        await foreach (var _ in service.RunCodexAsync(
+            "检查当前表格中还没有翻译成简中内容的繁中单元格",
+            "target",
+            "data/balance/traditional chinese/activeskills.datc64",
+            "source",
+            "target",
+            "data/balance/simplified chinese/activeskills.datc64",
+            "data/balance/traditional chinese/activeskills.datc64",
+            view,
+            CancellationToken.None))
+        {
+        }
+
+        Assert.NotNull(capturedPrompt);
+        Assert.Contains("poe_get_project_knowledge", capturedPrompt);
+        Assert.Contains("Task Frame", capturedPrompt);
+        Assert.Contains("toolFitCheck", capturedPrompt);
+        Assert.Contains("source/current source means reference", capturedPrompt);
+        Assert.Contains("target/current target means editable", capturedPrompt);
+        Assert.DoesNotContain("This file is the always-on POE Studio Agent contract", capturedPrompt);
+    }
+
     private static ChatService CreateChatService(
         List<CodexParsedEvent>? events = null,
         bool failed = false,

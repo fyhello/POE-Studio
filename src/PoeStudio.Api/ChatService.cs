@@ -133,12 +133,22 @@ public sealed class ChatService
         lines.Add("");
         lines.Add("User message: " + message);
         lines.Add("---");
-        lines.Add("Call poe_get_project_overview if you need project context. Use MCP tools for all data access. Write changes only to overlay staging.");
+        lines.Add("Agent Knowledge Contract:");
+        lines.Add("- source/current source means reference table or reference resource.");
+        lines.Add("- target/current target means editable target and overlay write target.");
+        lines.Add("- Do not infer desired output language from profile names or resource paths.");
+        lines.Add("- Current table/draft/comparison tasks must inspect current-view first when currentViewContextId exists.");
+        lines.Add("- Use poe_get_project_overview for a short project overview and poe_get_project_knowledge to read workflow-specific knowledge sections by sectionId.");
+        lines.Add("- Write changes only to target overlay staging unless the user explicitly changes the editable target.");
+        lines.Add("");
+        lines.Add("Task Frame: Before choosing tools, internally identify userGoal, currentState, reference, editableTarget, desiredOutputLanguage, writeIntent, preferredContext, requiredKnowledge, and toolFitCheck.");
+        lines.Add("Tool Fit: A successful tool result can still be the wrong tool. If the tool semantics do not answer the user's task, choose a better tool or report capability_gap.");
         if (!string.IsNullOrWhiteSpace(currentViewContextId))
         {
             lines.Add("When the user says current table, current draft, opened table, current comparison, or asks to check missing translations in the current table, use current-view MCP tools first.");
             lines.Add("Use poe_get_current_view_context with currentViewContextId to inspect the current UI snapshot.");
-            lines.Add("For requests like '检查当前表格漏翻', 'check missing translations in current table', or '当前表格有没有漏翻', call poe_find_current_table_untranslated_cells with currentViewContextId.");
+            lines.Add("Recommended knowledge sections for current table tasks: core.contract, workflow.current-view, workflow.datc64-translation, diagnostics.tool-fit-and-capability-gap.");
+            lines.Add("Choose current-table analysis tools by semantics, such as poe_find_current_table_untranslated_cells for missing-translation candidates.");
             lines.Add("Do not call poe_datc64_extract_translatable_cells for current table checks.");
             lines.Add("Only call raw resource tools such as poe_read_resource or poe_datc64_extract_translatable_cells when currentViewContextId is absent or the user explicitly asks to reread raw files.");
         }
