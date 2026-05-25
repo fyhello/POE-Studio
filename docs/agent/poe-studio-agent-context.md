@@ -2,6 +2,8 @@
 
 > 本文是 POE Studio 内置 Agent 的项目知识底座。它不是实现计划，也不替代阶段计划；它用于约束 Agent 如何理解项目、工作流、工具、路径、草稿层和审批边界。  
 > 当前状态：基于 2026-05-23 对代码、阶段计划、验收报告和真实 DATC64 翻译测试问题的梳理。
+>
+> 运行时权威入口：`docs/agent/knowledge/index.json`。本文是来源材料和长篇背景；Codex 运行时应优先读取 knowledge contract 的短核心契约和按需 section，避免把本文全文当作 prompt 注入。
 
 ## 1. Agent 总目标
 

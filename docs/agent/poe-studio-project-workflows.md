@@ -1,6 +1,8 @@
 # POE Studio 项目工作流与 Agent 知识底座
 
 > 本文用于帮助后续 Agent 理解 POE Studio 的项目语义、用户工作流、工具边界和审批风险。它是知识底座，不是 Stage 2 / Stage 3 修复计划，也不是 DATC64 专项方案。
+>
+> 运行时以 `docs/agent/knowledge/index.json` 和其中登记的 knowledge section 为准。本文保留为来源材料、证据索引和长篇解释，不应被整体注入 Agent prompt。
 
 ## 1. 文档目标
 
